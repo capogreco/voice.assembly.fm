@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice.Assembly.FM - Ctrl</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #000;
+            color: #fff;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2em;
+            font-weight: 300;
+            margin-bottom: 10px;
+            color: #00ff88;
+        }
+
+        .header .subtitle {
+            color: #888;
+            font-size: 0.9em;
+        }
+
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            flex: 1;
+        }
+
+        .panel {
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        .panel h2 {
+            font-size: 1.2em;
+            font-weight: 400;
+            margin-bottom: 20px;
+            color: #00ff88;
+            border-bottom: 1px solid #333;
+            padding-bottom: 10px;
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .status-item {
+            background: #1a1a1a;
+            padding: 15px;
+            border-radius: 6px;
+            border-left: 4px solid #333;
+        }
+
+        .status-item.connected {
+            border-left-color: #00ff88;
+        }
+
+        .status-item.leader {
+            border-left-color: #ffaa00;
+        }
+
+        .status-item.syncing {
+            border-left-color: #0088ff;
+        }
+
+        .status-label {
+            font-size: 0.8em;
+            color: #888;
+            margin-bottom: 5px;
+        }
+
+        .status-value {
+            font-size: 1.1em;
+            font-weight: 500;
+        }
+
+        .control-section {
+            margin-bottom: 25px;
+        }
+
+        .control-section h3 {
+            font-size: 1em;
+            color: #ccc;
+            margin-bottom: 10px;
+        }
+
+        .button {
+            background: #333;
+            border: 1px solid #555;
+            color: #fff;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: all 0.2s;
+        }
+
+        .button:hover {
+            background: #444;
+            border-color: #666;
+        }
+
+        .button.primary {
+            background: #00ff88;
+            color: #000;
+            border-color: #00ff88;
+        }
+
+        .button.primary:hover {
+            background: #00cc66;
+        }
+
+        .button.danger {
+            background: #ff4444;
+            border-color: #ff4444;
+        }
+
+        .button.danger:hover {
+            background: #cc3333;
+        }
+
+        .button:disabled {
+            background: #222;
+            color: #555;
+            border-color: #333;
+            cursor: not-allowed;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .input-group label {
+            min-width: 120px;
+            font-size: 0.9em;
+            color: #ccc;
+        }
+
+        .input-group input {
+            background: #222;
+            border: 1px solid #444;
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 0.9em;
+            width: 100px;
+        }
+
+        .input-group input:focus {
+            outline: none;
+            border-color: #00ff88;
+        }
+
+        .peer-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .peer-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            background: #1a1a1a;
+            border-radius: 4px;
+            margin-bottom: 8px;
+        }
+
+        .peer-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .peer-id {
+            font-size: 0.9em;
+            color: #fff;
+        }
+
+        .peer-type {
+            font-size: 0.8em;
+            color: #888;
+        }
+
+        .peer-stats {
+            font-size: 0.8em;
+            color: #888;
+            text-align: right;
+        }
+
+        .log {
+            height: 150px;
+            background: #0a0a0a;
+            border: 1px solid #333;
+            border-radius: 4px;
+            padding: 10px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.8em;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            color: #ccc;
+        }
+
+        .phasor-viz {
+            width: 100%;
+            height: 60px;
+            background: #1a1a1a;
+            border-radius: 6px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .phasor-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #00ff88, #0088ff);
+            transition: width 0.1s ease;
+        }
+
+        .phasor-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 0.9em;
+            font-weight: 500;
+            color: #000;
+            text-shadow: 1px 1px 2px rgba(255,255,255,0.5);
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Voice.Assembly.FM</h1>
+        <div class="subtitle">Distributed Vocal Synthesis Control</div>
+    </div>
+
+    <div class="main-grid">
+        <!-- Network Status Panel -->
+        <div class="panel">
+            <h2>Network Status</h2>
+            
+            <div class="status-grid">
+                <div class="status-item" id="connection-status">
+                    <div class="status-label">Connection</div>
+                    <div class="status-value" id="connection-value">Disconnected</div>
+                </div>
+                
+                
+                <div class="status-item" id="peers-status">
+                    <div class="status-label">Connected Peers</div>
+                    <div class="status-value" id="peers-value">0</div>
+                </div>
+                
+                <div class="status-item" id="timing-status">
+                    <div class="status-label">Timing</div>
+                    <div class="status-value" id="timing-value">Stopped</div>
+                </div>
+            </div>
+
+            <div class="control-section">
+                <h3>Network Control</h3>
+                <div class="input-group">
+                    <button class="button primary" id="connect-btn">Connect to Network</button>
+                    <button class="button danger" id="disconnect-btn" disabled>Disconnect</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Timing Control Panel -->
+        <div class="panel">
+            <h2>Timing Control</h2>
+            
+            <div class="phasor-viz" id="phasor-viz">
+                <div class="phasor-bar" id="phasor-bar"></div>
+                <div class="phasor-text" id="phasor-text">0.000</div>
+            </div>
+            
+            <div class="control-section">
+                <h3>Cycle Parameters</h3>
+                <div class="input-group">
+                    <label>Cycle Duration</label>
+                    <input type="number" id="cycle-duration" value="2.0" min="0.5" max="10" step="0.1">
+                    <span>seconds</span>
+                </div>
+                
+                <div class="input-group">
+                    <button class="button primary" id="start-timing-btn" disabled>Start Timing</button>
+                    <button class="button" id="stop-timing-btn" disabled>Stop Timing</button>
+                </div>
+            </div>
+
+            <div class="control-section">
+                <h3>Calibration</h3>
+                <div class="input-group">
+                    <button class="button" id="calibration-btn">Enable Calibration Mode</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Connected Peers Panel -->
+        <div class="panel">
+            <h2>Connected Peers</h2>
+            <div class="peer-list" id="peer-list">
+                <div style="color: #888; font-style: italic; text-align: center; padding: 20px;">
+                    No peers connected
+                </div>
+            </div>
+        </div>
+
+        <!-- Debug Log Panel -->
+        <div class="panel">
+            <h2>Debug Log</h2>
+            <div class="log" id="debug-log"></div>
+            <div class="control-section">
+                <button class="button" id="clear-log-btn">Clear Log</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="ctrl-main.js"></script>
+</body>
+</html>

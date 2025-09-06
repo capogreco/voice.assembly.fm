@@ -1,0 +1,12 @@
+{
+  "tasks": {
+    "build": "deno run --allow-read --allow-write scripts/build.ts",
+    "dev": "deno run --allow-net --allow-read --allow-sys --watch src/server/signaling-server.ts",
+    "serve-ctrl": "deno run --allow-net --allow-read --allow-sys src/server/static-server.ts --port 8080 --root public/ctrl",
+    "serve-synth": "deno run --allow-net --allow-read --allow-sys src/server/static-server.ts --port 8081 --root public/synth",
+    "start": "deno task build && deno run --allow-net --allow-read --allow-sys --allow-run src/server/launcher.ts"
+  },
+  "imports": {
+    "std/": "https://deno.land/std@0.220.0/"
+  }
+}
