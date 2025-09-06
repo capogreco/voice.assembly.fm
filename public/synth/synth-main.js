@@ -5,6 +5,7 @@
 import { WebRTCStar, generatePeerId } from '../../src/common/webrtc-star.js';
 import { ClientPhasorSynchronizer } from '../../src/common/phasor-sync.js';
 import { MessageTypes, MessageBuilder } from '../../src/common/message-protocol.js';
+import { ZingSynthesisService } from './src/synthesis/zing-synthesis-service.js';
 
 class SynthClient {
   constructor() {
@@ -16,7 +17,7 @@ class SynthClient {
     
     // Audio synthesis
     this.masterGain = null;
-    this.testOscillator = null;
+    this.zingSynth = null;
     this.isCalibrationMode = false;
     this.noiseNode = null;
     
@@ -124,12 +125,18 @@ class SynthClient {
     this.masterGain.connect(this.audioContext.destination);
     this.updateVolume();
     
-    // Create test oscillator for now (will be replaced with synthesis engine)
-    this.createTestOscillator();
+    // Initialize zing synthesis
+    await this.initializeZingSynthesis();
     
     // Apply any pending calibration state
     if (this.isCalibrationMode) {
       console.log('🔧 Applying pending calibration mode');
+      
+      // Disconnect zing synthesis during calibration
+      if (this.zingGain) {
+        this.zingGain.disconnect();
+      }
+      
       this.startWhiteNoise(0.1);
       this.updateConnectionStatus('syncing', 'Calibration mode');
     }
@@ -137,22 +144,26 @@ class SynthClient {
     console.log('🔊 Audio context initialized');
   }
 
-  createTestOscillator() {
-    // Simple sine wave oscillator for testing
-    this.testOscillator = this.audioContext.createOscillator();
-    this.testOscillator.type = 'sine';
-    this.testOscillator.frequency.setValueAtTime(220, this.audioContext.currentTime);
+  async initializeZingSynthesis() {
+    console.log('🎵 Initializing zing synthesis...');
     
-    const testGain = this.audioContext.createGain();
-    testGain.gain.setValueAtTime(0, this.audioContext.currentTime); // Start silent
+    this.zingSynth = new ZingSynthesisService(this.audioContext);
     
-    this.testOscillator.connect(testGain);
-    testGain.connect(this.masterGain);
-    
-    this.testOscillator.start();
-    
-    // Store gain node for controlling test oscillator
-    this.testGain = testGain;
+    try {
+      this.zingNode = await this.zingSynth.initialize();
+      
+      // Create separate gain node for zing synthesis to control independently
+      this.zingGain = this.audioContext.createGain();
+      this.zingGain.gain.setValueAtTime(1, this.audioContext.currentTime);
+      
+      this.zingNode.connect(this.zingGain);
+      this.zingGain.connect(this.masterGain);
+      
+      console.log('🎤 Zing synthesis initialized and connected');
+    } catch (error) {
+      console.error('❌ Failed to initialize zing synthesis:', error);
+      throw error;
+    }
   }
 
   async connectToNetwork() {
@@ -198,11 +209,19 @@ class SynthClient {
         this.updateConnectionStatus('syncing', `Synced (${phasor.toFixed(3)})`);
       }
       
-      // Update test oscillator frequency based on phasor (for testing)
-      if (this.testGain && !this.isCalibrationMode) {
-        const freq = 220 + (phasor * 440); // Sweep from 220Hz to 660Hz
-        this.testOscillator.frequency.setValueAtTime(freq, this.audioContext.currentTime);
-        this.testGain.gain.setValueAtTime(0.1, this.audioContext.currentTime);
+      // Update zing synthesis based on phasor
+      if (this.zingSynth && this.zingSynth.isReady() && !this.isCalibrationMode) {
+        // Map phasor to frequency and vowel position
+        const baseFreq = 220;
+        const freq = baseFreq + (phasor * 220); // Sweep from 220Hz to 440Hz
+        
+        // Map phasor to vowel space (u -> ɔ -> i -> æ cycle)
+        const vowelX = (Math.sin(phasor * Math.PI * 2) + 1) / 2; // 0-1 oscillation
+        const vowelY = (Math.cos(phasor * Math.PI * 2) + 1) / 2; // 0-1 oscillation
+        
+        this.zingSynth.setFrequency(freq);
+        this.zingSynth.setVowelPosition(vowelX, vowelY);
+        this.zingSynth.setGain(0.3); // Active synthesis
       }
     });
     
@@ -214,9 +233,9 @@ class SynthClient {
       console.warn('⚠️ Lost synchronization with master');
       this.updateConnectionStatus('error', 'Sync lost');
       
-      // Stop test oscillator
-      if (this.testGain) {
-        this.testGain.gain.setValueAtTime(0, this.audioContext.currentTime);
+      // Disconnect zing synthesis
+      if (this.zingGain) {
+        this.zingGain.disconnect();
       }
     });
   }
@@ -247,9 +266,16 @@ class SynthClient {
     if (this.isCalibrationMode) {
       console.log('🔧 Entering calibration mode');
       
+      // Disconnect zing synthesis during calibration
+      if (this.zingGain) {
+        this.zingGain.disconnect();
+      }
+      
       // Only start white noise if audio context is initialized
       if (this.audioContext) {
         this.startWhiteNoise(message.amplitude || 0.1);
+        // Connect oscilloscope to white noise for calibration
+        this.connectOscilloscopeToWhiteNoise();
         this.updateConnectionStatus('syncing', 'Calibration mode');
       } else {
         console.log('⚠️ Audio context not initialized, cannot start white noise');
@@ -258,6 +284,16 @@ class SynthClient {
     } else {
       console.log('🔧 Exiting calibration mode');
       this.stopWhiteNoise();
+      
+      // Reconnect zing synthesis to master gain
+      if (this.zingGain) {
+        this.zingGain.connect(this.masterGain);
+      }
+      
+      // Reconnect oscilloscope to zing synthesis
+      this.connectOscilloscopeToZing();
+      
+      // Zing synthesis will resume automatically via phasor sync
       this.updateConnectionStatus('connected', 'Connected');
     }
   }
@@ -283,9 +319,9 @@ class SynthClient {
       
       console.log('🎵 White noise started');
       
-      // Stop test oscillator during calibration
-      if (this.testGain) {
-        this.testGain.gain.setValueAtTime(0, this.audioContext.currentTime);
+      // Disconnect zing synthesis during calibration
+      if (this.zingGain) {
+        this.zingGain.disconnect();
       }
       
     } catch (error) {
@@ -313,8 +349,16 @@ class SynthClient {
     this.oscilloscope = new XYOscilloscope(
       this.elements.canvas,
       this.audioContext,
-      this.masterGain
+      this.masterGain  // Will connect to white noise during calibration
     );
+    
+    // Connect to appropriate source based on current mode
+    if (this.isCalibrationMode && this.whiteNoiseWorklet) {
+      this.connectOscilloscopeToWhiteNoise();
+    } else if (this.zingSynth && this.zingSynth.isReady()) {
+      this.connectOscilloscopeToZing();
+    }
+    
     this.oscilloscope.start();
   }
 
@@ -346,6 +390,55 @@ class SynthClient {
         this.elements.loading.style.display = 'none';
         break;
     }
+  }
+
+  connectOscilloscopeToZing() {
+    if (!this.oscilloscope || !this.zingNode) return;
+    
+    console.log('🔬 Connecting oscilloscope to zing synthesis formant channels');
+    
+    // Disconnect current oscilloscope connections
+    this.oscilloscope.disconnect();
+    
+    // Set normal amplification for formant visualization
+    this.oscilloscope.calibrationMode = false;
+    
+    // Create channel splitter for 6-channel zing output
+    if (this.zingSplitter) {
+      this.zingSplitter.disconnect();
+    }
+    this.zingSplitter = this.audioContext.createChannelSplitter(6);
+    this.zingNode.connect(this.zingSplitter);
+    
+    // Connect F1 (channel 2) to left, F2 (channel 3) to right for XY scope
+    this.zingSplitter.connect(this.oscilloscope.leftAnalyser, 2);  // F1 -> X axis
+    this.zingSplitter.connect(this.oscilloscope.rightAnalyser, 3); // F2 -> Y axis
+    
+    // Note: We don't reconnect masterGain to oscilloscope.channelSplitter 
+    // because we're using direct formant channel connections
+  }
+  
+  connectOscilloscopeToWhiteNoise() {
+    if (!this.oscilloscope || !this.whiteNoiseWorklet) return;
+    
+    console.log('🔬 Connecting oscilloscope to white noise');
+    
+    // Disconnect any zing connections
+    if (this.zingSplitter) {
+      this.zingSplitter.disconnect();
+    }
+    
+    // Disconnect current oscilloscope input
+    this.oscilloscope.disconnect();
+    
+    // Set high amplification for low-volume white noise
+    this.oscilloscope.calibrationMode = true;
+    
+    // Connect white noise to oscilloscope channel splitter
+    this.whiteNoiseWorklet.connect(this.oscilloscope.channelSplitter);
+    // Reconnect splitter to analysers
+    this.oscilloscope.channelSplitter.connect(this.oscilloscope.leftAnalyser, 0);
+    this.oscilloscope.channelSplitter.connect(this.oscilloscope.rightAnalyser, 1);
   }
 
   updateConnectionStatus(status, message = '') {
@@ -398,6 +491,7 @@ class XYOscilloscope {
     this.isRunning = false;
     this.animationId = null;
     this.trailFactor = 0.05; // How much trail to leave (0-1)
+    this.calibrationMode = false; // Track if we're in calibration mode for proper scaling
     
     this.resize();
   }
@@ -434,6 +528,22 @@ class XYOscilloscope {
     }
   }
 
+  disconnect() {
+    // Disconnect existing connections to allow reconnection
+    try {
+      // Disconnect input to channelSplitter
+      if (this.inputNode) {
+        this.inputNode.disconnect(this.channelSplitter);
+      }
+      // Disconnect channelSplitter outputs  
+      if (this.channelSplitter) {
+        this.channelSplitter.disconnect();
+      }
+    } catch (e) {
+      // Ignore if already disconnected
+    }
+  }
+
   draw() {
     if (!this.isRunning) return;
     
@@ -462,9 +572,12 @@ class XYOscilloscope {
       xSample = Math.max(-1, Math.min(1, xSample));
       ySample = Math.max(-1, Math.min(1, ySample));
       
-      // Convert to screen coordinates with gain applied
-      const x = this.centerX + (xSample * 100.0 * maxRadius); // 100x amplification for 0.1 volume
-      const y = this.centerY - (ySample * 100.0 * maxRadius); // Negative for correct orientation
+      // Convert to screen coordinates with appropriate scaling
+      // White noise: 1x amplification (10x smaller than before)
+      // Formant synthesis: 0.6x amplification (2x larger than before)
+      const amplification = this.calibrationMode ? 1.0 : 0.6;
+      const x = this.centerX + (xSample * amplification * maxRadius);
+      const y = this.centerY - (ySample * amplification * maxRadius); // Negative for correct orientation
       
       framePoints.push({ x, y });
     }
