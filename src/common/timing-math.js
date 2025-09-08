@@ -54,17 +54,13 @@ export class PhasorSync {
     const messageAge = (currentTime - audioTime) / 1000; // Convert to seconds
     
     // Estimate where the master phasor should be now
-    const estimatedMasterPhasor = (masterPhasor + cycleFreq * messageAge) % 1.0;
+    let estimatedMasterPhasor = (masterPhasor + cycleFreq * messageAge) % 1.0;
+    if (estimatedMasterPhasor < 0) estimatedMasterPhasor += 1.0;
     
-    // Calculate phasor difference
-    const phasorDiff = this.calculatePhasorDifference(estimatedMasterPhasor, this.localPhasor);
+    // Directly use the master's phasor (no gradual correction)
+    this.localPhasor = estimatedMasterPhasor;
     
-    // Apply gentle correction
-    const correctionStrength = 0.05; // 5% correction per update
-    this.localPhasor = (this.localPhasor + phasorDiff * correctionStrength) % 1.0;
-    if (this.localPhasor < 0) this.localPhasor += 1.0;
-    
-    // Update cycle frequency
+    // Update cycle frequency and timing
     this.cycleFreq = cycleFreq;
     this.lastUpdateTime = currentTime;
   }
@@ -104,7 +100,12 @@ export class PhasorSync {
    * Get current synchronized phasor position
    */
   getCurrentPhasor(currentTime = performance.now()) {
-    return this.updateLocal(currentTime);
+    const timeSinceLastSync = (currentTime - this.lastUpdateTime) / 1000.0; // in seconds
+    
+    // Predict the current phasor
+    const predictedPhasor = this.localPhasor + timeSinceLastSync * this.cycleFreq;
+    
+    return predictedPhasor % 1.0;
   }
 
   /**

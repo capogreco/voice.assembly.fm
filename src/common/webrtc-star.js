@@ -190,6 +190,14 @@ export class WebRTCStar extends EventTarget {
       return;
     }
 
+    // Determine peer type based on star topology
+    let targetPeerType;
+    if (this.peerType === 'ctrl') {
+      targetPeerType = 'synth'; // Ctrl connects to synths
+    } else {
+      targetPeerType = 'ctrl'; // Synths connect to ctrl
+    }
+
     const peerConnection = new RTCPeerConnection({
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
@@ -200,6 +208,7 @@ export class WebRTCStar extends EventTarget {
     // Create peer record first
     this.peers.set(peerId, {
       connection: peerConnection,
+      peerType: targetPeerType, // Store the peer type
       syncChannel: null,
       controlChannel: null,
       health: new NetworkHealth(),
@@ -482,6 +491,23 @@ export class WebRTCStar extends EventTarget {
     for (const [peerId] of this.peers) {
       if (this.sendToPeer(peerId, message, channelType)) {
         successCount++;
+      }
+    }
+    
+    return successCount;
+  }
+
+  /**
+   * Broadcast message to peers of a specific type (e.g., 'synth', 'ctrl')
+   */
+  broadcastToType(targetType, message, channelType = 'sync') {
+    let successCount = 0;
+    
+    for (const [peerId, peer] of this.peers) {
+      if (peer.peerType === targetType) {
+        if (this.sendToPeer(peerId, message, channelType)) {
+          successCount++;
+        }
       }
     }
     

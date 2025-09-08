@@ -13,11 +13,18 @@ export class MasterPhasorController extends EventTarget {
   constructor(star) {
     super();
     this.star = star;
+    this.isLeader = false;
     this.phasor = 0.0;
     this.cycleFreq = 0.5; // Hz (2-second cycles by default)
     this.lastUpdateTime = performance.now();
     this.syncInterval = null;
     this.isRunning = false;
+    
+    // Listen for leadership changes
+    this.star.addEventListener('leader-changed', (event) => {
+      this.isLeader = event.detail.isLeader;
+      console.log(`👑 Master phasor controller leader status: ${this.isLeader}`);
+    });
     
     console.log('👑 Master phasor controller initialized');
   }
@@ -101,7 +108,7 @@ export class MasterPhasorController extends EventTarget {
    * Broadcast sync message to all peers
    */
   broadcastSync() {
-    if (!this.isRunning || !this.star.isLeader) return;
+    if (!this.isRunning || !this.isLeader) return;
 
     const syncMessage = MessageBuilder.phasorSync(
       this.phasor,

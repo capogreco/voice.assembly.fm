@@ -56,8 +56,18 @@ await serve(async (req) => {
     });
   }
 
-  // Serve files
-  const response = await serveDir(req, { fsRoot: root });
+  // Custom file serving logic
+  const url = new URL(req.url);
+  let response;
+  
+  // Check if requesting /src/common/ files
+  if (url.pathname.startsWith('/src/common/')) {
+    // Serve from project root (src/common/ -> ./src/common/)
+    response = await serveDir(req, { fsRoot: "." });
+  } else {
+    // Serve from public directory
+    response = await serveDir(req, { fsRoot: root });
+  }
   
   // Add CORS headers to all responses
   response.headers.set("Access-Control-Allow-Origin", "*");
@@ -65,7 +75,6 @@ await serve(async (req) => {
   response.headers.set("Access-Control-Allow-Headers", "Content-Type");
   
   // Fix MIME type for JavaScript modules
-  const url = new URL(req.url);
   if (url.pathname.endsWith('.js')) {
     response.headers.set("Content-Type", "application/javascript");
   }

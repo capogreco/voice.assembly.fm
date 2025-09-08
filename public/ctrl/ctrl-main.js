@@ -16,6 +16,7 @@ class ControlClient {
     this.star = null;
     this.phasorController = null;
     this.isCalibrationMode = false;
+    this.isManualMode = false;
     
     // Track current settings to send to new synths
     this.currentSettings = {
@@ -37,16 +38,20 @@ class ControlClient {
       timingStatus: document.getElementById('timing-status'),
       timingValue: document.getElementById('timing-value'),
       
-      connectBtn: document.getElementById('connect-btn'),
-      disconnectBtn: document.getElementById('disconnect-btn'),
       startTimingBtn: document.getElementById('start-timing-btn'),
       stopTimingBtn: document.getElementById('stop-timing-btn'),
       calibrationBtn: document.getElementById('calibration-btn'),
+      manualModeBtn: document.getElementById('manual-mode-btn'),
       
       cycleDuration: document.getElementById('cycle-duration'),
       phasorViz: document.getElementById('phasor-viz'),
       phasorBar: document.getElementById('phasor-bar'),
       phasorText: document.getElementById('phasor-text'),
+      
+      // Musical controls
+      // Simplified musical controls
+      frequencySlider: document.getElementById('frequency-slider'),
+      frequencyValue: document.getElementById('frequency-value'),
       
       peerList: document.getElementById('peer-list'),
       debugLog: document.getElementById('debug-log'),
@@ -61,9 +66,6 @@ class ControlClient {
   }
 
   setupEventHandlers() {
-    // Network control
-    this.elements.connectBtn.addEventListener('click', () => this.connectToNetwork());
-    this.elements.disconnectBtn.addEventListener('click', () => this.disconnectFromNetwork());
     
     // Timing control
     this.elements.startTimingBtn.addEventListener('click', () => this.startTiming());
@@ -71,6 +73,9 @@ class ControlClient {
     
     // Calibration
     this.elements.calibrationBtn.addEventListener('click', () => this.toggleCalibration());
+    
+    // Manual mode
+    this.elements.manualModeBtn.addEventListener('click', () => this.toggleManualMode());
     
     // Cycle duration updates
     this.elements.cycleDuration.addEventListener('change', () => {
@@ -82,12 +87,126 @@ class ControlClient {
     
     // Debug log
     this.elements.clearLogBtn.addEventListener('click', () => this.clearLog());
+    
+    // Musical controls
+    this.setupMusicalControls();
+  }
+  
+  setupMusicalControls() {
+    // Frequency slider (remains simple)
+    this.elements.frequencySlider.addEventListener('input', (e) => {
+      const frequency = parseFloat(e.target.value);
+      this.currentSettings.frequency = frequency;
+      this.elements.frequencyValue.textContent = `${frequency} Hz`;
+      this.broadcastMusicalParameters();
+    });
+    
+    // Zing Amount slider (master blend control)
+    document.getElementById('zingAmount-slider').addEventListener('input', (e) => {
+      const zingAmount = parseFloat(e.target.value);
+      const percentage = Math.round(zingAmount * 100);
+      document.getElementById('zingAmount-value').textContent = `${percentage}%`;
+      this.broadcastMusicalParameters();
+    });
+    
+    // Setup envelope parameter controls
+    this.setupParameterControls();
+  }
+  
+  setupParameterControls() {
+    const paramNames = ['vowelX', 'vowelY', 'zingMorph', 'symmetry', 'amplitude'];
+
+    paramNames.forEach(name => {
+        const staticCheckbox = document.getElementById(`${name}-static`);
+        const valueControl = document.getElementById(`${name}-value`).parentElement;
+        const envelopeControls = document.getElementById(`${name}-envelope`);
+
+        // Function to toggle UI state
+        const updateUIState = () => {
+            if (staticCheckbox.checked) {
+                valueControl.style.display = 'block';
+                envelopeControls.disabled = true;
+            } else {
+                valueControl.style.display = 'none';
+                envelopeControls.disabled = false;
+            }
+            this.broadcastMusicalParameters(); // Broadcast on change
+        };
+
+        // Add event listeners to all controls
+        const controls = document.querySelectorAll(`#${name}-panel input, #${name}-panel select`);
+        controls.forEach(control => {
+            control.addEventListener('input', updateUIState);
+        });
+
+        // Special handling for value sliders in manual mode - immediate broadcast
+        const valueSlider = document.getElementById(`${name}-value`);
+        if (valueSlider) {
+            valueSlider.addEventListener('input', () => {
+                if (this.isManualMode) {
+                    // In manual mode, broadcast immediately for real-time control
+                    this.broadcastMusicalParameters();
+                }
+            });
+        }
+
+        // Initial UI setup
+        updateUIState();
+    });
+  }
+  
+  getMusicalParameters() {
+    const params = {
+        frequency: parseFloat(this.elements.frequencySlider.value) || 220,
+        zingAmount: parseFloat(document.getElementById('zingAmount-slider').value) || 0.5,
+    };
+    const paramNames = ['vowelX', 'vowelY', 'zingMorph', 'symmetry', 'amplitude'];
+
+    paramNames.forEach(name => {
+        const staticCheckbox = document.getElementById(`${name}-static`);
+        const valueInput = document.getElementById(`${name}-value`);
+        
+        if (this.isManualMode) {
+          // In manual mode, force static and use the value slider for real-time control
+          params[name] = {
+            static: true,
+            value: parseFloat(valueInput.value),
+            start: parseFloat(valueInput.value), // Use current value as start too
+            end: parseFloat(valueInput.value),   // Use current value as end too
+            type: 'linear',
+            morph: 0.5,
+          };
+        } else {
+          // Normal envelope mode
+          params[name] = {
+            static: staticCheckbox.checked,
+            value: parseFloat(valueInput.value),
+            start: parseFloat(document.getElementById(`${name}-start`).value),
+            end: parseFloat(document.getElementById(`${name}-end`).value),
+            type: document.getElementById(`${name}-type`).value,
+            morph: parseFloat(document.getElementById(`${name}-morph`).value),
+          };
+        }
+    });
+    return params;
+  }
+
+  broadcastMusicalParameters() {
+    if (!this.star) return;
+    
+    const params = this.getMusicalParameters();
+    const message = MessageBuilder.musicalParameters(params);
+    
+    console.log('🎵 Broadcasting musical parameters:', params);
+    
+    // Send to all connected synth peers
+    const sent = this.star.broadcastToType('synth', message, 'control');
+    console.log(`📤 Sent to ${sent} synth peers`);
   }
 
   async connectToNetwork() {
     try {
       this.updateConnectionStatus('connecting');
-      this.elements.connectBtn.disabled = true;
       
       this.log('Connecting to network...', 'info');
       
@@ -104,57 +223,52 @@ class ControlClient {
       this.setupPhasorEventHandlers();
       
       this.updateConnectionStatus('connected');
-      this.elements.disconnectBtn.disabled = false;
+      this._updateUIState();
       
       this.log('Connected to network successfully', 'success');
       
     } catch (error) {
       this.log(`Connection failed: ${error.message}`, 'error');
       this.updateConnectionStatus('disconnected');
-      this.elements.connectBtn.disabled = false;
+      this._updateUIState();
     }
   }
 
-  disconnectFromNetwork() {
-    this.log('Disconnecting from network...', 'info');
+
+  _updateUIState() {
+    const isConnected = this.star && this.star.isConnectedToSignaling;
+    const isTiming = this.phasorController && this.phasorController.isRunning;
+
+    // Timing buttons are enabled only when connected, and toggle based on timing state.
+    this.elements.startTimingBtn.disabled = !isConnected || isTiming;
+    this.elements.stopTimingBtn.disabled = !isConnected || !isTiming;
     
-    if (this.phasorController) {
-      this.phasorController.stop();
-      this.phasorController = null;
+    // Update status text
+    if (isConnected) {
+        this.elements.timingValue.textContent = isTiming ? 'Running' : 'Stopped';
+    } else {
+        this.elements.timingValue.textContent = 'N/A';
     }
-    
-    if (this.star) {
-      this.star.cleanup();
-      this.star = null;
-    }
-    
-    this.updateConnectionStatus('disconnected');
-    this.updatePeerCount(0);
-    this.updateTimingStatus(false);
-    this.clearPeerList();
-    
-    this.elements.connectBtn.disabled = false;
-    this.elements.disconnectBtn.disabled = true;
-    this.elements.startTimingBtn.disabled = true;
-    this.elements.stopTimingBtn.disabled = true;
-    
-    this.log('Disconnected from network', 'info');
   }
 
   setupStarEventHandlers() {
     this.star.addEventListener('became-leader', () => {
-      this.elements.startTimingBtn.disabled = false;
       this.log('Became network leader', 'success');
+      this._updateUIState();
     });
     
     this.star.addEventListener('peer-connected', (event) => {
       const { peerId } = event.detail;
       this.log(`Peer connected: ${peerId}`, 'info');
       this.updatePeerList();
+      this._updateUIState();
       
-      // Send current settings to new synths (will handle channel readiness internally)
+      // Send current musical parameters to new synths
       if (peerId.startsWith('synth-')) {
-        this.sendCurrentSettingsToSynth(peerId);
+        this.log(`Sending current state to new synth: ${peerId}`, 'info');
+        const params = this.getMusicalParameters();
+        const message = MessageBuilder.musicalParameters(params);
+        this.star.sendToPeer(peerId, message, 'control');
       }
     });
     
@@ -172,25 +286,26 @@ class ControlClient {
     this.star.addEventListener('peer-removed', (event) => {
       this.log(`Peer disconnected: ${event.detail.peerId}`, 'info');
       this.updatePeerList();
+      this._updateUIState();
     });
     
     this.star.addEventListener('kicked', (event) => {
       this.log(`Kicked: ${event.detail.reason}`, 'error');
       this.updateConnectionStatus('error');
+      this._updateUIState();
       alert('You have been disconnected: Another control client has taken over.');
-      this.disconnectFromNetwork();
     });
     
     this.star.addEventListener('join-rejected', (event) => {
       this.log(`Cannot join: ${event.detail.reason}`, 'error');
       this.updateConnectionStatus('error');
+      this._updateUIState();
       
       if (event.detail.reason.includes('Add ?force=true')) {
         if (confirm('Another control client is already connected. Force takeover?')) {
           window.location.href = window.location.href + '?force=true';
         }
       }
-      this.disconnectFromNetwork();
     });
     
     this.star.addEventListener('data-message', (event) => {
@@ -234,26 +349,22 @@ class ControlClient {
   }
 
   startTiming() {
-    if (!this.phasorController || !this.star.isLeader) {
-      this.log('Cannot start timing: not leader or no phasor controller', 'error');
-      return;
+    if (this.phasorController) {
+      const duration = parseFloat(this.elements.cycleDuration.value);
+      this.phasorController.start(duration);
+      this.log('Master timing started', 'info');
+      this._updateUIState();
+      
+      // Broadcast current parameters to activate synthesis on all synths
+      this.broadcastMusicalParameters();
     }
-    
-    const duration = parseFloat(this.elements.cycleDuration.value);
-    
-    // Update tracked settings
-    this.currentSettings.timingActive = true;
-    this.currentSettings.cycleDuration = duration;
-    
-    this.phasorController.start(duration);
   }
 
   stopTiming() {
     if (this.phasorController) {
-      // Update tracked settings
-      this.currentSettings.timingActive = false;
-      
       this.phasorController.stop();
+      this.log('Master timing stopped', 'info');
+      this._updateUIState();
     }
   }
 
@@ -280,6 +391,65 @@ class ControlClient {
       const sent = this.star.broadcast(message, 'control');
       this.log(`Broadcast calibration mode to ${sent} peers`, 'debug');
     }
+  }
+
+  toggleManualMode() {
+    this.isManualMode = !this.isManualMode;
+    
+    if (this.isManualMode) {
+      this.elements.manualModeBtn.textContent = 'Exit Manual Mode';
+      this.elements.manualModeBtn.classList.add('active');
+      this.log('Manual mode enabled - real-time parameter control active', 'info');
+    } else {
+      this.elements.manualModeBtn.textContent = 'Manual Mode';
+      this.elements.manualModeBtn.classList.remove('active');
+      this.log('Manual mode disabled', 'info');
+    }
+    
+    // Update UI state for all parameters
+    this.updateParameterControlsForManualMode();
+    
+    // Immediately broadcast parameters with new mode
+    this.broadcastMusicalParameters();
+  }
+
+  updateParameterControlsForManualMode() {
+    const paramNames = ['vowelX', 'vowelY', 'zingMorph', 'symmetry', 'amplitude'];
+    
+    paramNames.forEach(name => {
+      const staticCheckbox = document.getElementById(`${name}-static`);
+      const valueControl = document.getElementById(`${name}-value`).parentElement;
+      const envelopeControls = document.getElementById(`${name}-envelope`);
+      
+      if (this.isManualMode) {
+        // Force static mode
+        staticCheckbox.checked = true;
+        staticCheckbox.disabled = true;
+        
+        // Show value controls, hide/disable envelope controls
+        valueControl.style.display = 'block';
+        envelopeControls.style.opacity = '0.3';
+        envelopeControls.style.pointerEvents = 'none';
+        
+        const envelopeInputs = envelopeControls.querySelectorAll('input, select');
+        envelopeInputs.forEach(input => input.disabled = true);
+      } else {
+        // Restore normal mode
+        staticCheckbox.disabled = false;
+        envelopeControls.style.opacity = '1';
+        envelopeControls.style.pointerEvents = 'auto';
+        
+        const envelopeInputs = envelopeControls.querySelectorAll('input, select');
+        envelopeInputs.forEach(input => input.disabled = false);
+        
+        // Restore UI state based on checkbox
+        if (staticCheckbox.checked) {
+          valueControl.style.display = 'block';
+        } else {
+          valueControl.style.display = 'none';
+        }
+      }
+    });
   }
 
   sendCurrentSettingsToSynth(synthId) {
@@ -318,7 +488,15 @@ class ControlClient {
       this.log(`${synthId} will receive timing via phasor sync`, 'debug');
     }
     
-    // Future: Add other settings as needed
+    // Send current musical parameters
+    const params = this.getMusicalParameters();
+    const musicalMsg = MessageBuilder.musicalParameters(params);
+    const musicalSuccess = this.star.sendToPeer(synthId, musicalMsg, 'control');
+    if (musicalSuccess) {
+      this.log(`Sent musical parameters to ${synthId}`, 'debug');
+    } else {
+      this.log(`Failed to send musical parameters to ${synthId}`, 'error');
+    }
   }
 
   sendSettingsToSynth(synthId, settings) {
@@ -336,7 +514,15 @@ class ControlClient {
       }
     }
     
-    // Future: Add other pending settings as needed
+    // Send pending musical parameters - use current envelope settings
+    const params = this.getMusicalParameters();
+    const musicalMsg = MessageBuilder.musicalParameters(params);
+    const musicalSuccess = this.star.sendToPeer(synthId, musicalMsg, 'control');
+    if (musicalSuccess) {
+      this.log(`Sent pending musical parameters to ${synthId}`, 'debug');
+    } else {
+      this.log(`Failed to send pending musical parameters to ${synthId}`, 'error');
+    }
   }
 
   updateConnectionStatus(status) {

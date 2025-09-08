@@ -149,6 +149,26 @@
             cursor: not-allowed;
         }
 
+        .button.manual-mode {
+            background: #444;
+            border-color: #666;
+            color: #fff;
+        }
+
+        .button.manual-mode:hover {
+            background: #555;
+        }
+
+        .button.manual-mode.active {
+            background: #ff6600;
+            border-color: #ff6600;
+            color: #000;
+        }
+
+        .button.manual-mode.active:hover {
+            background: #dd5500;
+        }
+
         .input-group {
             display: flex;
             gap: 10px;
@@ -252,6 +272,180 @@
             color: #000;
             text-shadow: 1px 1px 2px rgba(255,255,255,0.5);
         }
+
+        /* Musical Control Styles */
+        .param-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .param-control {
+            background: #1a1a1a;
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid #333;
+        }
+
+        .param-label {
+            font-size: 0.9em;
+            color: #00ff88;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        .param-value {
+            font-size: 0.8em;
+            color: #888;
+            margin-bottom: 10px;
+        }
+
+        .slider {
+            width: 100%;
+            -webkit-appearance: none;
+            height: 6px;
+            border-radius: 3px;
+            background: #333;
+            outline: none;
+            transition: background 0.3s;
+        }
+
+        .slider:hover {
+            background: #444;
+        }
+
+        .slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #00ff88;
+            cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0,255,136,0.3);
+        }
+
+        .slider::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #00ff88;
+            cursor: pointer;
+            border: none;
+            box-shadow: 0 2px 4px rgba(0,255,136,0.3);
+        }
+
+        .xy-pad {
+            width: 100%;
+            height: 120px;
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 6px;
+            position: relative;
+            cursor: crosshair;
+            margin-top: 10px;
+        }
+
+        .xy-cursor {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #00ff88;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 0 10px rgba(0,255,136,0.6);
+            pointer-events: none;
+        }
+
+        /* Envelope Control Styles */
+        .param-panel {
+            background: #1a1a1a;
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid #333;
+            margin-bottom: 15px;
+        }
+
+        .param-panel h3 {
+            color: #00ff88;
+            margin-bottom: 10px;
+            font-size: 1em;
+            font-weight: 500;
+        }
+
+        .static-control {
+            margin-bottom: 10px;
+        }
+
+        .static-control input[type="checkbox"] {
+            margin-right: 8px;
+            accent-color: #00ff88;
+        }
+
+        .static-control label {
+            color: #ccc;
+            font-size: 0.9em;
+        }
+
+        .value-control {
+            margin-bottom: 15px;
+        }
+
+        .value-control label {
+            display: block;
+            color: #888;
+            font-size: 0.8em;
+            margin-bottom: 5px;
+        }
+
+        .envelope-controls {
+            border: 1px solid #444;
+            border-radius: 4px;
+            padding: 10px;
+            background: #111;
+        }
+
+        .envelope-controls:disabled {
+            opacity: 0.5;
+            pointer-events: none;
+        }
+
+        .envelope-controls legend {
+            color: #888;
+            font-size: 0.8em;
+            padding: 0 5px;
+        }
+
+        .envelope-controls > div {
+            margin-bottom: 10px;
+        }
+
+        .envelope-controls > div:last-child {
+            margin-bottom: 0;
+        }
+
+        .envelope-controls label {
+            display: block;
+            color: #888;
+            font-size: 0.8em;
+            margin-bottom: 5px;
+        }
+
+        .envelope-controls select {
+            width: 100%;
+            background: #222;
+            border: 1px solid #444;
+            color: #fff;
+            padding: 6px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+
+        .envelope-controls select:focus {
+            outline: none;
+            border-color: #00ff88;
+        }
     </style>
 </head>
 <body>
@@ -283,13 +477,6 @@
                 </div>
             </div>
 
-            <div class="control-section">
-                <h3>Network Control</h3>
-                <div class="input-group">
-                    <button class="button primary" id="connect-btn">Connect to Network</button>
-                    <button class="button danger" id="disconnect-btn" disabled>Disconnect</button>
-                </div>
-            </div>
         </div>
 
         <!-- Timing Control Panel -->
@@ -320,6 +507,209 @@
                 <div class="input-group">
                     <button class="button" id="calibration-btn">Enable Calibration Mode</button>
                 </div>
+            </div>
+
+            <div class="control-section">
+                <h3>Debug Mode</h3>
+                <div class="input-group">
+                    <button class="button manual-mode-btn" id="manual-mode-btn">Manual Mode</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Parameter Control Panel -->
+        <div class="panel">
+            <h2>Parameter Control</h2>
+            
+            <!-- Frequency Control (remains simple) -->
+            <div class="param-control" style="margin-bottom: 20px;">
+                <div class="param-label">Frequency</div>
+                <div class="param-value" id="frequency-value">220 Hz</div>
+                <input type="range" class="slider" id="frequency-slider" 
+                       min="80" max="800" value="220" step="1">
+            </div>
+
+            <!-- Vowel X Parameter -->
+            <div class="param-panel" id="vowelX-panel">
+                <h3>Vowel X</h3>
+                <div class="static-control">
+                    <input type="checkbox" id="vowelX-static" checked>
+                    <label for="vowelX-static">Static</label>
+                </div>
+                <div class="value-control">
+                    <label>Value</label>
+                    <input type="range" class="slider" id="vowelX-value" min="0" max="1" step="0.01" value="0.5">
+                </div>
+                <fieldset class="envelope-controls" id="vowelX-envelope" disabled>
+                    <legend>Envelope</legend>
+                    <div>
+                        <label>Start</label>
+                        <input type="range" class="slider" id="vowelX-start" min="0" max="1" step="0.01" value="0">
+                    </div>
+                    <div>
+                        <label>End</label>
+                        <input type="range" class="slider" id="vowelX-end" min="0" max="1" step="0.01" value="1">
+                    </div>
+                    <div>
+                        <label>Shape</label>
+                        <select id="vowelX-type">
+                            <option value="lin">lin</option>
+                            <option value="cos">cos</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>Morph</label>
+                        <input type="range" class="slider" id="vowelX-morph" min="0" max="1" step="0.01" value="0.5">
+                    </div>
+                </fieldset>
+            </div>
+
+            <!-- Vowel Y Parameter -->
+            <div class="param-panel" id="vowelY-panel">
+                <h3>Vowel Y</h3>
+                <div class="static-control">
+                    <input type="checkbox" id="vowelY-static" checked>
+                    <label for="vowelY-static">Static</label>
+                </div>
+                <div class="value-control">
+                    <label>Value</label>
+                    <input type="range" class="slider" id="vowelY-value" min="0" max="1" step="0.01" value="0.5">
+                </div>
+                <fieldset class="envelope-controls" id="vowelY-envelope" disabled>
+                    <legend>Envelope</legend>
+                    <div>
+                        <label>Start</label>
+                        <input type="range" class="slider" id="vowelY-start" min="0" max="1" step="0.01" value="0">
+                    </div>
+                    <div>
+                        <label>End</label>
+                        <input type="range" class="slider" id="vowelY-end" min="0" max="1" step="0.01" value="1">
+                    </div>
+                    <div>
+                        <label>Shape</label>
+                        <select id="vowelY-type">
+                            <option value="lin">lin</option>
+                            <option value="cos">cos</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>Morph</label>
+                        <input type="range" class="slider" id="vowelY-morph" min="0" max="1" step="0.01" value="0.5">
+                    </div>
+                </fieldset>
+            </div>
+
+            <!-- Zing Morph Parameter -->
+            <div class="param-panel" id="zingMorph-panel">
+                <h3>Zing Morph</h3>
+                <div class="static-control">
+                    <input type="checkbox" id="zingMorph-static" checked>
+                    <label for="zingMorph-static">Static</label>
+                </div>
+                <div class="value-control">
+                    <label>Value</label>
+                    <input type="range" class="slider" id="zingMorph-value" min="-1" max="1" step="0.01" value="0">
+                </div>
+                <fieldset class="envelope-controls" id="zingMorph-envelope" disabled>
+                    <legend>Envelope</legend>
+                    <div>
+                        <label>Start</label>
+                        <input type="range" class="slider" id="zingMorph-start" min="-1" max="1" step="0.01" value="-1">
+                    </div>
+                    <div>
+                        <label>End</label>
+                        <input type="range" class="slider" id="zingMorph-end" min="-1" max="1" step="0.01" value="1">
+                    </div>
+                    <div>
+                        <label>Shape</label>
+                        <select id="zingMorph-type">
+                            <option value="lin">lin</option>
+                            <option value="cos">cos</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>Morph</label>
+                        <input type="range" class="slider" id="zingMorph-morph" min="0" max="1" step="0.01" value="0.5">
+                    </div>
+                </fieldset>
+            </div>
+
+            <!-- Symmetry Parameter -->
+            <div class="param-panel" id="symmetry-panel">
+                <h3>Symmetry</h3>
+                <div class="static-control">
+                    <input type="checkbox" id="symmetry-static" checked>
+                    <label for="symmetry-static">Static</label>
+                </div>
+                <div class="value-control">
+                    <label>Value</label>
+                    <input type="range" class="slider" id="symmetry-value" min="0" max="1" step="0.01" value="0.5">
+                </div>
+                <fieldset class="envelope-controls" id="symmetry-envelope" disabled>
+                    <legend>Envelope</legend>
+                    <div>
+                        <label>Start</label>
+                        <input type="range" class="slider" id="symmetry-start" min="0" max="1" step="0.01" value="0">
+                    </div>
+                    <div>
+                        <label>End</label>
+                        <input type="range" class="slider" id="symmetry-end" min="0" max="1" step="0.01" value="1">
+                    </div>
+                    <div>
+                        <label>Shape</label>
+                        <select id="symmetry-type">
+                            <option value="lin">lin</option>
+                            <option value="cos">cos</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>Morph</label>
+                        <input type="range" class="slider" id="symmetry-morph" min="0" max="1" step="0.01" value="0.5">
+                    </div>
+                </fieldset>
+            </div>
+
+            <!-- Amplitude Parameter -->
+            <div class="param-panel" id="amplitude-panel">
+                <h3>Amplitude</h3>
+                <div class="static-control">
+                    <input type="checkbox" id="amplitude-static" checked>
+                    <label for="amplitude-static">Static</label>
+                </div>
+                <div class="value-control">
+                    <label>Value</label>
+                    <input type="range" class="slider" id="amplitude-value" min="0" max="1" step="0.01" value="1.0">
+                </div>
+                <fieldset class="envelope-controls" id="amplitude-envelope" disabled>
+                    <legend>Envelope</legend>
+                    <div>
+                        <label>Start</label>
+                        <input type="range" class="slider" id="amplitude-start" min="0" max="1" step="0.01" value="0">
+                    </div>
+                    <div>
+                        <label>End</label>
+                        <input type="range" class="slider" id="amplitude-end" min="0" max="1" step="0.01" value="1">
+                    </div>
+                    <div>
+                        <label>Shape</label>
+                        <select id="amplitude-type">
+                            <option value="lin">lin</option>
+                            <option value="cos">cos</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>Morph</label>
+                        <input type="range" class="slider" id="amplitude-morph" min="0" max="1" step="0.01" value="0.5">
+                    </div>
+                </fieldset>
+            </div>
+
+            <!-- Zing Amount Control (Master Blend) -->
+            <div class="param-control" style="margin-top: 20px; border-top: 1px solid #444; padding-top: 20px;">
+                <div class="param-label">Zing Amount</div>
+                <div class="param-value" id="zingAmount-value">50%</div>
+                <input type="range" class="slider" id="zingAmount-slider" 
+                       min="0" max="1" value="0.5" step="0.01">
             </div>
         </div>
 

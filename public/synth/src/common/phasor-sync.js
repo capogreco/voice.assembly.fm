@@ -176,6 +176,10 @@ export class ClientPhasorSynchronizer extends EventTarget {
    */
   handlePhasorSync(syncMessage) {
     const currentTime = performance.now();
+    const messageAge = currentTime - syncMessage.timestamp;
+    const audioAge = currentTime - syncMessage.audioTime;
+    
+    console.log(`🎯 Slave received: master=${syncMessage.phasor.toFixed(3)}, msgAge=${messageAge.toFixed(1)}ms, audioAge=${audioAge.toFixed(1)}ms`);
     
     // Update phasor synchronization
     this.phasorSync.updateFromMaster(
@@ -186,42 +190,28 @@ export class ClientPhasorSynchronizer extends EventTarget {
     );
 
     // Record timing for health monitoring
-    const messageAge = currentTime - syncMessage.timestamp;
     this.clockFilter.update(messageAge, messageAge); // Simple approximation
 
     this.lastSyncTime = currentTime;
     this.isActive = true;
-
-    // Reset sync timeout
+    
+    // Clear any pending sync loss timeout
     if (this.syncTimeout) {
       clearTimeout(this.syncTimeout);
     }
     
+    // Set timeout for sync loss detection (500ms)
     this.syncTimeout = setTimeout(() => {
       this.handleSyncLoss();
-    }, 5000); // Consider sync lost after 5 seconds
-
-    // Check for cycle boundary
-    if (this.phasorSync.detectCycleStart()) {
-      this.dispatchEvent(new CustomEvent('cycle-start', {
-        detail: { 
-          phasor: this.phasorSync.getCurrentPhasor(),
-          audioTime: currentTime 
-        }
-      }));
-    }
-
-    // Emit sync update
+    }, 500);
+    
+    // Emit sync update event
     this.dispatchEvent(new CustomEvent('sync-update', {
-      detail: { 
+      detail: {
         phasor: this.phasorSync.getCurrentPhasor(),
-        cycleFreq: this.phasorSync.cycleFreq,
-        audioTime: currentTime,
-        health: this.clockFilter.getEstimate()
+        health: this.getSyncHealth()
       }
     }));
-
-    console.log(`🎯 Sync update: phasor=${this.phasorSync.getCurrentPhasor().toFixed(3)}, age=${messageAge.toFixed(1)}ms`);
   }
 
   /**
@@ -268,6 +258,7 @@ export class ClientPhasorSynchronizer extends EventTarget {
       clearTimeout(this.syncTimeout);
       this.syncTimeout = null;
     }
+    
     
     this.isActive = false;
     console.log('🧹 Slave phasor synchronizer cleaned up');

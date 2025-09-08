@@ -13,8 +13,9 @@ This initial phase implements the core WebRTC star networking and phasor-based t
 - ✅ **Force Takeover**: Multiple ctrl client prevention with override capability
 - ✅ **Phasor Synchronization**: Distributed timing with master-slave architecture
 - ✅ **State Synchronization**: New synths automatically receive current system state
-- ✅ **Ctrl Client**: Network management, timing control, and calibration interface
-- ✅ **Synth Client**: Join UI with XY oscilloscope and white noise calibration
+- ✅ **Ctrl Client**: Network management, timing control, calibration interface, and musical control
+- ✅ **Synth Client**: Join UI with XY oscilloscope, white noise calibration, and zing synthesis
+- ✅ **Musical Control**: Real-time parameter control (frequency, morph, vowel position, harmonic ratio)
 
 ### Quick Start
 
@@ -84,8 +85,8 @@ deno task launch
 
 ### Current Limitations
 
-- **Test synthesis only**: Simple sine wave oscillator, not voice synthesis
-- **No musical control**: No pitch, rhythm, or parameter control from ctrl client
+- ✅ ~~**Test synthesis only**: Simple sine wave oscillator, not voice synthesis~~ → **COMPLETED**: Morphing zing synthesis with formant control
+- ✅ ~~**No musical control**: No pitch, rhythm, or parameter control from ctrl client~~ → **COMPLETED**: Musical control interface with real-time parameter broadcast
 - **No ES-8 integration**: Timing is software-only
 - **No HRG system**: No harmonic ratio generation yet
 - **No envelope system**: No parameter modulation over phasor cycles
@@ -101,6 +102,18 @@ Phase 2 will implement the audio synthesis engine, replacing the test oscillator
 - WebRTC data channels configured for low-latency (unreliable, unordered)
 - Phasor synchronization handles network jitter with exponential moving average filtering
 - Star topology scales better than mesh (ctrl bandwidth is the main limit)
+
+### Technical Notes: Harmonic Ratio System
+
+**Important:** "Harmonic Ratio" is NOT a user-controllable parameter in this system.
+
+- **Formant-based synthesis**: Secondary oscillators run at vowel formant frequencies (F1, F2, F3)
+- **UPLO pairs**: Uses Unified Phase Locked Oscillator pairs for coherent formant generation
+- **Vowel space**: Formant frequencies determined by 2D vowel position (front/back, close/open)
+- **Emergent ratios**: Harmonic ratios emerge from formant_frequency / fundamental_frequency relationships
+- **Bilinear interpolation**: Vowel corners (u, ɔ, i, æ) interpolated based on X/Y position
+
+The `harmonicRatio` AudioParam exists in the worklet for internal DSP calculations, but should never be exposed as a direct user control. User controls vowel position; harmonic relationships emerge naturally.
 
 ### File Structure
 

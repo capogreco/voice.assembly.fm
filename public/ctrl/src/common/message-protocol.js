@@ -1,6 +1,7 @@
 /**
  * Message Protocol for Voice.Assembly.FM
  * Defines message types and validation for network communication
+ * Updated: Added MUSICAL_PARAMETERS support - v2024.1
  */
 
 export const MessageTypes = {
@@ -22,6 +23,7 @@ export const MessageTypes = {
   // Parameter Control
   PARAMETER_UPDATE: 'parameter-update',
   ENVELOPE_UPDATE: 'envelope-update',
+  MUSICAL_PARAMETERS: 'musical-parameters',
   
   // System Control
   CALIBRATION_MODE: 'calibration-mode',
@@ -80,6 +82,20 @@ export class MessageBuilder {
       synthId,
       parameters,
       envelopes,
+      timestamp: performance.now()
+    };
+  }
+
+  static musicalParameters(params) {
+    console.log('🎵 Building musical parameters message'); // Temporary debug log
+    return {
+      type: MessageTypes.MUSICAL_PARAMETERS,
+      frequency: params.frequency,
+      zingMorph: params.zingMorph,
+      zingAmount: params.zingAmount,
+      vowelX: params.vowelX,
+      vowelY: params.vowelY,
+      symmetry: params.symmetry,
       timestamp: performance.now()
     };
   }

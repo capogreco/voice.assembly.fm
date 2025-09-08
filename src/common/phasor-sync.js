@@ -31,10 +31,12 @@ export class MasterPhasorController extends EventTarget {
     }
 
     this.cycleFreq = 1.0 / cycleDurationSeconds;
+    this.phasor = 0.0; // Reset phasor to start of new cycle
     this.isRunning = true;
     this.lastUpdateTime = performance.now();
     
     console.log(`▶️ Master phasor started: ${cycleDurationSeconds}s cycles (${this.cycleFreq.toFixed(3)} Hz)`);
+    console.log(`🔍 Initial state: running=${this.isRunning}`);
 
     // Start sync broadcast timer
     this.syncInterval = setInterval(() => {
@@ -101,7 +103,7 @@ export class MasterPhasorController extends EventTarget {
    * Broadcast sync message to all peers
    */
   broadcastSync() {
-    if (!this.isRunning || !this.star.isLeader) return;
+    if (!this.isRunning) return;
 
     const syncMessage = MessageBuilder.phasorSync(
       this.phasor,
@@ -112,7 +114,7 @@ export class MasterPhasorController extends EventTarget {
     const sent = this.star.broadcast(syncMessage, 'sync');
     
     if (sent > 0) {
-      console.log(`📡 Broadcast phasor sync: ${this.phasor.toFixed(3)} to ${sent} peers`);
+      console.log(`📡 Master broadcast: phasor=${this.phasor.toFixed(3)}, freq=${this.cycleFreq.toFixed(3)}Hz to ${sent} peers`);
     }
   }
 
@@ -177,6 +179,12 @@ export class ClientPhasorSynchronizer extends EventTarget {
   handlePhasorSync(syncMessage) {
     const currentTime = performance.now();
     
+    // Calculate message age for debugging
+    const messageAge = currentTime - syncMessage.timestamp;
+    const audioAge = currentTime - syncMessage.audioTime;
+    
+    console.log(`🎯 Slave received: master=${syncMessage.phasor.toFixed(3)}, msgAge=${messageAge.toFixed(1)}ms, audioAge=${audioAge.toFixed(1)}ms`);
+    
     // Update phasor synchronization
     this.phasorSync.updateFromMaster(
       syncMessage.phasor,
@@ -186,7 +194,6 @@ export class ClientPhasorSynchronizer extends EventTarget {
     );
 
     // Record timing for health monitoring
-    const messageAge = currentTime - syncMessage.timestamp;
     this.clockFilter.update(messageAge, messageAge); // Simple approximation
 
     this.lastSyncTime = currentTime;
@@ -211,17 +218,19 @@ export class ClientPhasorSynchronizer extends EventTarget {
       }));
     }
 
+    const syncedPhasor = this.phasorSync.getCurrentPhasor();
+    
     // Emit sync update
     this.dispatchEvent(new CustomEvent('sync-update', {
       detail: { 
-        phasor: this.phasorSync.getCurrentPhasor(),
+        phasor: syncedPhasor,
         cycleFreq: this.phasorSync.cycleFreq,
         audioTime: currentTime,
         health: this.clockFilter.getEstimate()
       }
     }));
 
-    console.log(`🎯 Sync update: phasor=${this.phasorSync.getCurrentPhasor().toFixed(3)}, age=${messageAge.toFixed(1)}ms`);
+    console.log(`🎯 Final synced phasor: ${syncedPhasor.toFixed(3)}`);
   }
 
   /**

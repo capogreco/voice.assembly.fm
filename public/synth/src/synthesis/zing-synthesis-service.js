@@ -1,71 +1,74 @@
 /**
- * Zing Synthesis Service for Voice.Assembly.FM
+ * Formant Synthesis Service for Voice.Assembly.FM
  * 
- * Service for managing the Morphing Zing AudioWorklet
- * Based on formant-synth-service.js from euclidean sequencer reference
+ * Service for managing the dual-path Formant Synthesizer AudioWorklet
+ * Combines PM (Phase Modulation) formant synthesis with Zing formant augmentation
+ * 
+ * The synthesizer provides two synthesis paths:
+ * - Primary Path: Clean PM formant synthesis (baseline)
+ * - Augmentation Path: Zing formant synthesis (adds harmonic complexity)
+ * 
+ * Both paths maintain formant structure and respond to vowel space morphing.
+ * The zingAmount parameter blends between pure PM (0) and max zing augmentation (1).
  */
 
-export class ZingSynthesisService {
+export class FormantSynthesisService {
   constructor(audioContext) {
     this.audioContext = audioContext;
-    this.zingSynthNode = null;
+    this.formantSynthNode = null;
     this.isInitialized = false;
     
-    // Current synthesis parameters
+    // Current synthesis parameters (simplified to match new worklet)
     this.parameters = {
       frequency: 220,
-      harmonicRatio: 2,
-      morph: 0,
-      modDepth: 0.5,
-      symmetry: 0.5,
-      gain: 0,  // Start silent
-      sync: 1,
+      active: 0,        // Start inactive
       vowelX: 0.5,
       vowelY: 0.5,
-      vowelBlend: 0.5,  // Blend between zing and vowel modes
-      f1PhaseOffset: 0,
-      f2PhaseOffset: 0
+      zingAmount: 0.5,  // Blend between PM (0) and Zing (1)
+      zingMorph: 0,     // Zing character control
+      symmetry: 0.5,
+      gain: 1.0
     };
     
-    console.log('🎤 Zing synthesis service created');
+    console.log('🎤 Formant synthesis service created');
   }
   
   /**
-   * Initialize the Zing synthesis AudioWorklet
+   * Initialize the Formant synthesis AudioWorklet
    */
   async initialize() {
     if (this.isInitialized) {
-      return this.zingSynthNode;
+      return this.formantSynthNode;
     }
     
     try {
-      console.log('🎵 Initializing Morphing Zing AudioWorklet...');
+      console.log('🎵 Initializing Formant Synthesizer AudioWorklet...');
       
       // Load the worklet module
-      await this.audioContext.audioWorklet.addModule('./worklets/morphing-zing.worklet.js');
+      await this.audioContext.audioWorklet.addModule('./worklets/vowel-synth.worklet.js');
       
-      // Create the worklet node with 6 channels output (main + duplicate + F1 + F2 + F3 + unused)
-      this.zingSynthNode = new AudioWorkletNode(this.audioContext, 'morphing-zing', {
+      // Create the worklet node with 5 channels output (main + duplicate + F1 + F2 + F3)
+      this.formantSynthNode = new AudioWorkletNode(this.audioContext, 'vowel-synth', {
         numberOfInputs: 0,
         numberOfOutputs: 1,
-        outputChannelCount: [6]  // Main, duplicate, F1, F2, F3, unused
+        outputChannelCount: [5]  // Main, duplicate, F1, F2, F3
       });
       
       // Set initial parameters
       this.updateAllParameters();
       
       this.isInitialized = true;
-      console.log('✅ Morphing Zing AudioWorklet initialized successfully');
+      console.log('✅ Formant Synthesizer AudioWorklet initialized successfully');
       
-      return this.zingSynthNode;
+      return this.formantSynthNode;
       
     } catch (error) {
-      console.error('❌ Zing synthesis initialization failed:', error);
+      console.error('❌ Formant synthesis initialization failed:', error);
       
       if (error.name === 'InvalidStateError') {
         console.error('Audio context might not be running.');
       } else if (error.message.includes('addModule')) {
-        console.error('Failed to load morphing-zing worklet module. Check file path.');
+        console.error('Failed to load formant synthesizer worklet module. Check file path.');
       }
       
       throw error;
@@ -76,8 +79,8 @@ export class ZingSynthesisService {
    * Connect synthesis output to a destination node
    */
   connect(destinationNode) {
-    if (this.zingSynthNode) {
-      this.zingSynthNode.connect(destinationNode);
+    if (this.formantSynthNode) {
+      this.formantSynthNode.connect(destinationNode);
     }
   }
   
@@ -85,29 +88,49 @@ export class ZingSynthesisService {
    * Disconnect synthesis output
    */
   disconnect() {
-    if (this.zingSynthNode) {
-      this.zingSynthNode.disconnect();
+    if (this.formantSynthNode) {
+      this.formantSynthNode.disconnect();
     }
   }
   
   /**
    * Update synthesis parameters
    */
-  updateParameters(newParams) {
-    // Update stored parameters
-    Object.assign(this.parameters, newParams);
-    
-    // Update AudioWorklet parameters if initialized
-    if (this.zingSynthNode) {
-      for (const [paramName, value] of Object.entries(newParams)) {
-        if (this.zingSynthNode.parameters.has(paramName)) {
-          this.zingSynthNode.parameters.get(paramName).setValueAtTime(
-            value,
-            this.audioContext.currentTime
-          );
+  updateParameters(params) {
+    if (!this.formantSynthNode) return;
+    const now = this.audioContext.currentTime;
+
+    // Helper to set a parameter if it exists in the received params
+    const setParam = (paramName, value) => {
+        if (value !== undefined && this.formantSynthNode.parameters.has(paramName)) {
+            this.formantSynthNode.parameters.get(paramName).setValueAtTime(value, now);
         }
-      }
-    }
+    };
+    
+    setParam('frequency', params.frequency);
+    setParam('zingAmount', params.zingAmount);
+
+    // Process envelope parameters
+    const processEnvelope = (paramName, envelope) => {
+        if (!envelope) return;
+        if (envelope.static) {
+            setParam(`${paramName}Start`, envelope.value);
+            setParam(`${paramName}End`, envelope.value);
+        } else {
+            setParam(`${paramName}Start`, envelope.start);
+            setParam(`${paramName}End`, envelope.end);
+            setParam(`${paramName}Type`, envelope.type === 'cos' ? 1.0 : 0.0);
+            setParam(`${paramName}Morph`, envelope.morph);
+        }
+    };
+
+    processEnvelope('vowelX', params.vowelX);
+    processEnvelope('vowelY', params.vowelY);
+    processEnvelope('zingMorph', params.zingMorph);
+    processEnvelope('symmetry', params.symmetry);
+
+    // Update stored parameters for compatibility
+    Object.assign(this.parameters, params);
   }
   
   /**
@@ -115,10 +138,10 @@ export class ZingSynthesisService {
    * @private
    */
   updateAllParameters() {
-    if (this.zingSynthNode) {
+    if (this.formantSynthNode) {
       for (const [paramName, value] of Object.entries(this.parameters)) {
-        if (this.zingSynthNode.parameters.has(paramName)) {
-          this.zingSynthNode.parameters.get(paramName).setValueAtTime(
+        if (this.formantSynthNode.parameters.has(paramName)) {
+          this.formantSynthNode.parameters.get(paramName).setValueAtTime(
             value,
             this.audioContext.currentTime
           );
@@ -145,11 +168,11 @@ export class ZingSynthesisService {
   }
   
   /**
-   * Set morphing parameter (-1 to 1)
+   * Set zing morphing parameter (-1 to 1)
    */
-  setMorph(morph) {
+  setZingMorph(zingMorph) {
     this.updateParameters({
-      morph: Math.max(-1, Math.min(1, morph))
+      zingMorph: Math.max(-1, Math.min(1, zingMorph))
     });
   }
   
@@ -162,30 +185,22 @@ export class ZingSynthesisService {
     });
   }
   
+  
   /**
-   * Set gain/amplitude (0 to 1)
+   * Set synthesis active state (0 or 1)
    */
-  setGain(gain) {
+  setActive(active) {
     this.updateParameters({
-      gain: Math.max(0, Math.min(1, gain))
+      active: active ? 1 : 0
     });
   }
   
   /**
-   * Set harmonic ratio for zing synthesis
+   * Set amount of zing augmentation (0 = pure PM formants, 1 = max zing augmentation)
    */
-  setHarmonicRatio(ratio) {
+  setZingAmount(amount) {
     this.updateParameters({
-      harmonicRatio: Math.max(0.5, Math.min(16, ratio))
-    });
-  }
-  
-  /**
-   * Set blend between zing and vowel modes (0 = zing, 1 = vowel)
-   */
-  setVowelBlend(blend) {
-    this.updateParameters({
-      vowelBlend: Math.max(0, Math.min(1, blend))
+      zingAmount: Math.max(0, Math.min(1, amount))
     });
   }
   
@@ -193,13 +208,24 @@ export class ZingSynthesisService {
    * Check if synthesis is ready
    */
   isReady() {
-    return this.isInitialized && this.zingSynthNode !== null;
+    return this.isInitialized && this.formantSynthNode !== null;
   }
   
+  /**
+   * Set the sync phasor value for envelope synchronization
+   */
+  setSyncPhasor(syncPhasorValue) {
+    if (this.formantSynthNode) {
+        // Use a short ramp to avoid clicks if the sync phasor jumps
+        const now = this.audioContext.currentTime;
+        this.formantSynthNode.parameters.get('syncPhasor').linearRampToValueAtTime(syncPhasorValue, now + 0.01);
+    }
+  }
+
   /**
    * Get the worklet node for advanced usage
    */
   getNode() {
-    return this.zingSynthNode;
+    return this.formantSynthNode;
   }
 }

@@ -5,7 +5,7 @@
 import { WebRTCStar, generatePeerId } from '../../src/common/webrtc-star.js';
 import { ClientPhasorSynchronizer } from '../../src/common/phasor-sync.js';
 import { MessageTypes, MessageBuilder } from '../../src/common/message-protocol.js';
-import { ZingSynthesisService } from './src/synthesis/zing-synthesis-service.js';
+import { FormantSynthesisService } from './src/synthesis/zing-synthesis-service.js';
 
 class SynthClient {
   constructor() {
@@ -17,13 +17,15 @@ class SynthClient {
     
     // Audio synthesis
     this.masterGain = null;
-    this.zingSynth = null;
+    this.formantSynth = null;
     this.isCalibrationMode = false;
+    this.isManualControlMode = false; // Track if we're using manual ctrl parameters
     this.noiseNode = null;
     
     // UI state
     this.currentState = 'join'; // 'join', 'connecting', 'active'
     this.volume = 0.1;
+    this.testSynthActive = false;
     
     // UI Elements
     this.elements = {
@@ -32,9 +34,47 @@ class SynthClient {
       joinButton: document.getElementById('join-button'),
       connectionStatus: document.getElementById('connection-status'),
       loading: document.getElementById('loading'),
-      canvas: document.getElementById('oscilloscope-canvas')
+      canvas: document.getElementById('oscilloscope-canvas'),
+      syncPhasorDisplay: document.getElementById('sync-phasor-display'),
+      syncPhasorFill: document.getElementById('sync-phasor-fill'),
+      testSynthBtn: document.getElementById('test-synth-btn')
     };
     
+    this.amplitudeEnvelope = null;
+
+    // Envelope calculation helpers needed for real-time gain control
+    this._lerp = (a, b, mix) => a * (1 - mix) + b * mix;
+
+    this._getLinTypeEnvelope = (t, p) => {
+      const t_clamped = Math.max(0, Math.min(1, t));
+      const p_clamped = Math.max(0, Math.min(1, p));
+      let exponent;
+      const minExponent = 1 / 8;
+      const maxExponent = 8;
+      if (p_clamped < 0.5) {
+        exponent = 1 + (p_clamped - 0.5) * 2 * (1 - minExponent);
+      } else {
+        exponent = 1 + (p_clamped - 0.5) * 2 * (maxExponent - 1);
+      }
+      if (t_clamped === 0) return 0;
+      return Math.pow(t_clamped, exponent);
+    };
+
+    this._getCosTypeEnvelope = (t, p) => {
+      const t_clamped = Math.max(0, Math.min(1, t));
+      const p_clamped = Math.max(0, Math.min(1, p));
+      const f_square = t_clamped > 0 ? 1 : 0;
+      const f_cosine = 0.5 - Math.cos(t_clamped * Math.PI) * 0.5;
+      const f_median = t_clamped < 0.5 ? 0 : 1;
+      if (p_clamped < 0.5) {
+        const mix = p_clamped * 2;
+        return this._lerp(f_square, f_cosine, mix);
+      } else {
+        const mix = (p_clamped - 0.5) * 2;
+        return this._lerp(f_cosine, f_median, mix);
+      }
+    };
+
     this.setupEventHandlers();
     console.log(`🎤 Synth client initialized: ${this.peerId}`);
     
@@ -45,6 +85,9 @@ class SynthClient {
   setupEventHandlers() {
     // Join button
     this.elements.joinButton.addEventListener('click', () => this.joinChoir());
+    
+    // Test synthesis button
+    this.elements.testSynthBtn.addEventListener('click', () => this.toggleTestSynth());
     
     
     // Handle window resize for canvas
@@ -89,6 +132,7 @@ class SynthClient {
       this.setState('active');
       
       console.log('🎤 Successfully joined choir');
+      this._startLocalPhasorLoop();
       
     } catch (error) {
       console.error('❌ Failed to join choir:', error);
@@ -125,16 +169,16 @@ class SynthClient {
     this.masterGain.connect(this.audioContext.destination);
     this.updateVolume();
     
-    // Initialize zing synthesis
-    await this.initializeZingSynthesis();
+    // Initialize formant synthesis
+    await this.initializeFormantSynthesis();
     
     // Apply any pending calibration state
     if (this.isCalibrationMode) {
       console.log('🔧 Applying pending calibration mode');
       
-      // Disconnect zing synthesis during calibration
-      if (this.zingGain) {
-        this.zingGain.disconnect();
+      // Disconnect formant synthesis during calibration
+      if (this.formantNode) {
+        this.formantNode.disconnect();
       }
       
       this.startWhiteNoise(0.1);
@@ -144,24 +188,20 @@ class SynthClient {
     console.log('🔊 Audio context initialized');
   }
 
-  async initializeZingSynthesis() {
-    console.log('🎵 Initializing zing synthesis...');
+  async initializeFormantSynthesis() {
+    console.log('🎵 Initializing formant synthesis...');
     
-    this.zingSynth = new ZingSynthesisService(this.audioContext);
+    this.formantSynth = new FormantSynthesisService(this.audioContext);
     
     try {
-      this.zingNode = await this.zingSynth.initialize();
+      this.formantNode = await this.formantSynth.initialize();
       
-      // Create separate gain node for zing synthesis to control independently
-      this.zingGain = this.audioContext.createGain();
-      this.zingGain.gain.setValueAtTime(1, this.audioContext.currentTime);
+      // Connect directly to master gain - amplitude controlled by internal envelope
+      this.formantNode.connect(this.masterGain);
       
-      this.zingNode.connect(this.zingGain);
-      this.zingGain.connect(this.masterGain);
-      
-      console.log('🎤 Zing synthesis initialized and connected');
+      console.log('🎤 Formant synthesis initialized and connected');
     } catch (error) {
-      console.error('❌ Failed to initialize zing synthesis:', error);
+      console.error('❌ Failed to initialize formant synthesis:', error);
       throw error;
     }
   }
@@ -202,26 +242,31 @@ class SynthClient {
 
   setupPhasorEventHandlers() {
     this.phasorSync.addEventListener('sync-update', (event) => {
-      const { phasor, health } = event.detail;
-      
+      const { phasor: syncPhasor, health } = event.detail;
+
+      // The local phasor loop now handles updating the synth.
+      // This handler's only job is to update the UI status.
+
       // Update connection status based on sync health
       if (health.confidence > 0.5) {
-        this.updateConnectionStatus('syncing', `Synced (${phasor.toFixed(3)})`);
+        this.updateConnectionStatus('syncing', `Synced (${syncPhasor.toFixed(3)})`);
       }
+
+      // Update sync phasor display
+      this.updateSyncPhasorDisplay(syncPhasor, health.confidence);
       
-      // Update zing synthesis based on phasor
-      if (this.zingSynth && this.zingSynth.isReady() && !this.isCalibrationMode) {
-        // Map phasor to frequency and vowel position
+      // Update formant synthesis based on sync phasor (only when not in manual control mode)
+      if (this.formantSynth && this.formantSynth.isReady() && !this.isCalibrationMode && !this.isManualControlMode) {
+        // Map sync phasor to frequency and vowel position
         const baseFreq = 220;
-        const freq = baseFreq + (phasor * 220); // Sweep from 220Hz to 440Hz
+        const freq = baseFreq + (syncPhasor * 220); // Sweep from 220Hz to 440Hz
         
-        // Map phasor to vowel space (u -> ɔ -> i -> æ cycle)
-        const vowelX = (Math.sin(phasor * Math.PI * 2) + 1) / 2; // 0-1 oscillation
-        const vowelY = (Math.cos(phasor * Math.PI * 2) + 1) / 2; // 0-1 oscillation
+        // Map sync phasor to vowel space (u -> ɔ -> i -> æ cycle)
+        const vowelX = (Math.sin(syncPhasor * Math.PI * 2) + 1) / 2; // 0-1 oscillation
+        const vowelY = (Math.cos(syncPhasor * Math.PI * 2) + 1) / 2; // 0-1 oscillation
         
-        this.zingSynth.setFrequency(freq);
-        this.zingSynth.setVowelPosition(vowelX, vowelY);
-        this.zingSynth.setGain(0.3); // Active synthesis
+        this.formantSynth.setFrequency(freq);
+        this.formantSynth.setVowelPosition(vowelX, vowelY);
       }
     });
     
@@ -233,11 +278,27 @@ class SynthClient {
       console.warn('⚠️ Lost synchronization with master');
       this.updateConnectionStatus('error', 'Sync lost');
       
-      // Disconnect zing synthesis
-      if (this.zingGain) {
-        this.zingGain.disconnect();
+      // Disconnect formant synthesis
+      if (this.formantNode) {
+        this.formantNode.disconnect();
       }
     });
+  }
+
+  _startLocalPhasorLoop() {
+    const update = () => {
+      if (this.phasorSync && this.formantSynth && this.formantSynth.isReady()) {
+        // Get the latest predicted phasor value from our corrected logic
+        const predictedPhasor = this.phasorSync.getCurrentPhasor();
+        
+        // Continuously update the AudioWorklet's phasor parameter
+        this.formantSynth.setSyncPhasor(predictedPhasor);
+      }
+      // Schedule the next frame to continue the loop
+      requestAnimationFrame(update);
+    };
+    // Start the loop for the first time
+    update();
   }
 
   handleDataMessage(peerId, channelType, message) {
@@ -250,6 +311,10 @@ class SynthClient {
         
       case MessageTypes.CALIBRATION_MODE:
         this.handleCalibrationMode(message);
+        break;
+        
+      case MessageTypes.MUSICAL_PARAMETERS:
+        this.handleMusicalParameters(message);
         break;
         
       default:
@@ -266,9 +331,9 @@ class SynthClient {
     if (this.isCalibrationMode) {
       console.log('🔧 Entering calibration mode');
       
-      // Disconnect zing synthesis during calibration
-      if (this.zingGain) {
-        this.zingGain.disconnect();
+      // Disconnect formant synthesis during calibration
+      if (this.formantNode) {
+        this.formantNode.disconnect();
       }
       
       // Only start white noise if audio context is initialized
@@ -285,17 +350,52 @@ class SynthClient {
       console.log('🔧 Exiting calibration mode');
       this.stopWhiteNoise();
       
-      // Reconnect zing synthesis to master gain
-      if (this.zingGain) {
-        this.zingGain.connect(this.masterGain);
+      // Reconnect formant synthesis to master gain
+      if (this.formantNode) {
+        this.formantNode.connect(this.masterGain);
       }
       
-      // Reconnect oscilloscope to zing synthesis
-      this.connectOscilloscopeToZing();
+      // Reconnect oscilloscope to formant synthesis
+      this.connectOscilloscopeToFormant();
       
-      // Zing synthesis will resume automatically via phasor sync
+      // Formant synthesis will resume automatically via phasor sync
       this.updateConnectionStatus('connected', 'Connected');
     }
+  }
+
+  handleMusicalParameters(message) {
+    console.log('🎵 Received musical parameters:', message);
+    
+    if (!this.formantSynth || !this.formantSynth.isReady()) {
+      console.warn('⚠️ Cannot apply musical parameters: formant synthesis not ready');
+      return;
+    }
+    
+    // Switch to manual control mode
+    this.isManualControlMode = true;
+    
+    // Apply the received parameters to the synthesis engine
+    this.formantSynth.updateParameters({
+      frequency: message.frequency,
+      zingMorph: message.zingMorph,
+      zingAmount: message.zingAmount,
+      vowelX: message.vowelX,
+      vowelY: message.vowelY,
+      symmetry: message.symmetry
+    });
+    
+    // Store the new amplitude envelope definition from the message
+    if (message.amplitude) {
+      this.amplitudeEnvelope = message.amplitude;
+      
+      // Amplitude now handled internally by AudioWorklet envelope system
+    }
+
+    // Always ensure the worklet is active so it can process audio.
+    // The actual volume is now controlled by the envelope.
+    this.formantSynth.setActive(true);
+    
+    console.log(`🎛️ Applied parameters: f=${message.frequency}Hz, zingMorph=${message.zingMorph.static ? message.zingMorph.value.toFixed(2) : 'envelope'}, vowel=(${message.vowelX.static ? message.vowelX.value.toFixed(2) : 'envelope'},${message.vowelY.static ? message.vowelY.value.toFixed(2) : 'envelope'}), symmetry=${message.symmetry.static ? message.symmetry.value.toFixed(2) : 'envelope'}`);
   }
 
   startWhiteNoise(amplitude = 0.3) {
@@ -319,9 +419,9 @@ class SynthClient {
       
       console.log('🎵 White noise started');
       
-      // Disconnect zing synthesis during calibration
-      if (this.zingGain) {
-        this.zingGain.disconnect();
+      // Disconnect formant synthesis during calibration
+      if (this.formantNode) {
+        this.formantNode.disconnect();
       }
       
     } catch (error) {
@@ -355,8 +455,8 @@ class SynthClient {
     // Connect to appropriate source based on current mode
     if (this.isCalibrationMode && this.whiteNoiseWorklet) {
       this.connectOscilloscopeToWhiteNoise();
-    } else if (this.zingSynth && this.zingSynth.isReady()) {
-      this.connectOscilloscopeToZing();
+    } else if (this.formantSynth && this.formantSynth.isReady()) {
+      this.connectOscilloscopeToFormant();
     }
     
     this.oscilloscope.start();
@@ -392,10 +492,10 @@ class SynthClient {
     }
   }
 
-  connectOscilloscopeToZing() {
-    if (!this.oscilloscope || !this.zingNode) return;
+  connectOscilloscopeToFormant() {
+    if (!this.oscilloscope || !this.formantNode) return;
     
-    console.log('🔬 Connecting oscilloscope to zing synthesis formant channels');
+    console.log('🔬 Connecting oscilloscope to formant synthesis formant channels');
     
     // Disconnect current oscilloscope connections
     this.oscilloscope.disconnect();
@@ -403,16 +503,16 @@ class SynthClient {
     // Set normal amplification for formant visualization
     this.oscilloscope.calibrationMode = false;
     
-    // Create channel splitter for 6-channel zing output
-    if (this.zingSplitter) {
-      this.zingSplitter.disconnect();
+    // Create channel splitter for 5-channel formant output
+    if (this.formantSplitter) {
+      this.formantSplitter.disconnect();
     }
-    this.zingSplitter = this.audioContext.createChannelSplitter(6);
-    this.zingNode.connect(this.zingSplitter);
+    this.formantSplitter = this.audioContext.createChannelSplitter(5);
+    this.formantNode.connect(this.formantSplitter);
     
     // Connect F1 (channel 2) to left, F2 (channel 3) to right for XY scope
-    this.zingSplitter.connect(this.oscilloscope.leftAnalyser, 2);  // F1 -> X axis
-    this.zingSplitter.connect(this.oscilloscope.rightAnalyser, 3); // F2 -> Y axis
+    this.formantSplitter.connect(this.oscilloscope.leftAnalyser, 2);  // F1 -> X axis
+    this.formantSplitter.connect(this.oscilloscope.rightAnalyser, 3); // F2 -> Y axis
     
     // Note: We don't reconnect masterGain to oscilloscope.channelSplitter 
     // because we're using direct formant channel connections
@@ -423,9 +523,9 @@ class SynthClient {
     
     console.log('🔬 Connecting oscilloscope to white noise');
     
-    // Disconnect any zing connections
-    if (this.zingSplitter) {
-      this.zingSplitter.disconnect();
+    // Disconnect any formant connections
+    if (this.formantSplitter) {
+      this.formantSplitter.disconnect();
     }
     
     // Disconnect current oscilloscope input
@@ -441,6 +541,25 @@ class SynthClient {
     this.oscilloscope.channelSplitter.connect(this.oscilloscope.rightAnalyser, 1);
   }
 
+  updateSyncPhasorDisplay(syncPhasor, confidence) {
+    if (!this.elements.syncPhasorDisplay) return;
+    
+    const label = this.elements.syncPhasorDisplay.querySelector('.sync-phasor-label');
+    const fill = this.elements.syncPhasorFill;
+    
+    if (confidence > 0.1) {
+      // Active sync signal
+      label.textContent = `Sync: ${(syncPhasor * 100).toFixed(1)}%`;
+      fill.style.width = `${syncPhasor * 100}%`;
+      this.elements.syncPhasorDisplay.style.borderColor = '#00ff88';
+    } else {
+      // No sync signal
+      label.textContent = 'Sync: No Signal';
+      fill.style.width = '0%';
+      this.elements.syncPhasorDisplay.style.borderColor = '#333';
+    }
+  }
+
   updateConnectionStatus(status, message = '') {
     const element = this.elements.connectionStatus;
     
@@ -454,6 +573,64 @@ class SynthClient {
     }[status] || message;
     
     element.textContent = statusText;
+  }
+
+  toggleTestSynth() {
+    this.testAudio();
+  }
+
+  testAudio() {
+    console.log('🔧 Debug - audioContext:', !!this.audioContext, 'formantSynth:', !!this.formantSynth, 'formantNode:', !!this.formantNode);
+
+    if (!this.audioContext || !this.formantSynth || !this.formantNode) {
+        console.log('❌ Cannot run test: audio components not initialized.');
+        return;
+    }
+
+    console.log('🔊 Starting syncPhasor synchronization test...');
+    const now = this.audioContext.currentTime;
+    
+    // Get the actual AudioWorklet node
+    const node = this.formantSynth.formantSynthNode;
+    if (!node) {
+        console.log('❌ AudioWorklet node not available');
+        return;
+    }
+
+    // Set basic synthesis parameters
+    node.parameters.get('active').setValueAtTime(1, now);
+    node.parameters.get('frequency').setValueAtTime(330, now);
+    node.parameters.get('zingAmount').setValueAtTime(0, now); // Pure formant
+    
+    // Test envelope system: vowel morphing from 'a' to 'i' sound  
+    node.parameters.get('vowelXStart').setValueAtTime(0.1, now);  // Start: more 'a' 
+    node.parameters.get('vowelXEnd').setValueAtTime(0.9, now);    // End: more 'i'
+    node.parameters.get('vowelYStart').setValueAtTime(0.3, now);  // Start: lower formant
+    node.parameters.get('vowelYEnd').setValueAtTime(0.8, now);    // End: higher formant
+    
+    // Use linear envelope (type=0, morph=0.5 for linear progression)
+    node.parameters.get('vowelXType').setValueAtTime(0, now);     // Linear
+    node.parameters.get('vowelXMorph').setValueAtTime(0.5, now);  // Linear progression
+    node.parameters.get('vowelYType').setValueAtTime(0, now);
+    node.parameters.get('vowelYMorph').setValueAtTime(0.5, now);
+    
+    // Set symmetry to default (no envelope)
+    node.parameters.get('symmetryStart').setValueAtTime(0.5, now);
+    node.parameters.get('symmetryEnd').setValueAtTime(0.5, now);
+    
+    // Test amplitude envelope: fade in and out
+    node.parameters.get('amplitudeStart').setValueAtTime(0.0, now);   // Start: silent
+    node.parameters.get('amplitudeEnd').setValueAtTime(0.6, now);     // End: audible
+    node.parameters.get('amplitudeType').setValueAtTime(0, now);      // Linear envelope
+    node.parameters.get('amplitudeMorph').setValueAtTime(0.5, now);   // Linear progression
+    
+    console.log('🎵 Set envelope parameters for distributed sync test');
+    console.log('🌐 Envelopes will be driven by syncPhasor from control client');
+    console.log('📡 Press "Start Timing" in control client to begin synchronized envelope test');
+    
+    // NOTE: syncPhasor will be controlled by the control client via phasor sync broadcasts
+    // No local syncPhasor ramp - we wait for network synchronization
+    console.log('⏰ Waiting for syncPhasor from control client...');
   }
 }
 
@@ -569,13 +746,11 @@ class XYOscilloscope {
       let ySample = this.rightData[i];
       
       // Clamp samples to avoid extreme values
-      xSample = Math.max(-1, Math.min(1, xSample));
-      ySample = Math.max(-1, Math.min(1, ySample));
       
       // Convert to screen coordinates with appropriate scaling
-      // White noise: 1x amplification (10x smaller than before)
-      // Formant synthesis: 0.6x amplification (2x larger than before)
-      const amplification = this.calibrationMode ? 1.0 : 0.6;
+      // White noise: 1x amplification 
+      // Formant synthesis: 0.3x amplification
+      const amplification = this.calibrationMode ? 1.0 : 0.3;
       const x = this.centerX + (xSample * amplification * maxRadius);
       const y = this.centerY - (ySample * amplification * maxRadius); // Negative for correct orientation
       
