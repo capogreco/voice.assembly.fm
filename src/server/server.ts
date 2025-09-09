@@ -360,12 +360,21 @@ async function handleRequest(request: Request): Promise<Response> {
     requestedPath = "/synth/index.html";
   }
 
+  // Handle ctrl-main.js and synth-main.js at root level (deployment issue)
+  if (requestedPath === "/ctrl-main.js") {
+    requestedPath = "/ctrl/ctrl-main.js";
+  } else if (requestedPath === "/synth-main.js") {
+    requestedPath = "/synth/synth-main.js";
+  }
+
   let fullFsPath;
   if (requestedPath.startsWith("/src/") || requestedPath.startsWith("/worklets/")) {
     fullFsPath = `.${requestedPath}`;
   } else {
     fullFsPath = `${fsPathRoot}${requestedPath}`;
   }
+  
+  console.log(`🗂️ Serving: ${requestedPath} -> ${fullFsPath}`);
 
   try {
     const file = await Deno.readFile(fullFsPath);
