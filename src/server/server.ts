@@ -347,26 +347,45 @@ async function handleRequest(request: Request): Promise<Response> {
     return response;
   }
 
-  // Handle route aliases for the standard file server
+  // Use serveDir with urlRoot mapping to handle different directories
+  let response;
+  
   if (url.pathname === "/") {
-    request = new Request(new URL("/public/index.html", request.url), request);
+    response = await serveDir(request, {
+      fsRoot: "./public",
+      urlRoot: "/",
+      index: "index.html",
+      headers: ["access-control-allow-origin: *"]
+    });
   } else if (url.pathname === "/ctrl/" || url.pathname === "/ctrl") {
-    request = new Request(new URL("/public/ctrl/index.html", request.url), request);
+    response = new Response(null, {
+      status: 302,
+      headers: { "Location": "/ctrl/index.html" }
+    });
   } else if (url.pathname === "/synth/" || url.pathname === "/synth") {
-    request = new Request(new URL("/public/synth/index.html", request.url), request);
-  } else if (url.pathname.startsWith("/src/") || url.pathname.startsWith("/worklets/")) {
-    // Serve src files from project root
-    request = new Request(new URL("." + url.pathname, request.url), request);
+    response = new Response(null, {
+      status: 302,
+      headers: { "Location": "/synth/index.html" }
+    });
+  } else if (url.pathname.startsWith("/src/")) {
+    // Serve from project root for src files
+    response = await serveDir(request, {
+      fsRoot: ".",
+      headers: ["access-control-allow-origin: *"]
+    });
+  } else if (url.pathname.startsWith("/worklets/")) {
+    // Serve worklets from public directories
+    response = await serveDir(request, {
+      fsRoot: "./public",
+      headers: ["access-control-allow-origin: *"]  
+    });
   } else {
-    // Serve everything else from public directory
-    request = new Request(new URL("/public" + url.pathname, request.url), request);
+    // Serve everything else from public
+    response = await serveDir(request, {
+      fsRoot: "./public",
+      headers: ["access-control-allow-origin: *"]
+    });
   }
-
-  // Use Deno's standard file server with proper MIME types
-  const response = await serveDir(request, {
-    fsRoot: ".",
-    headers: ["access-control-allow-origin: *"]
-  });
 
   return response;
 }
