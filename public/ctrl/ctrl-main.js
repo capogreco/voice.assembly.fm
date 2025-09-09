@@ -21,13 +21,19 @@ class ControlClient {
     
     // Phasor state
     this.phasor = 0.0;              // Current phasor position (0.0 to 1.0)
-    this.bpm = 120;                 // Beats per minute
-    this.beatsPerCycle = 4;         // Number of beats per cycle (bars)
-    this.cycleLength = 2.0;         // Seconds per cycle (calculated from BPM * beatsPerCycle)
+    this.cpm = 30;                  // Cycles per minute
+    this.stepsPerCycle = 16;        // Number of steps per cycle
+    this.cycleLength = 2.0;         // Seconds per cycle (calculated from CPM)
     this.lastPhasorTime = 0;        // For delta time calculation
     this.phasorUpdateId = null;     // RequestAnimationFrame ID
     this.lastBroadcastTime = 0;     // For phasor broadcast rate limiting
     this.phasorBroadcastRate = 30;  // Hz - how often to broadcast phasor
+    
+    // ES-8 Integration
+    this.audioContext = null;       // AudioContext for ES-8 CV output
+    this.es8Enabled = false;        // Enable/disable ES-8 output
+    this.cvOutputs = {};            // CV output nodes (8 channels)
+    this.gateOutputs = {};          // Gate output nodes
     
     
     // UI Elements
@@ -46,12 +52,15 @@ class ControlClient {
       frequencyValue: document.getElementById('frequency-value'),
       
       // Phasor controls
-      bpmSlider: document.getElementById('bpm-slider'),
-      bpmValue: document.getElementById('bpm-value'),
-      beatsPerCycleSlider: document.getElementById('beats-per-cycle-slider'),
-      beatsPerCycleValue: document.getElementById('beats-per-cycle-value'),
+      cpmSlider: document.getElementById('cpm-slider'),
+      cpmValue: document.getElementById('cpm-value'),
+      stepsPerCycleSlider: document.getElementById('steps-per-cycle-slider'),
+      stepsPerCycleValue: document.getElementById('steps-per-cycle-value'),
       phasorDisplay: document.getElementById('phasor-display'),
       phasorBar: document.getElementById('phasor-bar'),
+      
+      // ES-8 controls
+      es8EnableBtn: document.getElementById('es8-enable-btn'),
       
       peerList: document.getElementById('peer-list'),
       debugLog: document.getElementById('debug-log'),
@@ -132,24 +141,28 @@ class ControlClient {
       this.broadcastMusicalParameters();
     });
     
-    // BPM slider
-    if (this.elements.bpmSlider) {
-      this.elements.bpmSlider.addEventListener('input', (e) => {
-        this.bpm = parseFloat(e.target.value);
-        this.elements.bpmValue.textContent = `${this.bpm} BPM`;
+    // CPM slider
+    if (this.elements.cpmSlider) {
+      this.elements.cpmSlider.addEventListener('input', (e) => {
+        this.cpm = parseFloat(e.target.value);
+        this.elements.cpmValue.textContent = `${this.cpm} CPM`;
         this.calculateCycleLength();
-        this.log(`BPM changed to ${this.bpm}`, 'info');
+        this.log(`CPM changed to ${this.cpm}`, 'info');
       });
     }
     
-    // Beats per cycle slider
-    if (this.elements.beatsPerCycleSlider) {
-      this.elements.beatsPerCycleSlider.addEventListener('input', (e) => {
-        this.beatsPerCycle = parseFloat(e.target.value);
-        this.elements.beatsPerCycleValue.textContent = `${this.beatsPerCycle} beats`;
-        this.calculateCycleLength();
-        this.log(`Beats per cycle changed to ${this.beatsPerCycle}`, 'info');
+    // Steps per cycle slider
+    if (this.elements.stepsPerCycleSlider) {
+      this.elements.stepsPerCycleSlider.addEventListener('input', (e) => {
+        this.stepsPerCycle = parseFloat(e.target.value);
+        this.elements.stepsPerCycleValue.textContent = `${this.stepsPerCycle} steps`;
+        this.log(`Steps per cycle changed to ${this.stepsPerCycle}`, 'info');
       });
+    }
+    
+    // ES-8 enable button
+    if (this.elements.es8EnableBtn) {
+      this.elements.es8EnableBtn.addEventListener('click', () => this.toggleES8());
     }
   }
   
@@ -188,9 +201,9 @@ class ControlClient {
 
   // Phasor Management Methods
   calculateCycleLength() {
-    // Calculate cycle length: (60 seconds/minute / BPM) * beats per cycle
-    // Example: 120 BPM, 4 beats per cycle = (60/120) * 4 = 2.0 seconds per cycle
-    this.cycleLength = (60.0 / this.bpm) * this.beatsPerCycle;
+    // Calculate cycle length: 60 seconds/minute / CPM
+    // Example: 30 CPM = 60/30 = 2.0 seconds per cycle
+    this.cycleLength = 60.0 / this.cpm;
   }
 
   initializePhasor() {
@@ -215,6 +228,9 @@ class ControlClient {
     
     this.lastPhasorTime = currentTime;
     this.updatePhasorDisplay();
+    
+    // Update ES-8 CV outputs
+    this.updateES8Outputs();
     
     // Broadcast phasor at specified rate
     this.broadcastPhasor(currentTime);
@@ -256,13 +272,110 @@ class ControlClient {
     if (timeSinceLastBroadcast >= broadcastInterval) {
       const message = MessageBuilder.phasorSync(
         this.phasor,
-        this.bpm,
-        this.beatsPerCycle,
+        this.cpm,
+        this.stepsPerCycle,
         this.cycleLength
       );
       
       const sent = this.star.broadcastToType('synth', message, 'sync');
       this.lastBroadcastTime = currentTime;
+    }
+  }
+
+  // ES-8 Integration Methods
+  async toggleES8() {
+    this.es8Enabled = !this.es8Enabled;
+    
+    if (this.es8Enabled) {
+      await this.initializeES8();
+      this.elements.es8EnableBtn.textContent = 'Disable ES-8';
+      this.elements.es8EnableBtn.classList.add('primary');
+      this.log('ES-8 enabled - CV output active', 'success');
+    } else {
+      this.shutdownES8();
+      this.elements.es8EnableBtn.textContent = 'Enable ES-8';
+      this.elements.es8EnableBtn.classList.remove('primary');
+      this.log('ES-8 disabled', 'info');
+    }
+  }
+
+  async initializeES8() {
+    try {
+      // Create audio context if not exists
+      if (!this.audioContext) {
+        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      
+      // Resume if suspended
+      if (this.audioContext.state === 'suspended') {
+        await this.audioContext.resume();
+      }
+      
+      // Create CV and gate outputs for ES-8 (8 channels)
+      this.createES8Outputs();
+      
+      this.log('ES-8 audio context initialized', 'info');
+      
+    } catch (error) {
+      this.log(`ES-8 initialization failed: ${error.message}`, 'error');
+      this.es8Enabled = false;
+    }
+  }
+
+  createES8Outputs() {
+    // Create 8 channels for ES-8 output
+    for (let i = 0; i < 8; i++) {
+      // CV output (constant source + gain for voltage control)
+      const cvSource = this.audioContext.createConstantSource();
+      const cvGain = this.audioContext.createGain();
+      
+      cvSource.connect(cvGain);
+      cvGain.connect(this.audioContext.destination);
+      cvSource.start();
+      
+      this.cvOutputs[i] = { source: cvSource, gain: cvGain };
+    }
+    
+    // Initialize with basic pattern
+    this.updateES8Outputs();
+  }
+
+  updateES8Outputs() {
+    if (!this.es8Enabled || !this.audioContext) return;
+    
+    const now = this.audioContext.currentTime;
+    
+    // Channel 0: Phasor CV (0-5V scale)
+    const phasorCV = this.phasor * 5.0; // 0.0-1.0 → 0-5V
+    this.cvOutputs[0].gain.gain.setValueAtTime(phasorCV, now);
+    
+    // Channel 1: Beat clock (square wave)
+    const beatsPerCycle = this.beatsPerCycle;
+    const currentBeat = Math.floor(this.phasor * beatsPerCycle);
+    const beatPhase = (this.phasor * beatsPerCycle) % 1.0;
+    
+    // Gate high for first half of each beat
+    const gateValue = beatPhase < 0.5 ? 5.0 : 0.0;
+    this.cvOutputs[1].gain.gain.setValueAtTime(gateValue, now);
+    
+    // Channel 2: Downbeat trigger (high only on cycle start)
+    const downbeatValue = (currentBeat === 0 && beatPhase < 0.1) ? 5.0 : 0.0;
+    this.cvOutputs[2].gain.gain.setValueAtTime(downbeatValue, now);
+  }
+
+  shutdownES8() {
+    // Stop all CV outputs
+    Object.values(this.cvOutputs).forEach(output => {
+      if (output.source) {
+        output.source.stop();
+      }
+    });
+    
+    this.cvOutputs = {};
+    
+    if (this.audioContext) {
+      this.audioContext.close();
+      this.audioContext = null;
     }
   }
 

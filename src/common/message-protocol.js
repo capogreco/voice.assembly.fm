@@ -59,12 +59,12 @@ export class MessageBuilder {
     };
   }
 
-  static phasorSync(phasor, bpm, beatsPerCycle, cycleLength) {
+  static phasorSync(phasor, cpm, stepsPerCycle, cycleLength) {
     return {
       type: MessageTypes.PHASOR_SYNC,
       phasor,
-      bpm,
-      beatsPerCycle,
+      cpm,
+      stepsPerCycle,
       cycleLength,
       timestamp: performance.now()
     };
@@ -124,8 +124,8 @@ export function validateMessage(message) {
 
     case MessageTypes.PHASOR_SYNC:
       if (typeof message.phasor !== 'number' || 
-          typeof message.bpm !== 'number' ||
-          typeof message.beatsPerCycle !== 'number' ||
+          typeof message.cpm !== 'number' ||
+          typeof message.stepsPerCycle !== 'number' ||
           typeof message.cycleLength !== 'number') {
         throw new Error('Phasor sync message missing required numeric fields');
       }

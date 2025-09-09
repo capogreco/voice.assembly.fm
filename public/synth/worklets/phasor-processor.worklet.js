@@ -12,6 +12,20 @@ class PhasorProcessor extends AudioWorkletProcessor {
         minValue: 0.1, 
         maxValue: 60.0, 
         automationRate: 'k-rate' 
+      },
+      { 
+        name: 'stepsPerCycle', 
+        defaultValue: 16, 
+        minValue: 1, 
+        maxValue: 64, 
+        automationRate: 'k-rate' 
+      },
+      { 
+        name: 'enableRhythm', 
+        defaultValue: 0, 
+        minValue: 0, 
+        maxValue: 1, 
+        automationRate: 'k-rate' 
       }
     ];
   }
@@ -22,6 +36,10 @@ class PhasorProcessor extends AudioWorkletProcessor {
     // Phasor state
     this.phase = 0.0;
     this.isRunning = false;
+    
+    // Step tracking for rhythmic events
+    this.lastStep = -1;
+    this.currentStep = 0;
     
     // Listen for messages from main thread
     this.port.onmessage = (event) => {
@@ -78,9 +96,21 @@ class PhasorProcessor extends AudioWorkletProcessor {
     }
   }
 
+  onStepTrigger(stepNumber, stepsPerCycle) {
+    // Send step trigger event to main thread
+    this.port.postMessage({
+      type: 'step-trigger',
+      step: stepNumber,
+      stepsPerCycle: stepsPerCycle,
+      phase: this.phase
+    });
+  }
+
   process(inputs, outputs, parameters) {
     const bufferSize = outputs[0][0].length;
     const cycleLength = parameters.cycleLength[0];
+    const stepsPerCycle = parameters.stepsPerCycle[0];
+    const enableRhythm = parameters.enableRhythm[0] > 0.5;
     
     if (!this.isRunning) {
       return true;
@@ -96,6 +126,17 @@ class PhasorProcessor extends AudioWorkletProcessor {
       // Wrap around at 1.0
       if (this.phase >= 1.0) {
         this.phase -= 1.0;
+      }
+      
+      // Step boundary detection
+      if (enableRhythm) {
+        this.currentStep = Math.floor(this.phase * stepsPerCycle);
+        
+        // Trigger on step boundary
+        if (this.currentStep !== this.lastStep) {
+          this.onStepTrigger(this.currentStep, stepsPerCycle);
+          this.lastStep = this.currentStep;
+        }
       }
       
       // Output phasor (optional - can be used for audio-rate modulation)

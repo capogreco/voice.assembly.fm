@@ -45,6 +45,12 @@ class SynthClient {
     this.pllCorrectionFactor = 0.1;     // How aggressively to correct phase errors (0.1 = gentle)
     this.pllEnabled = true;             // Enable/disable phase correction
     
+    // Rhythm settings
+    this.rhythmEnabled = false;         // Enable/disable rhythmic events
+    this.stepsPerCycle = 16;            // Number of steps per cycle (16 = 16th notes)
+    this.clickVolume = 0.3;             // Volume for rhythmic click sounds
+    this.receivedBeatsPerCycle = 4;     // Store beats per cycle from ctrl for rhythm
+    
     // UI Elements
     this.elements = {
       joinState: document.getElementById('join-state'),
@@ -91,6 +97,7 @@ class SynthClient {
     };
 
     this.setupEventHandlers();
+    this.setupKeyboardShortcuts();
     
     // Auto-connect to network on page load
     this.autoConnect();
@@ -107,6 +114,22 @@ class SynthClient {
       }
     });
     
+  }
+
+  setupKeyboardShortcuts() {
+    document.addEventListener('keydown', (event) => {
+      // Only respond if no input fields are focused
+      if (document.activeElement.tagName === 'INPUT') return;
+      
+      switch (event.key.toLowerCase()) {
+        case 'r':
+          if (this.audioContext) {
+            this.toggleRhythm();
+            event.preventDefault();
+          }
+          break;
+      }
+    });
   }
 
   async autoConnect() {
@@ -388,8 +411,8 @@ class SynthClient {
 
   handlePhasorSync(message) {
     this.receivedPhasor = message.phasor;
-    this.receivedBpm = message.bpm;
-    this.receivedBeatsPerCycle = message.beatsPerCycle;
+    this.receivedCpm = message.cpm;
+    this.receivedStepsPerCycle = message.stepsPerCycle;
     this.receivedCycleLength = message.cycleLength;
     this.lastPhasorMessage = performance.now();
     
@@ -465,8 +488,11 @@ class SynthClient {
           // Update display to show worklet phasor with error info
           if (this.elements.connectionStatus) {
             const errorDisplay = Math.abs(phaseError) > 0.001 ? ` Δ${(phaseError * 1000).toFixed(0)}ms` : '';
-            this.elements.connectionStatus.textContent = `connected (${this.receivedBpm} bpm, ${this.receivedBeatsPerCycle}/cycle, ♪=${this.workletPhasor.toFixed(3)}${errorDisplay})`;
+            const rhythmDisplay = this.rhythmEnabled ? ' 🥁' : '';
+            this.elements.connectionStatus.textContent = `connected (${this.receivedBpm} bpm, ${this.receivedBeatsPerCycle}/cycle, ♪=${this.workletPhasor.toFixed(3)}${errorDisplay}${rhythmDisplay})`;
           }
+        } else if (event.data.type === 'step-trigger') {
+          this.onStepTrigger(event.data.step, event.data.stepsPerCycle);
         }
       };
       
@@ -482,8 +508,9 @@ class SynthClient {
 
   updatePhasorWorklet() {
     if (this.phasorWorklet) {
-      // Update cycle length in worklet
+      // Update cycle length and steps per cycle in worklet
       this.phasorWorklet.parameters.get('cycleLength').value = this.receivedCycleLength;
+      this.phasorWorklet.parameters.get('stepsPerCycle').value = this.receivedStepsPerCycle;
     }
   }
 
@@ -517,6 +544,65 @@ class SynthClient {
       targetPhase: expectedCtrlPhasor,
       correctionFactor: this.pllCorrectionFactor
     });
+  }
+
+  onStepTrigger(stepNumber, stepsPerCycle) {
+    if (!this.rhythmEnabled || !this.audioContext) {
+      return;
+    }
+    
+    // Generate a simple click sound for each step
+    this.playClickSound(stepNumber, stepsPerCycle);
+  }
+
+  playClickSound(stepNumber, stepsPerCycle) {
+    const now = this.audioContext.currentTime;
+    
+    // With CPM paradigm, we work directly with steps
+    // High click at cycle start (step 0), low clicks on all other steps
+    const isCycleStart = stepNumber === 0;
+    
+    // Play clicks on all steps
+    
+    // Create a simple click using oscillator + envelope
+    const osc = this.audioContext.createOscillator();
+    const gain = this.audioContext.createGain();
+    
+    // High click for cycle start, low click for all other steps
+    if (isCycleStart) {
+      osc.frequency.value = 1200;  // High click for cycle start
+      osc.type = 'sine';
+    } else {
+      osc.frequency.value = 600;   // Lower click for all other steps
+      osc.type = 'triangle';
+    }
+    
+    // Slightly different volumes
+    const volume = isCycleStart ? this.clickVolume : this.clickVolume * 0.7;
+    
+    // Quick envelope for click sound
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(volume, now + 0.001);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+    
+    // Connect and play
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    
+    osc.start(now);
+    osc.stop(now + 0.05);
+  }
+
+  toggleRhythm() {
+    this.rhythmEnabled = !this.rhythmEnabled;
+    
+    if (this.phasorWorklet) {
+      // Update worklet rhythm settings
+      this.phasorWorklet.parameters.get('enableRhythm').value = this.rhythmEnabled ? 1 : 0;
+      this.phasorWorklet.parameters.get('stepsPerCycle').value = this.stepsPerCycle;
+    }
+    
+    console.log(`Rhythm ${this.rhythmEnabled ? 'enabled' : 'disabled'}`);
   }
 
   startWhiteNoise(amplitude = 0.3) {

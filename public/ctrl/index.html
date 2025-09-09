@@ -283,6 +283,10 @@
                 <h3>test</h3>
                 <button class="button manual-mode-btn" id="manual-mode-btn">test audio</button>
             </div>
+            <div class="control-section">
+                <h3>es-8</h3>
+                <button class="button" id="es8-enable-btn">enable es-8</button>
+            </div>
         </div>
 
         <!-- Parameters Panel -->
@@ -344,17 +348,17 @@
             <h2>phasor</h2>
             
             <div class="param-control">
-                <div class="param-label">bpm</div>
-                <div class="param-value" id="bpm-value">120 BPM</div>
-                <input type="range" class="slider" id="bpm-slider" 
-                       min="60" max="180" value="120" step="1">
+                <div class="param-label">cpm</div>
+                <div class="param-value" id="cpm-value">30 CPM</div>
+                <input type="range" class="slider" id="cpm-slider" 
+                       min="15" max="60" value="30" step="1">
             </div>
 
             <div class="param-control">
-                <div class="param-label">beats per cycle</div>
-                <div class="param-value" id="beats-per-cycle-value">4 beats</div>
-                <input type="range" class="slider" id="beats-per-cycle-slider" 
-                       min="1" max="16" value="4" step="1">
+                <div class="param-label">steps per cycle</div>
+                <div class="param-value" id="steps-per-cycle-value">16 steps</div>
+                <input type="range" class="slider" id="steps-per-cycle-slider" 
+                       min="4" max="32" value="16" step="1">
             </div>
             
             <div class="param-control">
