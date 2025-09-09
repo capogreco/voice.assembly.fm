@@ -30,7 +30,6 @@ export class FormantSynthesisService {
       gain: 1.0
     };
     
-    console.log('🎤 Formant synthesis service created');
   }
   
   /**
@@ -42,7 +41,6 @@ export class FormantSynthesisService {
     }
     
     try {
-      console.log('🎵 Initializing Formant Synthesizer AudioWorklet...');
       
       // Load the worklet module
       await this.audioContext.audioWorklet.addModule('./worklets/vowel-synth.worklet.js');
@@ -58,7 +56,6 @@ export class FormantSynthesisService {
       this.updateAllParameters();
       
       this.isInitialized = true;
-      console.log('✅ Formant Synthesizer AudioWorklet initialized successfully');
       
       return this.formantSynthNode;
       
@@ -104,9 +101,7 @@ export class FormantSynthesisService {
     const setParam = (paramName, value) => {
         if (value !== undefined && this.formantSynthNode.parameters.has(paramName)) {
             this.formantSynthNode.parameters.get(paramName).setValueAtTime(value, now);
-            console.log(`✅ Set ${paramName} = ${value}`);
         } else if (value !== undefined) {
-            console.log(`❌ Parameter ${paramName} not found in AudioWorklet`);
         }
     };
     
@@ -117,16 +112,12 @@ export class FormantSynthesisService {
     // Process envelope parameters
     const processEnvelope = (paramName, envelope) => {
         if (!envelope) {
-            console.log(`⚠️ No envelope for ${paramName}`);
             return;
         }
-        console.log(`🎛️ Processing ${paramName} envelope:`, envelope);
         if (envelope.static) {
-            console.log(`📊 Setting ${paramName}: static value ${envelope.value}`);
             setParam(`${paramName}Start`, envelope.value);
             setParam(`${paramName}End`, envelope.value);
         } else {
-            console.log(`📊 Setting ${paramName}: envelope start=${envelope.start}, end=${envelope.end}`);
             setParam(`${paramName}Start`, envelope.start);
             setParam(`${paramName}End`, envelope.end);
             setParam(`${paramName}Type`, envelope.type === 'cos' ? 1.0 : 0.0);
@@ -202,7 +193,6 @@ export class FormantSynthesisService {
    */
   setActive(active) {
     const activeValue = active ? 1 : 0;
-    console.log(`🔊 FormantSynth.setActive(${active}) -> active parameter = ${activeValue}`);
     this.updateParameters({
       active: activeValue
     });

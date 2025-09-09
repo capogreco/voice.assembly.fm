@@ -159,6 +159,7 @@ class ControlClient {
     const params = {
         frequency: parseFloat(this.elements.frequencySlider.value) || 220,
         zingAmount: parseFloat(document.getElementById('zingAmount-slider').value) || 0.5,
+        isManualMode: this.isManualMode,
     };
     const paramNames = ['vowelX', 'vowelY', 'zingMorph', 'symmetry', 'amplitude'];
 
@@ -197,11 +198,9 @@ class ControlClient {
     const params = this.getMusicalParameters();
     const message = MessageBuilder.musicalParameters(params);
     
-    console.log('🎵 Broadcasting musical parameters:', params);
     
     // Send to all connected synth peers
     const sent = this.star.broadcastToType('synth', message, 'control');
-    console.log(`📤 Sent to ${sent} synth peers`);
   }
 
   async connectToNetwork() {
@@ -635,7 +634,6 @@ class ControlClient {
     this.elements.debugLog.scrollTop = this.elements.debugLog.scrollHeight;
     
     // Also log to console
-    console.log(`[VoiceAssembly] ${message}`);
   }
 
   clearLog() {

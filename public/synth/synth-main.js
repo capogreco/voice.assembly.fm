@@ -6,6 +6,7 @@ import { WebRTCStar, generatePeerId } from '../../src/common/webrtc-star.js';
 import { ClientPhasorSynchronizer } from '../../src/common/phasor-sync.js';
 import { MessageTypes, MessageBuilder } from '../../src/common/message-protocol.js';
 import { FormantSynthesisService } from './src/synthesis/zing-synthesis-service.js';
+import { XYOscilloscope } from './src/visualization/xy-oscilloscope.js';
 
 class SynthClient {
   constructor() {
@@ -76,7 +77,6 @@ class SynthClient {
     };
 
     this.setupEventHandlers();
-    console.log(`🎤 Synth client initialized: ${this.peerId}`);
     
     // Auto-connect to network on page load
     this.autoConnect();
@@ -101,7 +101,6 @@ class SynthClient {
 
   async autoConnect() {
     try {
-      console.log('📡 Auto-connecting to network...');
       
       // Connect to network immediately
       await this.connectToNetwork();
@@ -121,7 +120,6 @@ class SynthClient {
     try {
       this.setState('connecting');
       
-      console.log('🎤 Joining choir...');
       
       // Initialize audio context (requires user gesture)
       await this.initializeAudio();
@@ -131,7 +129,6 @@ class SynthClient {
       
       this.setState('active');
       
-      console.log('🎤 Successfully joined choir');
       this._startLocalPhasorLoop();
       
     } catch (error) {
@@ -146,7 +143,6 @@ class SynthClient {
   }
 
   async initializeAudio() {
-    console.log('🔊 Initializing audio context...');
     
     this.audioContext = new AudioContext();
     
@@ -158,7 +154,6 @@ class SynthClient {
     // Load white noise AudioWorklet processor
     try {
       await this.audioContext.audioWorklet.addModule('./worklets/white-noise-processor.js');
-      console.log('🎵 White noise processor loaded successfully');
     } catch (error) {
       console.error('❌ Failed to load white noise processor:', error);
       throw error;
@@ -174,7 +169,6 @@ class SynthClient {
     
     // Apply any pending calibration state
     if (this.isCalibrationMode) {
-      console.log('🔧 Applying pending calibration mode');
       
       // Disconnect formant synthesis during calibration
       if (this.formantNode) {
@@ -185,11 +179,9 @@ class SynthClient {
       this.updateConnectionStatus('syncing', 'Calibration mode');
     }
     
-    console.log('🔊 Audio context initialized');
   }
 
   async initializeFormantSynthesis() {
-    console.log('🎵 Initializing formant synthesis...');
     
     this.formantSynth = new FormantSynthesisService(this.audioContext);
     
@@ -199,7 +191,6 @@ class SynthClient {
       // Connect directly to master gain - amplitude controlled by internal envelope
       this.formantNode.connect(this.masterGain);
       
-      console.log('🎤 Formant synthesis initialized and connected');
     } catch (error) {
       console.error('❌ Failed to initialize formant synthesis:', error);
       throw error;
@@ -207,7 +198,6 @@ class SynthClient {
   }
 
   async connectToNetwork() {
-    console.log('📡 Connecting to network...');
     
     // Create star network
     this.star = new WebRTCStar(this.peerId, 'synth');
@@ -221,17 +211,14 @@ class SynthClient {
     this.phasorSync = new ClientPhasorSynchronizer(this.star);
     this.setupPhasorEventHandlers();
     
-    console.log('📡 Connected to network');
   }
 
   setupStarEventHandlers() {
     this.star.addEventListener('peer-connected', (event) => {
-      console.log(`👋 Peer connected: ${event.detail.peerId}`);
       this.updateConnectionStatus('connected', 'Connected to network');
     });
     
     this.star.addEventListener('peer-removed', (event) => {
-      console.log(`👋 Peer disconnected: ${event.detail.peerId}`);
     });
     
     this.star.addEventListener('data-message', (event) => {
@@ -271,7 +258,6 @@ class SynthClient {
     });
     
     this.phasorSync.addEventListener('cycle-start', (event) => {
-      console.log(`🔄 Cycle start: ${event.detail.phasor.toFixed(3)}`);
     });
     
     this.phasorSync.addEventListener('sync-lost', (event) => {
@@ -320,7 +306,6 @@ class SynthClient {
       default:
         // Log other messages for debugging
         if (message.type !== MessageTypes.PONG) {
-          console.log(`📨 Received ${message.type} from ${peerId}`);
         }
     }
   }
@@ -329,7 +314,6 @@ class SynthClient {
     this.isCalibrationMode = message.enabled;
     
     if (this.isCalibrationMode) {
-      console.log('🔧 Entering calibration mode');
       
       // Disconnect formant synthesis during calibration
       if (this.formantNode) {
@@ -343,11 +327,9 @@ class SynthClient {
         this.connectOscilloscopeToWhiteNoise();
         this.updateConnectionStatus('syncing', 'Calibration mode');
       } else {
-        console.log('⚠️ Audio context not initialized, cannot start white noise');
         this.updateConnectionStatus('syncing', 'Calibration mode (no audio)');
       }
     } else {
-      console.log('🔧 Exiting calibration mode');
       this.stopWhiteNoise();
       
       // Reconnect formant synthesis to master gain
@@ -364,15 +346,33 @@ class SynthClient {
   }
 
   handleMusicalParameters(message) {
-    console.log('🎵 Received musical parameters:', message);
     
     if (!this.formantSynth || !this.formantSynth.isReady()) {
       console.warn('⚠️ Cannot apply musical parameters: formant synthesis not ready');
       return;
     }
     
-    // Switch to manual control mode
-    this.isManualControlMode = true;
+    // If Test Audio is active, stop it when manual mode starts
+    if (message.isManualMode && this.testSynthActive) {
+      this.testSynthActive = false;
+      this.elements.testSynthBtn.textContent = 'Test Audio';
+      this.elements.testSynthBtn.classList.remove('active');
+    }
+    
+    // Handle manual mode state changes
+    const wasManualMode = this.isManualControlMode;
+    this.isManualControlMode = message.isManualMode;
+    
+    // If exiting manual mode, stop synthesis
+    if (wasManualMode && !this.isManualControlMode) {
+      this.formantSynth.setActive(false);
+      return;
+    }
+    
+    // If not in manual mode, don't apply parameters
+    if (!this.isManualControlMode) {
+      return;
+    }
     
     // In manual mode, extract static values from envelope objects
     const extractValue = (param) => {
@@ -391,14 +391,10 @@ class SynthClient {
     };
     
     // First, ensure audio context is running and worklet is active
-    console.log('🎯 Manual mode - activating synthesis engine');
-    console.log(`🔊 Audio context state: ${this.audioContext.state}`);
     
     // Resume audio context if needed
     if (this.audioContext.state === 'suspended') {
-      console.log('🔊 Resuming suspended audio context...');
       this.audioContext.resume().then(() => {
-        console.log('✅ Audio context resumed');
       }).catch(err => {
         console.error('❌ Failed to resume audio context:', err);
       });
@@ -407,11 +403,9 @@ class SynthClient {
     this.formantSynth.setActive(true);
     
     // Then apply all the manual mode parameters (including amplitude)
-    console.log('🎛️ Manual mode - extracted values:', synthParams);
     this.formantSynth.updateParameters(synthParams);
     
     // In manual mode, set a default syncPhasor value since we don't have timing sync
-    console.log('🎯 Manual mode - setting default syncPhasor for envelope calculations');
     this.formantSynth.setSyncPhasor(0.5); // Use middle of cycle
     
     // Store amplitude envelope for future use (if needed)
@@ -419,7 +413,6 @@ class SynthClient {
       this.amplitudeEnvelope = message.amplitude;
     }
     
-    console.log(`🎛️ Applied parameters: f=${message.frequency}Hz, zingMorph=${message.zingMorph.static ? message.zingMorph.value.toFixed(2) : 'envelope'}, vowel=(${message.vowelX.static ? message.vowelX.value.toFixed(2) : 'envelope'},${message.vowelY.static ? message.vowelY.value.toFixed(2) : 'envelope'}), symmetry=${message.symmetry.static ? message.symmetry.value.toFixed(2) : 'envelope'}`);
   }
 
   startWhiteNoise(amplitude = 0.3) {
@@ -441,7 +434,6 @@ class SynthClient {
       this.whiteNoiseWorklet.connect(this.noiseGain);
       this.noiseGain.connect(this.masterGain);
       
-      console.log('🎵 White noise started');
       
       // Disconnect formant synthesis during calibration
       if (this.formantNode) {
@@ -466,7 +458,6 @@ class SynthClient {
       this.noiseGain = null;
     }
     
-    console.log('🎵 White noise stopped');
   }
 
   initializeOscilloscope() {
@@ -519,7 +510,6 @@ class SynthClient {
   connectOscilloscopeToFormant() {
     if (!this.oscilloscope || !this.formantNode) return;
     
-    console.log('🔬 Connecting oscilloscope to formant synthesis formant channels');
     
     // Disconnect current oscilloscope connections
     this.oscilloscope.disconnect();
@@ -545,7 +535,6 @@ class SynthClient {
   connectOscilloscopeToWhiteNoise() {
     if (!this.oscilloscope || !this.whiteNoiseWorklet) return;
     
-    console.log('🔬 Connecting oscilloscope to white noise');
     
     // Disconnect any formant connections
     if (this.formantSplitter) {
@@ -600,24 +589,36 @@ class SynthClient {
   }
 
   toggleTestSynth() {
-    this.testAudio();
+    this.testSynthActive = !this.testSynthActive;
+    
+    if (this.testSynthActive) {
+      // If manual mode is active, stop it
+      if (this.isManualControlMode) {
+        this.isManualControlMode = false;
+        this.formantSynth.setActive(false);
+      }
+      
+      this.elements.testSynthBtn.textContent = 'Stop Test';
+      this.elements.testSynthBtn.classList.add('active');
+      this.testAudio();
+    } else {
+      this.elements.testSynthBtn.textContent = 'Test Audio';
+      this.elements.testSynthBtn.classList.remove('active');
+      this.stopTestAudio();
+    }
   }
 
   testAudio() {
-    console.log('🔧 Debug - audioContext:', !!this.audioContext, 'formantSynth:', !!this.formantSynth, 'formantNode:', !!this.formantNode);
 
     if (!this.audioContext || !this.formantSynth || !this.formantNode) {
-        console.log('❌ Cannot run test: audio components not initialized.');
         return;
     }
 
-    console.log('🔊 Starting syncPhasor synchronization test...');
     const now = this.audioContext.currentTime;
     
     // Get the actual AudioWorklet node
     const node = this.formantSynth.formantSynthNode;
     if (!node) {
-        console.log('❌ AudioWorklet node not available');
         return;
     }
 
@@ -648,162 +649,22 @@ class SynthClient {
     node.parameters.get('amplitudeType').setValueAtTime(0, now);      // Linear envelope
     node.parameters.get('amplitudeMorph').setValueAtTime(0.5, now);   // Linear progression
     
-    console.log('🎵 Set envelope parameters for distributed sync test');
-    console.log('🌐 Envelopes will be driven by syncPhasor from control client');
-    console.log('📡 Press "Start Timing" in control client to begin synchronized envelope test');
     
     // NOTE: syncPhasor will be controlled by the control client via phasor sync broadcasts
     // No local syncPhasor ramp - we wait for network synchronization
-    console.log('⏰ Waiting for syncPhasor from control client...');
+  }
+
+  stopTestAudio() {
+    if (!this.formantSynth) return;
+    
+    // Deactivate synthesis
+    this.formantSynth.setActive(false);
   }
 }
 
 /**
  * Simple XY Oscilloscope for visualizing formant outputs
  */
-class XYOscilloscope {
-  constructor(canvas, audioContext, inputNode) {
-    this.canvas = canvas;
-    this.ctx = canvas.getContext('2d');
-    this.audioContext = audioContext;
-    this.inputNode = inputNode;
-    
-    // Create channel splitter to separate stereo channels
-    this.channelSplitter = audioContext.createChannelSplitter(2);
-    
-    // Create separate analysers for left (X) and right (Y) channels
-    this.leftAnalyser = audioContext.createAnalyser();
-    this.rightAnalyser = audioContext.createAnalyser();
-    
-    this.leftAnalyser.fftSize = 1024;
-    this.rightAnalyser.fftSize = 1024;
-    this.bufferLength = this.leftAnalyser.fftSize;
-    
-    // Data arrays for each channel
-    this.leftData = new Float32Array(this.bufferLength);
-    this.rightData = new Float32Array(this.bufferLength);
-    
-    // Connect: Input -> ChannelSplitter -> Separate Analysers
-    this.inputNode.connect(this.channelSplitter);
-    this.channelSplitter.connect(this.leftAnalyser, 0);  // Left channel
-    this.channelSplitter.connect(this.rightAnalyser, 1); // Right channel
-    
-    // Animation and trail effect
-    this.isRunning = false;
-    this.animationId = null;
-    this.trailFactor = 0.05; // How much trail to leave (0-1)
-    this.calibrationMode = false; // Track if we're in calibration mode for proper scaling
-    
-    this.resize();
-  }
-
-  resize() {
-    const rect = this.canvas.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    
-    this.canvas.width = rect.width * dpr;
-    this.canvas.height = rect.height * dpr;
-    
-    this.ctx.scale(dpr, dpr);
-    this.canvas.style.width = rect.width + 'px';
-    this.canvas.style.height = rect.height + 'px';
-    
-    this.width = rect.width;
-    this.height = rect.height;
-    this.centerX = this.width / 2;
-    this.centerY = this.height / 2;
-  }
-
-  start() {
-    if (this.isRunning) return;
-    
-    this.isRunning = true;
-    this.draw();
-  }
-
-  stop() {
-    this.isRunning = false;
-    if (this.animationId) {
-      cancelAnimationFrame(this.animationId);
-      this.animationId = null;
-    }
-  }
-
-  disconnect() {
-    // Disconnect existing connections to allow reconnection
-    try {
-      // Disconnect input to channelSplitter
-      if (this.inputNode) {
-        this.inputNode.disconnect(this.channelSplitter);
-      }
-      // Disconnect channelSplitter outputs  
-      if (this.channelSplitter) {
-        this.channelSplitter.disconnect();
-      }
-    } catch (e) {
-      // Ignore if already disconnected
-    }
-  }
-
-  draw() {
-    if (!this.isRunning) return;
-    
-    this.animationId = requestAnimationFrame(() => this.draw());
-    
-    // Get audio data from separate analysers
-    this.leftAnalyser.getFloatTimeDomainData(this.leftData);
-    this.rightAnalyser.getFloatTimeDomainData(this.rightData);
-    
-    // Clear canvas with dark background (like euclidean reference)
-    this.ctx.fillStyle = '#1a1a1a';
-    this.ctx.fillRect(0, 0, this.width, this.height);
-    
-    // Plot consecutive instantaneous sample points per frame
-    const maxRadius = Math.min(this.centerX, this.centerY) * 0.8;
-    const samplesPerFrame = 256; // Match euclidean reference
-    
-    // Create frame points array (like euclidean reference)
-    const framePoints = [];
-    
-    for (let i = 0; i < Math.min(samplesPerFrame, this.bufferLength); i++) {
-      let xSample = this.leftData[i];
-      let ySample = this.rightData[i];
-      
-      // Clamp samples to avoid extreme values
-      
-      // Convert to screen coordinates with appropriate scaling
-      // White noise: 1x amplification 
-      // Formant synthesis: 0.3x amplification
-      const amplification = this.calibrationMode ? 1.0 : 0.3;
-      const x = this.centerX + (xSample * amplification * maxRadius);
-      const y = this.centerY - (ySample * amplification * maxRadius); // Negative for correct orientation
-      
-      framePoints.push({ x, y });
-    }
-    
-    // Draw the frame as a continuous path (euclidean style)
-    if (framePoints.length >= 2) {
-      this.ctx.strokeStyle = '#ffffff'; // White lines for clean visibility
-      this.ctx.lineWidth = 1;
-      this.ctx.lineCap = 'round';
-      this.ctx.lineJoin = 'round';
-      
-      this.ctx.beginPath();
-      this.ctx.moveTo(framePoints[0].x, framePoints[0].y);
-      
-      for (let i = 1; i < framePoints.length; i++) {
-        this.ctx.lineTo(framePoints[i].x, framePoints[i].y);
-      }
-      
-      this.ctx.stroke();
-    }
-  }
-
-  drawGrid() {
-    // Clean background - no grid elements (like euclidean reference)
-    // Just a plain dark background for minimal distraction
-  }
-}
 
 // Initialize the synth client
 const synthClient = new SynthClient();

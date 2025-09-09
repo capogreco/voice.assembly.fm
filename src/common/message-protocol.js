@@ -88,7 +88,6 @@ export class MessageBuilder {
   }
 
   static musicalParameters(params) {
-    console.log('🎵 Building musical parameters message'); // Temporary debug log
     return {
       type: MessageTypes.MUSICAL_PARAMETERS,
       frequency: params.frequency,
@@ -98,6 +97,7 @@ export class MessageBuilder {
       vowelY: params.vowelY,
       symmetry: params.symmetry,
       amplitude: params.amplitude,
+      isManualMode: params.isManualMode,
       timestamp: performance.now()
     };
   }

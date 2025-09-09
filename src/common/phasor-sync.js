@@ -19,7 +19,6 @@ export class MasterPhasorController extends EventTarget {
     this.syncInterval = null;
     this.isRunning = false;
     
-    console.log('👑 Master phasor controller initialized');
   }
 
   /**
@@ -35,8 +34,6 @@ export class MasterPhasorController extends EventTarget {
     this.isRunning = true;
     this.lastUpdateTime = performance.now();
     
-    console.log(`▶️ Master phasor started: ${cycleDurationSeconds}s cycles (${this.cycleFreq.toFixed(3)} Hz)`);
-    console.log(`🔍 Initial state: running=${this.isRunning}`);
 
     // Start sync broadcast timer
     this.syncInterval = setInterval(() => {
@@ -71,7 +68,6 @@ export class MasterPhasorController extends EventTarget {
       this.updateInterval = null;
     }
 
-    console.log('⏹️ Master phasor stopped');
     this.dispatchEvent(new CustomEvent('stopped'));
   }
 
@@ -114,7 +110,6 @@ export class MasterPhasorController extends EventTarget {
     const sent = this.star.broadcast(syncMessage, 'sync');
     
     if (sent > 0) {
-      console.log(`📡 Master broadcast: phasor=${this.phasor.toFixed(3)}, freq=${this.cycleFreq.toFixed(3)}Hz to ${sent} peers`);
     }
   }
 
@@ -137,7 +132,6 @@ export class MasterPhasorController extends EventTarget {
     const oldFreq = this.cycleFreq;
     this.cycleFreq = 1.0 / seconds;
     
-    console.log(`🔄 Cycle duration changed: ${seconds}s (${oldFreq.toFixed(3)} -> ${this.cycleFreq.toFixed(3)} Hz)`);
     
     this.dispatchEvent(new CustomEvent('cycle-duration-changed', {
       detail: { 
@@ -170,7 +164,6 @@ export class ClientPhasorSynchronizer extends EventTarget {
       }
     });
 
-    console.log('🎯 Slave phasor synchronizer initialized');
   }
 
   /**
@@ -183,7 +176,6 @@ export class ClientPhasorSynchronizer extends EventTarget {
     const messageAge = currentTime - syncMessage.timestamp;
     const audioAge = currentTime - syncMessage.audioTime;
     
-    console.log(`🎯 Slave received: master=${syncMessage.phasor.toFixed(3)}, msgAge=${messageAge.toFixed(1)}ms, audioAge=${audioAge.toFixed(1)}ms`);
     
     // Update phasor synchronization
     this.phasorSync.updateFromMaster(
@@ -230,7 +222,6 @@ export class ClientPhasorSynchronizer extends EventTarget {
       }
     }));
 
-    console.log(`🎯 Final synced phasor: ${syncedPhasor.toFixed(3)}`);
   }
 
   /**
@@ -279,7 +270,6 @@ export class ClientPhasorSynchronizer extends EventTarget {
     }
     
     this.isActive = false;
-    console.log('🧹 Slave phasor synchronizer cleaned up');
   }
 }
 
@@ -317,7 +307,6 @@ export class CycleScheduler extends EventTarget {
       scheduled: performance.now()
     });
 
-    console.log(`⏰ Scheduled event ${eventId} for phasor ${targetPhasor.toFixed(3)}`);
     return eventId;
   }
 
@@ -334,7 +323,6 @@ export class CycleScheduler extends EventTarget {
   cancelEvent(eventId) {
     if (this.scheduledEvents.has(eventId)) {
       this.scheduledEvents.delete(eventId);
-      console.log(`❌ Cancelled event ${eventId}`);
       return true;
     }
     return false;
@@ -359,7 +347,6 @@ export class CycleScheduler extends EventTarget {
             eventId 
           });
           
-          console.log(`✅ Executed scheduled event ${eventId} at phasor ${phasor.toFixed(3)}`);
         } catch (error) {
           console.error(`❌ Error executing scheduled event ${eventId}:`, error);
         }
@@ -401,6 +388,5 @@ export class CycleScheduler extends EventTarget {
   clearAll() {
     const count = this.scheduledEvents.size;
     this.scheduledEvents.clear();
-    console.log(`🧹 Cleared ${count} pending events`);
   }
 }
