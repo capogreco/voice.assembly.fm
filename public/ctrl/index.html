@@ -12,278 +12,195 @@
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #000;
-            color: #fff;
-            padding: 20px;
+            font-family: Monaco, Menlo, Consolas, "Courier New", monospace;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            padding: 15px;
             min-height: 100vh;
-            display: flex;
-            flex-direction: column;
+            font-size: 13px;
+            overflow-x: auto;
         }
 
         .header {
             text-align: center;
-            margin-bottom: 30px;
+            margin-bottom: 20px;
         }
 
         .header h1 {
-            font-size: 2em;
-            font-weight: 300;
-            margin-bottom: 10px;
-            color: #00ff88;
+            font-size: 16px;
+            font-weight: normal;
+            margin-bottom: 4px;
+            color: #e0e0e0;
+            text-transform: lowercase;
         }
 
         .header .subtitle {
             color: #888;
-            font-size: 0.9em;
+            font-size: 11px;
+            text-transform: lowercase;
         }
 
         .main-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 30px;
-            flex: 1;
+            display: flex;
+            gap: 15px;
+            min-width: 1000px;
         }
 
         .panel {
-            background: #111;
-            border: 1px solid #333;
-            border-radius: 8px;
-            padding: 20px;
+            background: #2a2a2a;
+            padding: 10px;
+            flex: 1;
         }
 
         .panel h2 {
-            font-size: 1.2em;
-            font-weight: 400;
-            margin-bottom: 20px;
-            color: #00ff88;
-            border-bottom: 1px solid #333;
-            padding-bottom: 10px;
+            font-size: 11px;
+            font-weight: normal;
+            margin-bottom: 10px;
+            color: #888;
+            text-align: center;
+            text-transform: lowercase;
         }
 
         .status-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
         }
 
         .status-item {
             background: #1a1a1a;
-            padding: 15px;
-            border-radius: 6px;
-            border-left: 4px solid #333;
+            padding: 8px;
+            border: 1px solid #444;
         }
 
         .status-item.connected {
-            border-left-color: #00ff88;
-        }
-
-        .status-item.leader {
-            border-left-color: #ffaa00;
-        }
-
-        .status-item.syncing {
-            border-left-color: #0088ff;
+            color: #4a7c8a;
         }
 
         .status-label {
-            font-size: 0.8em;
+            font-size: 10px;
             color: #888;
-            margin-bottom: 5px;
+            margin-bottom: 2px;
+            text-transform: lowercase;
         }
 
         .status-value {
-            font-size: 1.1em;
-            font-weight: 500;
+            font-size: 12px;
+            font-weight: normal;
         }
 
         .control-section {
-            margin-bottom: 25px;
-        }
-
-        .control-section h3 {
-            font-size: 1em;
-            color: #ccc;
             margin-bottom: 10px;
         }
 
+        .control-section h3 {
+            font-size: 10px;
+            color: #888;
+            margin-bottom: 6px;
+            text-transform: lowercase;
+            font-weight: normal;
+        }
+
         .button {
-            background: #333;
-            border: 1px solid #555;
-            color: #fff;
-            padding: 10px 20px;
-            border-radius: 6px;
+            background: transparent;
+            border: 1px solid #444;
+            color: #e0e0e0;
+            padding: 6px 12px;
             cursor: pointer;
-            font-size: 0.9em;
-            transition: all 0.2s;
+            font-size: 11px;
+            font-family: inherit;
+            font-weight: normal;
         }
 
         .button:hover {
-            background: #444;
-            border-color: #666;
-        }
-
-        .button.primary {
-            background: #00ff88;
-            color: #000;
-            border-color: #00ff88;
-        }
-
-        .button.primary:hover {
-            background: #00cc66;
-        }
-
-        .button.danger {
-            background: #ff4444;
-            border-color: #ff4444;
-        }
-
-        .button.danger:hover {
-            background: #cc3333;
+            background: #3a3a3a;
         }
 
         .button:disabled {
-            background: #222;
-            color: #555;
+            background: #1a1a1a;
+            color: #666;
             border-color: #333;
             cursor: not-allowed;
         }
 
-        .button.manual-mode {
-            background: #444;
-            border-color: #666;
-            color: #fff;
+        .button.manual-mode-btn {
+            width: 100%;
         }
 
-        .button.manual-mode:hover {
-            background: #555;
-        }
-
-        .button.manual-mode.active {
-            background: #ff6600;
-            border-color: #ff6600;
-            color: #000;
-        }
-
-        .button.manual-mode.active:hover {
-            background: #dd5500;
+        .button.manual-mode-btn.active {
+            background: #4a7c8a;
+            border-color: #4a7c8a;
+            color: #e0e0e0;
         }
 
         .input-group {
-            display: flex;
-            gap: 10px;
-            align-items: center;
-            margin-bottom: 15px;
-        }
-
-        .input-group label {
-            min-width: 120px;
-            font-size: 0.9em;
-            color: #ccc;
-        }
-
-        .input-group input {
-            background: #222;
-            border: 1px solid #444;
-            color: #fff;
-            padding: 8px 12px;
-            border-radius: 4px;
-            font-size: 0.9em;
-            width: 100px;
-        }
-
-        .input-group input:focus {
-            outline: none;
-            border-color: #00ff88;
+            margin-bottom: 8px;
         }
 
         .peer-list {
-            max-height: 200px;
+            max-height: 120px;
             overflow-y: auto;
         }
 
         .peer-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 10px;
+            padding: 4px 8px;
             background: #1a1a1a;
-            border-radius: 4px;
-            margin-bottom: 8px;
-        }
-
-        .peer-info {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
+            border: 1px solid #444;
+            margin-bottom: 2px;
+            font-size: 11px;
         }
 
         .peer-id {
-            font-size: 0.9em;
-            color: #fff;
+            color: #e0e0e0;
         }
 
         .peer-type {
-            font-size: 0.8em;
             color: #888;
-        }
-
-        .peer-stats {
-            font-size: 0.8em;
-            color: #888;
-            text-align: right;
         }
 
         .log {
-            height: 150px;
-            background: #0a0a0a;
-            border: 1px solid #333;
-            border-radius: 4px;
-            padding: 10px;
-            font-family: 'Monaco', 'Menlo', monospace;
-            font-size: 0.8em;
+            height: 100px;
+            background: #1a1a1a;
+            border: 1px solid #444;
+            padding: 6px;
+            font-family: inherit;
+            font-size: 10px;
             overflow-y: auto;
             white-space: pre-wrap;
-            color: #ccc;
+            color: #888;
         }
 
-
-        /* Musical Control Styles */
-        .param-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-            margin-bottom: 20px;
-        }
-
+        /* Parameter Control Styles */
         .param-control {
             background: #1a1a1a;
-            padding: 15px;
-            border-radius: 6px;
-            border: 1px solid #333;
+            padding: 8px;
+            border: 1px solid #444;
+            margin-bottom: 6px;
         }
 
         .param-label {
-            font-size: 0.9em;
-            color: #00ff88;
-            margin-bottom: 8px;
-            font-weight: 500;
+            font-size: 10px;
+            color: #888;
+            margin-bottom: 4px;
+            text-align: center;
+            text-transform: lowercase;
+            font-weight: normal;
         }
 
         .param-value {
-            font-size: 0.8em;
-            color: #888;
-            margin-bottom: 10px;
+            font-size: 14px;
+            color: #e0e0e0;
+            margin-bottom: 6px;
+            text-align: center;
+            font-weight: normal;
         }
 
         .slider {
             width: 100%;
             -webkit-appearance: none;
-            height: 6px;
-            border-radius: 3px;
+            height: 4px;
             background: #333;
             outline: none;
-            transition: background 0.3s;
         }
 
         .slider:hover {
@@ -293,171 +210,127 @@
         .slider::-webkit-slider-thumb {
             -webkit-appearance: none;
             appearance: none;
-            width: 18px;
-            height: 18px;
-            border-radius: 50%;
-            background: #00ff88;
+            width: 12px;
+            height: 12px;
+            background: #4a7c8a;
             cursor: pointer;
-            box-shadow: 0 2px 4px rgba(0,255,136,0.3);
         }
 
         .slider::-moz-range-thumb {
-            width: 18px;
-            height: 18px;
-            border-radius: 50%;
-            background: #00ff88;
-            cursor: pointer;
-            border: none;
-            box-shadow: 0 2px 4px rgba(0,255,136,0.3);
-        }
-
-        .xy-pad {
-            width: 100%;
-            height: 120px;
-            background: #1a1a1a;
-            border: 1px solid #333;
-            border-radius: 6px;
-            position: relative;
-            cursor: crosshair;
-            margin-top: 10px;
-        }
-
-        .xy-cursor {
-            position: absolute;
             width: 12px;
             height: 12px;
-            border-radius: 50%;
-            background: #00ff88;
-            transform: translate(-50%, -50%);
-            box-shadow: 0 0 10px rgba(0,255,136,0.6);
-            pointer-events: none;
+            background: #4a7c8a;
+            cursor: pointer;
+            border: none;
         }
 
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>Voice.Assembly.FM</h1>
-        <div class="subtitle">Distributed Vocal Synthesis Control</div>
+        <h1>voice.assembly.fm</h1>
+        <div class="subtitle">ctrl</div>
     </div>
 
     <div class="main-grid">
-        <!-- Network Status Panel -->
+        <!-- Status Panel -->
         <div class="panel">
-            <h2>Network Status</h2>
-            
+            <h2>status</h2>
             <div class="status-grid">
                 <div class="status-item" id="connection-status">
-                    <div class="status-label">Connection</div>
-                    <div class="status-value" id="connection-value">Disconnected</div>
+                    <div class="status-label">connection</div>
+                    <div class="status-value" id="connection-value">disconnected</div>
                 </div>
-                
-                
                 <div class="status-item" id="peers-status">
-                    <div class="status-label">Connected Peers</div>
+                    <div class="status-label">peers</div>
                     <div class="status-value" id="peers-value">0</div>
                 </div>
-                
-            </div>
-
-        </div>
-
-        <!-- System Control Panel -->
-        <div class="panel">
-            <h2>System Control</h2>
-            
-            <div class="control-section">
-                <h3>Calibration</h3>
-                <div class="input-group">
-                    <button class="button" id="calibration-btn">Enable Calibration Mode</button>
-                </div>
-            </div>
-
-            <div class="control-section">
-                <h3>Test Mode</h3>
-                <div class="input-group">
-                    <button class="button manual-mode-btn" id="manual-mode-btn">Test Audio</button>
-                </div>
             </div>
         </div>
 
-        <!-- Parameter Control Panel -->
+        <!-- Control Panel -->
         <div class="panel">
-            <h2>Parameter Control</h2>
+            <h2>control</h2>
+            <div class="control-section">
+                <h3>calibration</h3>
+                <button class="button" id="calibration-btn">enable calibration mode</button>
+            </div>
+            <div class="control-section">
+                <h3>test</h3>
+                <button class="button manual-mode-btn" id="manual-mode-btn">test audio</button>
+            </div>
+        </div>
+
+        <!-- Parameters Panel -->
+        <div class="panel">
+            <h2>parameters</h2>
             
-            <!-- Frequency Control -->
             <div class="param-control">
-                <div class="param-label">Frequency</div>
-                <div class="param-value" id="frequency-value">220 Hz</div>
+                <div class="param-label">frequency</div>
+                <div class="param-value" id="frequency-value">220</div>
                 <input type="range" class="slider" id="frequency-slider" 
                        min="80" max="800" value="220" step="1">
             </div>
 
-            <!-- Vowel X Parameter -->
             <div class="param-control">
-                <div class="param-label">Vowel X</div>
+                <div class="param-label">vowel x</div>
                 <div class="param-value" id="vowelX-value">0.50</div>
                 <input type="range" class="slider" id="vowelX-slider" 
                        min="0" max="1" step="0.01" value="0.5">
             </div>
 
-            <!-- Vowel Y Parameter -->
             <div class="param-control">
-                <div class="param-label">Vowel Y</div>
+                <div class="param-label">vowel y</div>
                 <div class="param-value" id="vowelY-value">0.50</div>
                 <input type="range" class="slider" id="vowelY-slider" 
                        min="0" max="1" step="0.01" value="0.5">
             </div>
 
-            <!-- Zing Amount Control -->
             <div class="param-control">
-                <div class="param-label">Zing Amount</div>
+                <div class="param-label">zing amount</div>
                 <div class="param-value" id="zingAmount-value">0.00</div>
                 <input type="range" class="slider" id="zingAmount-slider" 
                        min="0" max="1" value="0" step="0.01">
             </div>
 
-            <!-- Zing Morph Parameter -->
             <div class="param-control">
-                <div class="param-label">Zing Morph</div>
+                <div class="param-label">zing morph</div>
                 <div class="param-value" id="zingMorph-value">0.00</div>
                 <input type="range" class="slider" id="zingMorph-slider" 
                        min="-1" max="1" step="0.01" value="0">
             </div>
 
-            <!-- Symmetry Parameter -->
             <div class="param-control">
-                <div class="param-label">Symmetry</div>
+                <div class="param-label">symmetry</div>
                 <div class="param-value" id="symmetry-value">0.50</div>
                 <input type="range" class="slider" id="symmetry-slider" 
                        min="0" max="1" step="0.01" value="0.5">
             </div>
 
-            <!-- Amplitude Parameter -->
             <div class="param-control">
-                <div class="param-label">Amplitude</div>
+                <div class="param-label">amplitude</div>
                 <div class="param-value" id="amplitude-value">1.00</div>
                 <input type="range" class="slider" id="amplitude-slider" 
                        min="0" max="1" step="0.01" value="1.0">
             </div>
         </div>
 
-        <!-- Connected Peers Panel -->
+        <!-- Peers Panel -->
         <div class="panel">
-            <h2>Connected Peers</h2>
+            <h2>peers</h2>
             <div class="peer-list" id="peer-list">
-                <div style="color: #888; font-style: italic; text-align: center; padding: 20px;">
-                    No peers connected
+                <div style="color: #888; font-size: 10px; text-align: center; padding: 8px;">
+                    no peers
                 </div>
             </div>
         </div>
 
-        <!-- Debug Log Panel -->
+        <!-- Log Panel -->
         <div class="panel">
-            <h2>Debug Log</h2>
+            <h2>log</h2>
             <div class="log" id="debug-log"></div>
             <div class="control-section">
-                <button class="button" id="clear-log-btn">Clear Log</button>
+                <button class="button" id="clear-log-btn">clear</button>
             </div>
         </div>
     </div>
