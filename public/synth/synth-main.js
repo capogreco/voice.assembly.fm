@@ -374,26 +374,50 @@ class SynthClient {
     // Switch to manual control mode
     this.isManualControlMode = true;
     
-    // Apply the received parameters to the synthesis engine
-    this.formantSynth.updateParameters({
-      frequency: message.frequency,
-      zingMorph: message.zingMorph,
-      zingAmount: message.zingAmount,
-      vowelX: message.vowelX,
-      vowelY: message.vowelY,
-      symmetry: message.symmetry
-    });
+    // In manual mode, extract static values from envelope objects
+    const extractValue = (param) => {
+      return (param && typeof param === 'object' && param.static) ? param.value : param;
+    };
     
-    // Store the new amplitude envelope definition from the message
+    // Apply the received parameters to the synthesis engine
+    const synthParams = {
+      frequency: message.frequency,
+      zingMorph: message.zingMorph,    // Pass full envelope objects
+      zingAmount: message.zingAmount,
+      vowelX: message.vowelX,          // Pass full envelope objects
+      vowelY: message.vowelY,          // Pass full envelope objects  
+      symmetry: message.symmetry,      // Pass full envelope objects
+      amplitude: message.amplitude     // Pass full envelope objects
+    };
+    
+    // First, ensure audio context is running and worklet is active
+    console.log('🎯 Manual mode - activating synthesis engine');
+    console.log(`🔊 Audio context state: ${this.audioContext.state}`);
+    
+    // Resume audio context if needed
+    if (this.audioContext.state === 'suspended') {
+      console.log('🔊 Resuming suspended audio context...');
+      this.audioContext.resume().then(() => {
+        console.log('✅ Audio context resumed');
+      }).catch(err => {
+        console.error('❌ Failed to resume audio context:', err);
+      });
+    }
+    
+    this.formantSynth.setActive(true);
+    
+    // Then apply all the manual mode parameters (including amplitude)
+    console.log('🎛️ Manual mode - extracted values:', synthParams);
+    this.formantSynth.updateParameters(synthParams);
+    
+    // In manual mode, set a default syncPhasor value since we don't have timing sync
+    console.log('🎯 Manual mode - setting default syncPhasor for envelope calculations');
+    this.formantSynth.setSyncPhasor(0.5); // Use middle of cycle
+    
+    // Store amplitude envelope for future use (if needed)
     if (message.amplitude) {
       this.amplitudeEnvelope = message.amplitude;
-      
-      // Amplitude now handled internally by AudioWorklet envelope system
     }
-
-    // Always ensure the worklet is active so it can process audio.
-    // The actual volume is now controlled by the envelope.
-    this.formantSynth.setActive(true);
     
     console.log(`🎛️ Applied parameters: f=${message.frequency}Hz, zingMorph=${message.zingMorph.static ? message.zingMorph.value.toFixed(2) : 'envelope'}, vowel=(${message.vowelX.static ? message.vowelX.value.toFixed(2) : 'envelope'},${message.vowelY.static ? message.vowelY.value.toFixed(2) : 'envelope'}), symmetry=${message.symmetry.static ? message.symmetry.value.toFixed(2) : 'envelope'}`);
   }
