@@ -4,7 +4,6 @@
  */
 
 import { MessageBuilder, MessageTypes, validateMessage } from './message-protocol.js';
-import { NetworkHealth, calculateLeadershipScore } from './timing-math.js';
 
 export class WebRTCStar extends EventTarget {
   constructor(peerId, peerType, roomId = 'voice-assembly-default') {
@@ -18,13 +17,7 @@ export class WebRTCStar extends EventTarget {
     this.signalingSocket = null;
     this.isConnectedToSignaling = false;
     
-    // Leadership
-    this.currentLeader = null;
-    this.isLeader = false;
-    this.electionInProgress = false;
-    
     // Network health tracking
-    this.networkHealth = new NetworkHealth();
     this.pingInterval = null;
     this.pingTimeouts = new Map();
     
@@ -120,11 +113,6 @@ export class WebRTCStar extends EventTarget {
         if (message.peerId !== this.peerId) {
           console.log(`👋 Peer left: ${message.peerId}`);
           this.removePeer(message.peerId);
-          
-          // Check if it was the leader (only ctrl can be leader)
-          if (this.peerType === 'ctrl' && this.currentLeader === message.peerId) {
-            this.triggerLeaderElection();
-          }
         }
         break;
 
@@ -175,10 +163,6 @@ export class WebRTCStar extends EventTarget {
       }
     }
 
-    // Leadership: ctrl clients always become leaders immediately
-    if (this.peerType === 'ctrl') {
-      this.becomeLeader();
-    }
   }
 
   /**
@@ -211,7 +195,6 @@ export class WebRTCStar extends EventTarget {
       peerType: targetPeerType, // Store the peer type
       syncChannel: null,
       controlChannel: null,
-      health: new NetworkHealth(),
       connectedEventSent: false
     });
 
@@ -427,12 +410,9 @@ export class WebRTCStar extends EventTarget {
       clearTimeout(timeout);
       this.pingTimeouts.delete(pingId);
       
-      // Calculate RTT and record health
+      // Calculate RTT for basic connectivity
       const rtt = performance.now() - pongMessage.pingTimestamp;
-      const peer = this.peers.get(peerId);
-      if (peer) {
-        peer.health.recordRTT(rtt);
-      }
+      console.log(`🏓 Pong from ${peerId}: ${Math.round(rtt)}ms`);
     }
   }
 
@@ -548,12 +528,9 @@ export class WebRTCStar extends EventTarget {
 
     const pingMessage = MessageBuilder.ping();
     
-    // Set timeout for packet loss detection
+    // Set timeout for ping response
     const timeout = setTimeout(() => {
-      const peer = this.peers.get(peerId);
-      if (peer) {
-        peer.health.recordPacketLoss();
-      }
+      console.log(`⚠️ Ping timeout for ${peerId}`);
       this.pingTimeouts.delete(pingMessage.id);
     }, 5000); // 5 second timeout
     
@@ -561,72 +538,6 @@ export class WebRTCStar extends EventTarget {
     this.sendToPeer(peerId, pingMessage, 'sync');
   }
 
-  /**
-   * Trigger leader election (only for ctrl peers)
-   */
-  async triggerLeaderElection() {
-    if (this.peerType !== 'ctrl') {
-      console.log('📵 Synth clients cannot participate in leader election');
-      return;
-    }
-
-    if (this.electionInProgress) {
-      console.log('⚖️ Election already in progress');
-      return;
-    }
-
-    console.log('⚖️ Starting leader election...');
-    this.electionInProgress = true;
-    
-    // Calculate our leadership score
-    const rtts = Array.from(this.peers.values()).map(peer => 
-      peer.health.getMetrics().averageRTT
-    ).filter(rtt => rtt > 0);
-    
-    const averageRTT = rtts.length > 0 ? rtts.reduce((a, b) => a + b) / rtts.length : 0;
-    const score = calculateLeadershipScore(averageRTT, this.peers.size);
-    
-    // Broadcast our candidacy
-    const electionMessage = MessageBuilder.leaderElection(this.peerId, averageRTT, score);
-    this.broadcast(electionMessage, 'control');
-    
-    // Wait for other candidates, then determine leader
-    setTimeout(() => {
-      this.finishElection();
-    }, 2000); // 2 second election period
-  }
-
-  /**
-   * Finish leader election and announce result
-   */
-  finishElection() {
-    // This would normally collect votes and determine winner
-    // For now, simplified: become leader if we have the best score we've seen
-    this.becomeLeader();
-    this.electionInProgress = false;
-  }
-
-  /**
-   * Become the network leader (only ctrl can be leader)
-   */
-  becomeLeader() {
-    if (this.isLeader) return;
-    
-    if (this.peerType !== 'ctrl') {
-      console.log('📵 Synth clients cannot become leader');
-      return;
-    }
-    
-    console.log('👑 Becoming network leader');
-    this.isLeader = true;
-    this.currentLeader = this.peerId;
-    
-    // Announce leadership
-    const announcement = MessageBuilder.leaderAnnouncement(this.peerId);
-    this.broadcast(announcement, 'control');
-    
-    this.dispatchEvent(new CustomEvent('became-leader'));
-  }
 
   /**
    * Check if peer is ready (connection established and sync channel open)
@@ -700,15 +611,13 @@ export class WebRTCStar extends EventTarget {
     for (const [peerId, peer] of this.peers) {
       peerStats[peerId] = {
         connectionState: peer.connection.connectionState,
-        health: peer.health.getMetrics()
+        peerType: peer.peerType
       };
     }
 
     return {
       peerId: this.peerId,
       peerType: this.peerType,
-      isLeader: this.isLeader,
-      currentLeader: this.currentLeader,
       connectedPeers: this.peers.size,
       peerStats
     };
@@ -742,8 +651,6 @@ export class WebRTCStar extends EventTarget {
     }
 
     this.isConnectedToSignaling = false;
-    this.isLeader = false;
-    this.currentLeader = null;
     
     console.log('🧹 WebRTC mesh cleaned up');
   }

@@ -34,38 +34,8 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
             { name: 'zingMorph', defaultValue: 0, minValue: -1, maxValue: 1, automationRate: 'a-rate' }, // Zing character morph parameter
             { name: 'symmetry', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'a-rate' },
             
-            // Master timing control
-            { name: 'syncPhasor', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'a-rate' },
-
-            // Envelope controls for Vowel X
-            { name: 'vowelXStart', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
-            { name: 'vowelXEnd', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
-            { name: 'vowelXType', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' }, // 0=lin, 1=cos
-            { name: 'vowelXMorph', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
-
-            // Envelope controls for Vowel Y
-            { name: 'vowelYStart', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
-            { name: 'vowelYEnd', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
-            { name: 'vowelYType', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
-            { name: 'vowelYMorph', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
-            
-            // Envelope controls for Zing Morph
-            { name: 'zingMorphStart', defaultValue: 0.5, minValue: -1, maxValue: 1, automationRate: 'k-rate' },
-            { name: 'zingMorphEnd', defaultValue: 0.5, minValue: -1, maxValue: 1, automationRate: 'k-rate' },
-            { name: 'zingMorphType', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
-            { name: 'zingMorphMorph', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
-
-            // Envelope controls for Symmetry
-            { name: 'symmetryStart', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
-            { name: 'symmetryEnd', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
-            { name: 'symmetryType', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
-            { name: 'symmetryMorph', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
-
-            // Envelope controls for Amplitude
-            { name: 'amplitudeStart', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
-            { name: 'amplitudeEnd', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
-            { name: 'amplitudeType', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
-            { name: 'amplitudeMorph', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            // Amplitude control
+            { name: 'amplitude', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
         ];
     }
 
@@ -144,57 +114,6 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
         this.updateFormantCarriers();
     }
     
-    /**
-     * Linear interpolation helper function
-     */
-    _lerp(a, b, mix) {
-        return a * (1 - mix) + b * mix;
-    }
-
-    /**
-     * Linear/exponential envelope shape generator
-     */
-    _getLinTypeEnvelope(t, p) {
-        // Clamp parameters to ensure they are within the 0-1 range.
-        const t_clamped = Math.max(0, Math.min(1, t));
-        const p_clamped = Math.max(0, Math.min(1, p));
-
-        let exponent;
-        const minExponent = 1 / 8; // Very logarithmic
-        const maxExponent = 8;   // Very exponential
-
-        if (p_clamped < 0.5) {
-            // Map p from [0, 0.5] to an exponent from [minExponent, 1]
-            exponent = 1 + (p_clamped - 0.5) * 2 * (1 - minExponent);
-        } else {
-            // Map p from [0.5, 1] to an exponent from [1, maxExponent]
-            exponent = 1 + (p_clamped - 0.5) * 2 * (maxExponent - 1);
-        }
-
-        if (t_clamped === 0) return 0;
-        return Math.pow(t_clamped, exponent);
-    }
-
-    /**
-     * Cosine-based envelope shape generator
-     */
-    _getCosTypeEnvelope(t, p) {
-        // Clamp parameters to ensure they are within the 0-1 range.
-        const t_clamped = Math.max(0, Math.min(1, t));
-        const p_clamped = Math.max(0, Math.min(1, p));
-
-        const f_square = t_clamped > 0 ? 1 : 0;
-        const f_cosine = 0.5 - Math.cos(t_clamped * Math.PI) * 0.5;
-        const f_median = t_clamped < 0.5 ? 0 : 1;
-
-        if (p_clamped < 0.5) {
-            const mix = p_clamped * 2;
-            return this._lerp(f_square, f_cosine, mix);
-        } else {
-            const mix = (p_clamped - 0.5) * 2;
-            return this._lerp(f_cosine, f_median, mix);
-        }
-    }
     
     /**
      * Update vowel formants based on morphing position
@@ -501,37 +420,15 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
         const frequency = parameters.frequency[0];
         const active = parameters.active[0];
         
-        // Read master sync phasor
-        const syncPhasor = parameters.syncPhasor;
-
-        // Read all k-rate envelope parameters once per block
-        const vowelXStart = parameters.vowelXStart[0];
-        const vowelXEnd = parameters.vowelXEnd[0];
-        const vowelXType = parameters.vowelXType[0];
-        const vowelXMorph = parameters.vowelXMorph[0];
-
-        const vowelYStart = parameters.vowelYStart[0];
-        const vowelYEnd = parameters.vowelYEnd[0];
-        const vowelYType = parameters.vowelYType[0];
-        const vowelYMorph = parameters.vowelYMorph[0];
-
-        const zingMorphStart = parameters.zingMorphStart[0];
-        const zingMorphEnd = parameters.zingMorphEnd[0];
-        const zingMorphType = parameters.zingMorphType[0];
-        const zingMorphMorph = parameters.zingMorphMorph[0];
-
-        const symmetryStart = parameters.symmetryStart[0];
-        const symmetryEnd = parameters.symmetryEnd[0];
-        const symmetryType = parameters.symmetryType[0];
-        const symmetryMorph = parameters.symmetryMorph[0];
-
-        const amplitudeStart = parameters.amplitudeStart[0];
-        const amplitudeEnd = parameters.amplitudeEnd[0];
-        const amplitudeType = parameters.amplitudeType[0];
-        const amplitudeMorph = parameters.amplitudeMorph[0];
-
-        // Get a-rate parameters (still used for backwards compatibility)
+        // Read direct parameter values (no envelopes)
+        const vowelX = parameters.vowelX[0];
+        const vowelY = parameters.vowelY[0];
+        const amplitude = parameters.amplitude[0];
+        
+        // Get a-rate parameters
         const zingAmount = this.expandParameter(parameters.zingAmount, blockSize);
+        const zingMorph = this.expandParameter(parameters.zingMorph, blockSize);
+        const symmetry = this.expandParameter(parameters.symmetry, blockSize);
         
         // Internal gain compensation constants (empirically balanced)
         const formantGain = 3.0; // Restore original PM path calibration
@@ -546,21 +443,17 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
             this.updateFormantCarriers(frequency);
         }
         
-        if (!active || frequency <= 0) {
+        if (!active || frequency <= 0 || amplitude <= 0) {
             outputChannel.fill(0);
+            if (outputDuplicate) outputDuplicate.fill(0);
+            if (f1FullChannel) f1FullChannel.fill(0);
+            if (f2FullChannel) f2FullChannel.fill(0);
+            if (f3FullChannel) f3FullChannel.fill(0);
             return true;
         }
-        
-        // Helper function to calculate envelope values
-        const calculateEnvelope = (phasor, type, morph, start, end) => {
-            let envelope_t = 0;
-            if (type < 0.5) { // 0 = lin
-                envelope_t = this._getLinTypeEnvelope(phasor, morph);
-            } else { // 1 = cos
-                envelope_t = this._getCosTypeEnvelope(phasor, morph);
-            }
-            return this._lerp(start, end, envelope_t);
-        };
+
+        // Update vowel formants once per block (block-rate for efficiency)
+        this.updateVowelFormants(vowelX, vowelY);
 
         // Calculate frequency increment per sample
         const freqIncrement = frequency / this.sampleRate;
@@ -569,28 +462,16 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
             // Update shared master phasor (UPHO architecture)
             this.masterPhase = (this.masterPhase + freqIncrement) % 1.0;
             
-            const currentSyncPhasor = syncPhasor[sample];
-
-            // Calculate final parameter values for this sample using envelopes
-            const vowelX = calculateEnvelope(currentSyncPhasor, vowelXType, vowelXMorph, vowelXStart, vowelXEnd);
-            const vowelY = calculateEnvelope(currentSyncPhasor, vowelYType, vowelYMorph, vowelYStart, vowelYEnd);
-            const zingMorph = calculateEnvelope(currentSyncPhasor, zingMorphType, zingMorphMorph, zingMorphStart, zingMorphEnd);
-            const symmetry = calculateEnvelope(currentSyncPhasor, symmetryType, symmetryMorph, symmetryStart, symmetryEnd);
-            const amplitude = calculateEnvelope(currentSyncPhasor, amplitudeType, amplitudeMorph, amplitudeStart, amplitudeEnd);
-
-            // Update vowel formants based on current envelope values (per-sample for smooth modulation)
-            this.updateVowelFormants(vowelX, vowelY);
-            
             // Generate shared modulator signal
             const modulator = this.generateModulator(this.masterPhase);
             
             // Generate both synthesis paths with individual formant tracking
-            const { total: formantOutput, f1: formantF1, f2: formantF2, f3: formantF3 } = this.generateFormantSynthesis(this.masterPhase, modulator, symmetry);
+            const { total: formantOutput, f1: formantF1, f2: formantF2, f3: formantF3 } = this.generateFormantSynthesis(this.masterPhase, modulator, symmetry[sample]);
             const { total: zingOutput, f1: zingF1, f2: zingF2, f3: zingF3 } = this.generateZingSynthesis(
                 this.masterPhase, 
-                zingMorph, 
+                zingMorph[sample], 
                 modDepth, 
-                symmetry
+                symmetry[sample]
             );
             
             // Apply individual synthesis path gains

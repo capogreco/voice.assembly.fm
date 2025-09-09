@@ -13,21 +13,12 @@ export const MessageTypes = {
   // Network Coordination
   PING: 'ping',
   PONG: 'pong',
-  LEADER_ELECTION: 'leader-election',
-  LEADER_ANNOUNCEMENT: 'leader-announcement',
-  
-  // Timing Synchronization
-  PHASOR_SYNC: 'phasor-sync',
-  CYCLE_START: 'cycle-start',
   
   // Parameter Control
-  PARAMETER_UPDATE: 'parameter-update',
-  ENVELOPE_UPDATE: 'envelope-update',
   MUSICAL_PARAMETERS: 'musical-parameters',
   
   // System Control
   CALIBRATION_MODE: 'calibration-mode',
-  SYSTEM_STATUS: 'system-status',
   SYNTH_READY: 'synth-ready'
 };
 
@@ -49,43 +40,6 @@ export class MessageBuilder {
     };
   }
 
-  static leaderElection(peerId, averageRTT, score) {
-    return {
-      type: MessageTypes.LEADER_ELECTION,
-      peerId,
-      averageRTT,
-      score,
-      timestamp: performance.now()
-    };
-  }
-
-  static leaderAnnouncement(leaderId) {
-    return {
-      type: MessageTypes.LEADER_ANNOUNCEMENT,
-      leaderId,
-      timestamp: performance.now()
-    };
-  }
-
-  static phasorSync(phasor, cycleFreq, audioTime) {
-    return {
-      type: MessageTypes.PHASOR_SYNC,
-      phasor,
-      cycleFreq,
-      audioTime,
-      timestamp: performance.now()
-    };
-  }
-
-  static parameterUpdate(synthId, parameters, envelopes) {
-    return {
-      type: MessageTypes.PARAMETER_UPDATE,
-      synthId,
-      parameters,
-      envelopes,
-      timestamp: performance.now()
-    };
-  }
 
   static musicalParameters(params) {
     return {
@@ -148,17 +102,9 @@ export function validateMessage(message) {
       }
       break;
 
-    case MessageTypes.PHASOR_SYNC:
-      if (typeof message.phasor !== 'number' ||
-          typeof message.cycleFreq !== 'number' ||
-          typeof message.audioTime !== 'number') {
-        throw new Error('Phasor sync message missing required numeric fields');
-      }
-      break;
-
-    case MessageTypes.PARAMETER_UPDATE:
-      if (!message.synthId || !message.parameters) {
-        throw new Error('Parameter update message missing required fields');
+    case MessageTypes.MUSICAL_PARAMETERS:
+      if (typeof message.frequency !== 'number') {
+        throw new Error('Musical parameters message missing frequency');
       }
       break;
   }
@@ -173,17 +119,3 @@ export function calculateRTT(pongMessage, currentTime = performance.now()) {
   return currentTime - pongMessage.pingTimestamp;
 }
 
-/**
- * Calculate clock offset using NTP-style algorithm
- */
-export function calculateClockOffset(pongMessage, currentTime = performance.now()) {
-  const t0 = pongMessage.pingTimestamp;  // local send time
-  const t1 = pongMessage.timestamp;      // remote receive time  
-  const t2 = pongMessage.timestamp;      // remote send time (same for pong)
-  const t3 = currentTime;                // local receive time
-
-  const rtt = (t3 - t0);
-  const offset = t1 - t0 - rtt/2;
-  
-  return { rtt, offset };
-}
