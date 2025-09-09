@@ -369,13 +369,18 @@ async function handleRequest(request: Request): Promise<Response> {
 
   try {
     const file = await Deno.readFile(fullFsPath);
-    const contentType = requestedPath.endsWith(".html") ? "text/html"
-      : requestedPath.endsWith(".js") ? "application/javascript" 
-      : requestedPath.endsWith(".css") ? "text/css"
+    const contentType = requestedPath.endsWith(".html") ? "text/html; charset=utf-8"
+      : requestedPath.endsWith(".js") ? "application/javascript; charset=utf-8" 
+      : requestedPath.endsWith(".css") ? "text/css; charset=utf-8"
       : requestedPath.endsWith(".ico") ? "image/x-icon"
       : "application/octet-stream";
 
-    return new Response(file, { headers: { "content-type": contentType } });
+    return new Response(file, { 
+      headers: { 
+        "content-type": contentType,
+        "access-control-allow-origin": "*"
+      } 
+    });
   } catch (e) {
     return new Response("not found", { status: 404 });
   }
