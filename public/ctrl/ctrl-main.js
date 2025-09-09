@@ -32,8 +32,7 @@ class ControlClient {
     // ES-8 Integration
     this.audioContext = null;       // AudioContext for ES-8 CV output
     this.es8Enabled = false;        // Enable/disable ES-8 output
-    this.cvOutputs = {};            // CV output nodes (8 channels)
-    this.gateOutputs = {};          // Gate output nodes
+    this.es8Node = null;            // ES-8 AudioWorklet node
     
     
     // UI Elements
@@ -194,9 +193,11 @@ class ControlClient {
     const params = this.getMusicalParameters();
     const message = MessageBuilder.musicalParameters(params);
     
-    
     // Send to all connected synth peers
     const sent = this.star.broadcastToType('synth', message, 'control');
+    
+    // Also send to ES-8 if enabled
+    this.sendMusicalParametersToES8();
   }
 
   // Phasor Management Methods
@@ -229,8 +230,8 @@ class ControlClient {
     this.lastPhasorTime = currentTime;
     this.updatePhasorDisplay();
     
-    // Update ES-8 CV outputs
-    this.updateES8Outputs();
+    // Update ES-8 with current phasor state
+    this.updateES8State();
     
     // Broadcast phasor at specified rate
     this.broadcastPhasor(currentTime);
@@ -288,33 +289,62 @@ class ControlClient {
     
     if (this.es8Enabled) {
       await this.initializeES8();
-      this.elements.es8EnableBtn.textContent = 'Disable ES-8';
-      this.elements.es8EnableBtn.classList.add('primary');
+      this.elements.es8EnableBtn.textContent = 'disable es-8';
+      this.elements.es8EnableBtn.classList.add('active');
       this.log('ES-8 enabled - CV output active', 'success');
     } else {
       this.shutdownES8();
-      this.elements.es8EnableBtn.textContent = 'Enable ES-8';
-      this.elements.es8EnableBtn.classList.remove('primary');
+      this.elements.es8EnableBtn.textContent = 'enable es-8';
+      this.elements.es8EnableBtn.classList.remove('active');
       this.log('ES-8 disabled', 'info');
     }
   }
 
   async initializeES8() {
     try {
-      // Create audio context if not exists
+      // Create audio context if it doesn't exist
       if (!this.audioContext) {
-        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      }
-      
-      // Resume if suspended
-      if (this.audioContext.state === 'suspended') {
+        this.audioContext = new AudioContext({ sampleRate: 48000 });
         await this.audioContext.resume();
       }
       
-      // Create CV and gate outputs for ES-8 (8 channels)
-      this.createES8Outputs();
+      // Configure destination for 8 channels (like the es_8_test reference)
+      if (this.audioContext.destination.maxChannelCount >= 8) {
+        this.audioContext.destination.channelCount = 8;
+        this.audioContext.destination.channelCountMode = 'explicit';
+        this.audioContext.destination.channelInterpretation = 'discrete';
+        this.log('Configured audio destination for 8 channels', 'info');
+      } else {
+        this.log(`Only ${this.audioContext.destination.maxChannelCount} channels available`, 'warning');
+      }
+
+      // Load the ES-8 worklet
+      await this.audioContext.audioWorklet.addModule('/ctrl/worklets/es8-processor.worklet.js');
       
-      this.log('ES-8 audio context initialized', 'info');
+      // Create ES-8 AudioWorkletNode
+      this.es8Node = new AudioWorkletNode(this.audioContext, 'es8-processor', {
+        numberOfInputs: 0,
+        numberOfOutputs: 1,
+        outputChannelCount: [8],
+        channelCount: 8,
+        channelCountMode: 'explicit',
+        channelInterpretation: 'discrete'
+      });
+      
+      // Connect to destination
+      this.es8Node.connect(this.audioContext.destination);
+      
+      // Enable the worklet
+      this.es8Node.port.postMessage({
+        type: 'enable',
+        enabled: true
+      });
+      
+      // Send initial state
+      this.updateES8State();
+      this.sendMusicalParametersToES8();
+      
+      this.log('ES-8 AudioWorklet initialized', 'info');
       
     } catch (error) {
       this.log(`ES-8 initialization failed: ${error.message}`, 'error');
@@ -322,56 +352,45 @@ class ControlClient {
     }
   }
 
-  createES8Outputs() {
-    // Create 8 channels for ES-8 output
-    for (let i = 0; i < 8; i++) {
-      // CV output (constant source + gain for voltage control)
-      const cvSource = this.audioContext.createConstantSource();
-      const cvGain = this.audioContext.createGain();
-      
-      cvSource.connect(cvGain);
-      cvGain.connect(this.audioContext.destination);
-      cvSource.start();
-      
-      this.cvOutputs[i] = { source: cvSource, gain: cvGain };
-    }
+  updateES8State() {
+    if (!this.es8Enabled || !this.es8Node) return;
     
-    // Initialize with basic pattern
-    this.updateES8Outputs();
+    // Send phasor state to worklet
+    this.es8Node.port.postMessage({
+      type: 'phasor-update',
+      phasor: this.phasor,
+      cpm: this.cpm,
+      stepsPerCycle: this.stepsPerCycle,
+      cycleLength: this.cycleLength
+    });
   }
-
-  updateES8Outputs() {
-    if (!this.es8Enabled || !this.audioContext) return;
+  
+  sendMusicalParametersToES8() {
+    if (!this.es8Enabled || !this.es8Node) return;
     
-    const now = this.audioContext.currentTime;
-    
-    // Channel 0: Phasor CV (0-5V scale)
-    const phasorCV = this.phasor * 5.0; // 0.0-1.0 → 0-5V
-    this.cvOutputs[0].gain.gain.setValueAtTime(phasorCV, now);
-    
-    // Channel 1: Beat clock (square wave)
-    const beatsPerCycle = this.beatsPerCycle;
-    const currentBeat = Math.floor(this.phasor * beatsPerCycle);
-    const beatPhase = (this.phasor * beatsPerCycle) % 1.0;
-    
-    // Gate high for first half of each beat
-    const gateValue = beatPhase < 0.5 ? 5.0 : 0.0;
-    this.cvOutputs[1].gain.gain.setValueAtTime(gateValue, now);
-    
-    // Channel 2: Downbeat trigger (high only on cycle start)
-    const downbeatValue = (currentBeat === 0 && beatPhase < 0.1) ? 5.0 : 0.0;
-    this.cvOutputs[2].gain.gain.setValueAtTime(downbeatValue, now);
+    const params = this.getMusicalParameters();
+    this.es8Node.port.postMessage({
+      type: 'musical-parameters',
+      frequency: params.frequency,
+      vowelX: params.vowelX,
+      vowelY: params.vowelY,
+      zingAmount: params.zingAmount,
+      amplitude: params.amplitude
+    });
   }
 
   shutdownES8() {
-    // Stop all CV outputs
-    Object.values(this.cvOutputs).forEach(output => {
-      if (output.source) {
-        output.source.stop();
-      }
-    });
-    
-    this.cvOutputs = {};
+    if (this.es8Node) {
+      // Disable the worklet
+      this.es8Node.port.postMessage({
+        type: 'enable',
+        enabled: false
+      });
+      
+      // Disconnect and clean up
+      this.es8Node.disconnect();
+      this.es8Node = null;
+    }
     
     if (this.audioContext) {
       this.audioContext.close();
