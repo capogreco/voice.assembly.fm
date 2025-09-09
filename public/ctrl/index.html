@@ -224,6 +224,30 @@
             border: none;
         }
 
+        /* Phasor Bar Styles */
+        .phasor-bar-container {
+            background: #1a1a1a;
+            border: 1px solid #444;
+            height: 20px;
+            position: relative;
+            margin-bottom: 8px;
+        }
+
+        .phasor-bar {
+            background: #4a7c8a;
+            height: 100%;
+            width: 0%;
+            transition: none;
+        }
+
+        .phasor-value {
+            font-size: 14px;
+            color: #e0e0e0;
+            text-align: center;
+            font-weight: normal;
+            font-family: Monaco, monospace;
+        }
+
     </style>
 </head>
 <body>
@@ -312,6 +336,33 @@
                 <div class="param-value" id="amplitude-value">1.00</div>
                 <input type="range" class="slider" id="amplitude-slider" 
                        min="0" max="1" step="0.01" value="1.0">
+            </div>
+        </div>
+
+        <!-- Phasor Panel -->
+        <div class="panel">
+            <h2>phasor</h2>
+            
+            <div class="param-control">
+                <div class="param-label">bpm</div>
+                <div class="param-value" id="bpm-value">120 BPM</div>
+                <input type="range" class="slider" id="bpm-slider" 
+                       min="60" max="180" value="120" step="1">
+            </div>
+
+            <div class="param-control">
+                <div class="param-label">beats per cycle</div>
+                <div class="param-value" id="beats-per-cycle-value">4 beats</div>
+                <input type="range" class="slider" id="beats-per-cycle-slider" 
+                       min="1" max="16" value="4" step="1">
+            </div>
+            
+            <div class="param-control">
+                <div class="param-label">phase</div>
+                <div class="phasor-value" id="phasor-display">0.000</div>
+                <div class="phasor-bar-container">
+                    <div class="phasor-bar" id="phasor-bar"></div>
+                </div>
             </div>
         </div>
 

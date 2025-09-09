@@ -16,14 +16,19 @@ class ControlClient {
     this.isCalibrationMode = false;
     this.isManualMode = false;
     
-    // Track current settings to send to new synths
-    this.currentSettings = {
-      calibrationMode: false,
-      calibrationAmplitude: 0.1
-    };
+    // Calibration settings
+    this.calibrationAmplitude = 0.1;
     
-    // Store pending settings for peers whose control channels aren't ready yet
-    this.pendingSettings = new Map();
+    // Phasor state
+    this.phasor = 0.0;              // Current phasor position (0.0 to 1.0)
+    this.bpm = 120;                 // Beats per minute
+    this.beatsPerCycle = 4;         // Number of beats per cycle (bars)
+    this.cycleLength = 2.0;         // Seconds per cycle (calculated from BPM * beatsPerCycle)
+    this.lastPhasorTime = 0;        // For delta time calculation
+    this.phasorUpdateId = null;     // RequestAnimationFrame ID
+    this.lastBroadcastTime = 0;     // For phasor broadcast rate limiting
+    this.phasorBroadcastRate = 30;  // Hz - how often to broadcast phasor
+    
     
     // UI Elements
     this.elements = {
@@ -40,12 +45,22 @@ class ControlClient {
       frequencySlider: document.getElementById('frequency-slider'),
       frequencyValue: document.getElementById('frequency-value'),
       
+      // Phasor controls
+      bpmSlider: document.getElementById('bpm-slider'),
+      bpmValue: document.getElementById('bpm-value'),
+      beatsPerCycleSlider: document.getElementById('beats-per-cycle-slider'),
+      beatsPerCycleValue: document.getElementById('beats-per-cycle-value'),
+      phasorDisplay: document.getElementById('phasor-display'),
+      phasorBar: document.getElementById('phasor-bar'),
+      
       peerList: document.getElementById('peer-list'),
       debugLog: document.getElementById('debug-log'),
       clearLogBtn: document.getElementById('clear-log-btn')
     };
     
     this.setupEventHandlers();
+    this.calculateCycleLength();
+    this.initializePhasor();
     this.log('Control client initialized', 'info');
     
     // Auto-connect on page load
@@ -71,7 +86,6 @@ class ControlClient {
     // Frequency slider
     this.elements.frequencySlider.addEventListener('input', (e) => {
       const frequency = parseFloat(e.target.value);
-      this.currentSettings.frequency = frequency;
       this.elements.frequencyValue.textContent = `${frequency} Hz`;
       this.broadcastMusicalParameters();
     });
@@ -117,6 +131,26 @@ class ControlClient {
       document.getElementById('zingAmount-value').textContent = zingAmount.toFixed(2);
       this.broadcastMusicalParameters();
     });
+    
+    // BPM slider
+    if (this.elements.bpmSlider) {
+      this.elements.bpmSlider.addEventListener('input', (e) => {
+        this.bpm = parseFloat(e.target.value);
+        this.elements.bpmValue.textContent = `${this.bpm} BPM`;
+        this.calculateCycleLength();
+        this.log(`BPM changed to ${this.bpm}`, 'info');
+      });
+    }
+    
+    // Beats per cycle slider
+    if (this.elements.beatsPerCycleSlider) {
+      this.elements.beatsPerCycleSlider.addEventListener('input', (e) => {
+        this.beatsPerCycle = parseFloat(e.target.value);
+        this.elements.beatsPerCycleValue.textContent = `${this.beatsPerCycle} beats`;
+        this.calculateCycleLength();
+        this.log(`Beats per cycle changed to ${this.beatsPerCycle}`, 'info');
+      });
+    }
   }
   
   
@@ -150,6 +184,86 @@ class ControlClient {
     
     // Send to all connected synth peers
     const sent = this.star.broadcastToType('synth', message, 'control');
+  }
+
+  // Phasor Management Methods
+  calculateCycleLength() {
+    // Calculate cycle length: (60 seconds/minute / BPM) * beats per cycle
+    // Example: 120 BPM, 4 beats per cycle = (60/120) * 4 = 2.0 seconds per cycle
+    this.cycleLength = (60.0 / this.bpm) * this.beatsPerCycle;
+  }
+
+  initializePhasor() {
+    this.phasor = 0.0;
+    this.lastPhasorTime = performance.now() / 1000.0;
+    this.startPhasorUpdate();
+    this.updatePhasorDisplay();
+  }
+
+  updatePhasor() {
+    const currentTime = performance.now() / 1000.0;
+    const deltaTime = currentTime - this.lastPhasorTime;
+    
+    // Update phasor
+    const phasorIncrement = deltaTime / this.cycleLength;
+    this.phasor += phasorIncrement;
+    
+    // Wrap around at 1.0
+    if (this.phasor >= 1.0) {
+      this.phasor -= 1.0;
+    }
+    
+    this.lastPhasorTime = currentTime;
+    this.updatePhasorDisplay();
+    
+    // Broadcast phasor at specified rate
+    this.broadcastPhasor(currentTime);
+  }
+
+  updatePhasorDisplay() {
+    if (this.elements.phasorDisplay) {
+      this.elements.phasorDisplay.textContent = this.phasor.toFixed(3);
+    }
+    
+    if (this.elements.phasorBar) {
+      const percentage = (this.phasor * 100).toFixed(1);
+      this.elements.phasorBar.style.width = `${percentage}%`;
+    }
+  }
+
+  startPhasorUpdate() {
+    const updateLoop = () => {
+      this.updatePhasor();
+      this.phasorUpdateId = requestAnimationFrame(updateLoop);
+    };
+    updateLoop();
+  }
+
+  stopPhasorUpdate() {
+    if (this.phasorUpdateId) {
+      cancelAnimationFrame(this.phasorUpdateId);
+      this.phasorUpdateId = null;
+    }
+  }
+
+  broadcastPhasor(currentTime) {
+    if (!this.star) return;
+    
+    // Rate limiting - only broadcast at the specified rate
+    const timeSinceLastBroadcast = currentTime - this.lastBroadcastTime;
+    const broadcastInterval = 1.0 / this.phasorBroadcastRate;
+    
+    if (timeSinceLastBroadcast >= broadcastInterval) {
+      const message = MessageBuilder.phasorSync(
+        this.phasor,
+        this.bpm,
+        this.beatsPerCycle,
+        this.cycleLength
+      );
+      
+      const sent = this.star.broadcastToType('synth', message, 'sync');
+      this.lastBroadcastTime = currentTime;
+    }
   }
 
   async connectToNetwork() {
@@ -198,23 +312,9 @@ class ControlClient {
       this.updatePeerList();
       this._updateUIState();
       
-      // Send current musical parameters to new synths
+      // Send complete current state to new synths
       if (peerId.startsWith('synth-')) {
-        this.log(`Sending current state to new synth: ${peerId}`, 'info');
-        const params = this.getMusicalParameters();
-        const message = MessageBuilder.musicalParameters(params);
-        this.star.sendToPeer(peerId, message, 'control');
-      }
-    });
-    
-    // Listen for control channel opening to send pending settings
-    this.star.addEventListener('channel-opened', (event) => {
-      const { peerId, channelType } = event.detail;
-      if (channelType === 'control' && peerId.startsWith('synth-') && this.pendingSettings.has(peerId)) {
-        const settings = this.pendingSettings.get(peerId);
-        this.pendingSettings.delete(peerId);
-        this.log(`Control channel opened for ${peerId}, sending pending settings`, 'debug');
-        this.sendSettingsToSynth(peerId, settings);
+        this.sendCompleteStateToSynth(peerId);
       }
     });
     
@@ -264,9 +364,6 @@ class ControlClient {
   toggleCalibration() {
     this.isCalibrationMode = !this.isCalibrationMode;
     
-    // Update tracked settings
-    this.currentSettings.calibrationMode = this.isCalibrationMode;
-    this.currentSettings.calibrationAmplitude = 0.1;
     
     if (this.isCalibrationMode) {
       this.elements.calibrationBtn.textContent = 'Disable Calibration Mode';
@@ -304,73 +401,35 @@ class ControlClient {
   }
 
 
-  sendCurrentSettingsToSynth(synthId) {
-    if (!this.star) {
-      this.log('Cannot send settings: not connected to network', 'warn');
-      return;
-    }
+
+  sendCompleteStateToSynth(synthId) {
+    this.log(`Sending complete state to new synth: ${synthId}`, 'info');
     
-    // Check if control channel is ready, if not store for later
-    const peer = this.star.peers.get(synthId);
-    if (!peer || !peer.controlChannel || peer.controlChannel.readyState !== 'open') {
-      // Store pending settings to send when channel opens
-      if (!this.pendingSettings) this.pendingSettings = new Map();
-      this.pendingSettings.set(synthId, { ...this.currentSettings });
-      this.log(`Control channel not ready for ${synthId}, settings stored for later`, 'debug');
-      return;
-    }
-    
-    // Send calibration mode if active
-    if (this.currentSettings.calibrationMode) {
+    // 1. Send calibration mode if active
+    if (this.isCalibrationMode) {
       const calibrationMsg = MessageBuilder.calibrationMode(
-        this.currentSettings.calibrationMode,
-        this.currentSettings.calibrationAmplitude
+        this.isCalibrationMode,
+        this.calibrationAmplitude
       );
       const success = this.star.sendToPeer(synthId, calibrationMsg, 'control');
       if (success) {
-        this.log(`Sent calibration mode to ${synthId}`, 'debug');
+        this.log(`✅ Sent calibration mode to ${synthId}`, 'debug');
       } else {
-        this.log(`Failed to send calibration mode to ${synthId}`, 'error');
+        this.log(`❌ Failed to send calibration mode to ${synthId}`, 'error');
       }
     }
     
-    
-    // Send current musical parameters
+    // 2. Send current musical parameters (includes test mode state)
     const params = this.getMusicalParameters();
     const musicalMsg = MessageBuilder.musicalParameters(params);
     const musicalSuccess = this.star.sendToPeer(synthId, musicalMsg, 'control');
     if (musicalSuccess) {
-      this.log(`Sent musical parameters to ${synthId}`, 'debug');
+      this.log(`✅ Sent musical parameters to ${synthId} (test mode: ${params.isManualMode})`, 'debug');
     } else {
-      this.log(`Failed to send musical parameters to ${synthId}`, 'error');
+      this.log(`❌ Failed to send musical parameters to ${synthId}`, 'error');
     }
   }
 
-  sendSettingsToSynth(synthId, settings) {
-    // Send calibration mode if was active
-    if (settings.calibrationMode) {
-      const calibrationMsg = MessageBuilder.calibrationMode(
-        settings.calibrationMode,
-        settings.calibrationAmplitude
-      );
-      const success = this.star.sendToPeer(synthId, calibrationMsg, 'control');
-      if (success) {
-        this.log(`Sent pending calibration mode to ${synthId}`, 'debug');
-      } else {
-        this.log(`Failed to send pending calibration mode to ${synthId}`, 'error');
-      }
-    }
-    
-    // Send pending musical parameters - use current envelope settings
-    const params = this.getMusicalParameters();
-    const musicalMsg = MessageBuilder.musicalParameters(params);
-    const musicalSuccess = this.star.sendToPeer(synthId, musicalMsg, 'control');
-    if (musicalSuccess) {
-      this.log(`Sent pending musical parameters to ${synthId}`, 'debug');
-    } else {
-      this.log(`Failed to send pending musical parameters to ${synthId}`, 'error');
-    }
-  }
 
   updateConnectionStatus(status) {
     const statusElement = this.elements.connectionStatus;

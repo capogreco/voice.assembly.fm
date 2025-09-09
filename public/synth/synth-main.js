@@ -24,6 +24,16 @@ class SynthClient {
     this.currentState = 'join'; // 'join', 'connecting', 'active'
     this.volume = 0.1;
     
+    // Store received state for application after audio init
+    this.lastMusicalParams = null;
+    
+    // Phasor synchronization
+    this.receivedPhasor = 0.0;
+    this.receivedBpm = 120;
+    this.receivedBeatsPerCycle = 4;
+    this.receivedCycleLength = 2.0;
+    this.lastPhasorMessage = 0;
+    
     // UI Elements
     this.elements = {
       joinState: document.getElementById('join-state'),
@@ -113,10 +123,14 @@ class SynthClient {
       // Initialize audio context (requires user gesture)
       await this.initializeAudio();
       
-      // Initialize oscilloscope
-      this.initializeOscilloscope();
-      
+      // Show active state first so canvas container has proper dimensions
       this.setState('active');
+      
+      // Initialize oscilloscope after DOM is updated
+      // Use requestAnimationFrame to ensure DOM changes are applied
+      requestAnimationFrame(() => {
+        this.initializeOscilloscope();
+      });
       
     } catch (error) {
       console.error('❌ Failed to join choir:', error);
@@ -183,9 +197,30 @@ class SynthClient {
       // Connect directly to master gain
       this.formantNode.connect(this.masterGain);
       
+      // Apply any stored state that was received before audio was ready
+      this.applyStoredState();
+      
     } catch (error) {
       console.error('❌ Failed to initialize formant synthesis:', error);
       throw error;
+    }
+  }
+
+  applyStoredState() {
+    console.log('🔄 Applying stored state after audio initialization');
+    
+    // Apply calibration mode if it was received before audio was ready
+    if (this.isCalibrationMode) {
+      console.log('📢 Applying stored calibration mode');
+      this.startWhiteNoise(0.1);
+      this.connectOscilloscopeToWhiteNoise();
+      this.updateConnectionStatus('syncing', 'Calibration mode');
+    }
+    
+    // Apply musical parameters if they were received before audio was ready
+    if (this.lastMusicalParams) {
+      console.log('🎵 Applying stored musical parameters');
+      this.handleMusicalParameters(this.lastMusicalParams);
     }
   }
 
@@ -230,6 +265,10 @@ class SynthClient {
         this.handleMusicalParameters(message);
         break;
         
+      case MessageTypes.PHASOR_SYNC:
+        this.handlePhasorSync(message);
+        break;
+        
       default:
         break;
     }
@@ -271,6 +310,8 @@ class SynthClient {
   }
 
   handleMusicalParameters(message) {
+    // Always store the latest parameters for application after audio init
+    this.lastMusicalParams = message;
     
     if (!this.formantNode) {
       console.warn('⚠️ Cannot apply musical parameters: formant synthesis not ready');
@@ -321,6 +362,19 @@ class SynthClient {
       this.amplitudeEnvelope = message.amplitude;
     }
     
+  }
+
+  handlePhasorSync(message) {
+    this.receivedPhasor = message.phasor;
+    this.receivedBpm = message.bpm;
+    this.receivedBeatsPerCycle = message.beatsPerCycle;
+    this.receivedCycleLength = message.cycleLength;
+    this.lastPhasorMessage = performance.now();
+    
+    // Update connection status to show we're receiving phasor sync
+    if (this.elements.connectionStatus) {
+      this.elements.connectionStatus.textContent = `connected (${this.receivedBpm} bpm, ${this.receivedBeatsPerCycle}/cycle, φ=${this.receivedPhasor.toFixed(3)})`;
+    }
   }
 
   startWhiteNoise(amplitude = 0.3) {

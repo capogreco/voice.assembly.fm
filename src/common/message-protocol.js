@@ -17,6 +17,9 @@ export const MessageTypes = {
   // Parameter Control
   MUSICAL_PARAMETERS: 'musical-parameters',
   
+  // Timing Control
+  PHASOR_SYNC: 'phasor-sync',
+  
   // System Control
   CALIBRATION_MODE: 'calibration-mode',
   SYNTH_READY: 'synth-ready'
@@ -52,6 +55,17 @@ export class MessageBuilder {
       symmetry: params.symmetry,
       amplitude: params.amplitude,
       isManualMode: params.isManualMode,
+      timestamp: performance.now()
+    };
+  }
+
+  static phasorSync(phasor, bpm, beatsPerCycle, cycleLength) {
+    return {
+      type: MessageTypes.PHASOR_SYNC,
+      phasor,
+      bpm,
+      beatsPerCycle,
+      cycleLength,
       timestamp: performance.now()
     };
   }
@@ -105,6 +119,15 @@ export function validateMessage(message) {
     case MessageTypes.MUSICAL_PARAMETERS:
       if (typeof message.frequency !== 'number') {
         throw new Error('Musical parameters message missing frequency');
+      }
+      break;
+
+    case MessageTypes.PHASOR_SYNC:
+      if (typeof message.phasor !== 'number' || 
+          typeof message.bpm !== 'number' ||
+          typeof message.beatsPerCycle !== 'number' ||
+          typeof message.cycleLength !== 'number') {
+        throw new Error('Phasor sync message missing required numeric fields');
       }
       break;
   }

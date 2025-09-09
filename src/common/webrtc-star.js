@@ -544,7 +544,7 @@ export class WebRTCStar extends EventTarget {
 
 
   /**
-   * Check if peer is ready (connection established and sync channel open)
+   * Check if peer is ready (connection established and both channels open)
    */
   checkPeerReadiness(peerId) {
     const peer = this.peers.get(peerId);
@@ -557,6 +557,7 @@ export class WebRTCStar extends EventTarget {
        peerConnection.iceConnectionState === 'completed');
     
     const isSyncChannelReady = peer.syncChannel && peer.syncChannel.readyState === 'open';
+    const isControlChannelReady = peer.controlChannel && peer.controlChannel.readyState === 'open';
     
     // Debug info
     console.log(`🔍 Peer ${peerId} readiness check:`, {
@@ -564,12 +565,15 @@ export class WebRTCStar extends EventTarget {
       iceConnectionState: peerConnection?.iceConnectionState,
       hasSyncChannel: !!peer.syncChannel,
       syncChannelState: peer.syncChannel?.readyState,
+      hasControlChannel: !!peer.controlChannel,
+      controlChannelState: peer.controlChannel?.readyState,
       isConnectionReady,
-      isSyncChannelReady
+      isSyncChannelReady,
+      isControlChannelReady
     });
     
-    if (isConnectionReady && isSyncChannelReady) {
-      console.log(`✅ Both connection and sync channel ready for ${peerId}`);
+    if (isConnectionReady && isSyncChannelReady && isControlChannelReady) {
+      console.log(`✅ Connection and both channels ready for ${peerId}`);
       // Prevent duplicate events
       if (!peer.connectedEventSent) {
         peer.connectedEventSent = true;
@@ -582,7 +586,7 @@ export class WebRTCStar extends EventTarget {
         }));
       }
     } else {
-      console.log(`⏳ Peer ${peerId} - Connection: ${isConnectionReady ? 'ready' : 'waiting'}, Sync channel: ${isSyncChannelReady ? 'ready' : 'waiting'}`);
+      console.log(`⏳ Peer ${peerId} - Connection: ${isConnectionReady ? 'ready' : 'waiting'}, Sync channel: ${isSyncChannelReady ? 'ready' : 'waiting'}, Control channel: ${isControlChannelReady ? 'ready' : 'waiting'}`);
     }
   }
 

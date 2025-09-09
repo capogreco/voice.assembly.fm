@@ -40,18 +40,32 @@ export class XYOscilloscope {
   }
 
   resize() {
-    const rect = this.canvas.getBoundingClientRect();
+    // Get dimensions from parent container instead of canvas itself
+    const container = this.canvas.parentElement;
+    if (!container) return;
+    
+    const rect = container.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     
-    this.canvas.width = rect.width * dpr;
-    this.canvas.height = rect.height * dpr;
+    // Calculate display size
+    const displayWidth = rect.width;
+    const displayHeight = rect.height;
     
+    // Set CSS size first to avoid visual glitches
+    this.canvas.style.width = displayWidth + 'px';
+    this.canvas.style.height = displayHeight + 'px';
+    
+    // Set buffer size with device pixel ratio
+    this.canvas.width = displayWidth * dpr;
+    this.canvas.height = displayHeight * dpr;
+    
+    // Reset transform and apply DPR scaling
+    this.ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset transform matrix
     this.ctx.scale(dpr, dpr);
-    this.canvas.style.width = rect.width + 'px';
-    this.canvas.style.height = rect.height + 'px';
     
-    this.width = rect.width;
-    this.height = rect.height;
+    // Store display dimensions
+    this.width = displayWidth;
+    this.height = displayHeight;
     this.centerX = this.width / 2;
     this.centerY = this.height / 2;
   }
