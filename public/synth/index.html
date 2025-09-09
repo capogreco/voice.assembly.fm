@@ -138,6 +138,26 @@
             color: #e0e0e0;
         }
 
+        /* Long press feedback for synth ID */
+        #synth-id {
+            transition: transform 0.2s ease, opacity 0.2s ease;
+            user-select: none;
+            -webkit-user-select: none;
+            cursor: pointer;
+            border-radius: 2px;
+            padding: 2px 4px;
+        }
+
+        #synth-id.pressing {
+            transform: scale(0.95);
+            opacity: 0.7;
+            background: rgba(74, 124, 138, 0.2);
+        }
+
+        #synth-id.rhythm-active {
+            color: #4a7c8a !important;
+        }
+
         /* Loading animation */
         .loading {
             position: absolute;

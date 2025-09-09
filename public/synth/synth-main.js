@@ -41,6 +41,13 @@ class SynthClient {
     this.phasorWorklet = null;          // AudioWorkletNode for sample-accurate phasor
     this.workletPhasor = 0.0;           // Current phasor from AudioWorklet
     
+    // Screen wake lock
+    this.wakeLock = null;
+    
+    // Long press handling
+    this.longPressTimer = null;
+    this.pressStartTime = 0;
+    
     // PLL (Phase-Locked Loop) settings
     this.pllCorrectionFactor = 0.1;     // How aggressively to correct phase errors (0.1 = gentle)
     this.pllEnabled = true;             // Enable/disable phase correction
@@ -99,6 +106,7 @@ class SynthClient {
 
     this.setupEventHandlers();
     this.setupKeyboardShortcuts();
+    this.setupLongPress();
     
     // Display synth ID
     this.updateSynthIdDisplay();
@@ -116,6 +124,11 @@ class SynthClient {
       if (this.oscilloscope) {
         this.oscilloscope.resize();
       }
+    });
+    
+    // Clean up on page unload
+    window.addEventListener('beforeunload', () => {
+      this.cleanup();
     });
     
   }
@@ -216,6 +229,9 @@ class SynthClient {
     
     // Initialize formant synthesis
     await this.initializeFormantSynthesis();
+    
+    // Request screen wake lock to keep screen awake during performance
+    await this.requestWakeLock();
     
     // Apply any pending calibration state
     if (this.isCalibrationMode) {
@@ -778,8 +794,137 @@ class SynthClient {
     if (this.elements.synthId) {
       // Extract just the last part of the peer ID for cleaner display
       const shortId = this.peerId.split('-').slice(-2).join('-');
-      this.elements.synthId.textContent = shortId;
+      const rhythmIndicator = this.rhythmEnabled ? ' 🎵' : '';
+      this.elements.synthId.textContent = shortId + rhythmIndicator;
+      
+      // Apply CSS class for visual indication
+      if (this.rhythmEnabled) {
+        this.elements.synthId.classList.add('rhythm-active');
+      } else {
+        this.elements.synthId.classList.remove('rhythm-active');
+      }
     }
+  }
+
+  setupLongPress() {
+    const synthIdElement = this.elements.synthId;
+    if (!synthIdElement) return;
+
+    let pressTimer = null;
+    let isLongPress = false;
+
+    const startPress = (e) => {
+      e.preventDefault();
+      isLongPress = false;
+      synthIdElement.classList.add('pressing');
+      
+      pressTimer = setTimeout(() => {
+        isLongPress = true;
+        this.toggleRhythm();
+        this.updateSynthIdDisplay();
+        
+        // Haptic feedback if available
+        if (navigator.vibrate) {
+          navigator.vibrate(50);
+        }
+      }, 500); // 500ms long press threshold
+    };
+
+    const endPress = (e) => {
+      e.preventDefault();
+      synthIdElement.classList.remove('pressing');
+      
+      if (pressTimer) {
+        clearTimeout(pressTimer);
+        pressTimer = null;
+      }
+    };
+
+    const cancelPress = (e) => {
+      synthIdElement.classList.remove('pressing');
+      if (pressTimer) {
+        clearTimeout(pressTimer);
+        pressTimer = null;
+      }
+    };
+
+    // Touch events
+    synthIdElement.addEventListener('touchstart', startPress, { passive: false });
+    synthIdElement.addEventListener('touchend', endPress, { passive: false });
+    synthIdElement.addEventListener('touchcancel', cancelPress, { passive: false });
+    synthIdElement.addEventListener('touchmove', cancelPress, { passive: false });
+
+    // Mouse events (for desktop testing)
+    synthIdElement.addEventListener('mousedown', startPress);
+    synthIdElement.addEventListener('mouseup', endPress);
+    synthIdElement.addEventListener('mouseleave', cancelPress);
+  }
+
+  async requestWakeLock() {
+    // Check if Wake Lock API is supported
+    if (!('wakeLock' in navigator)) {
+      console.log('⚠️ Wake Lock API not supported');
+      return;
+    }
+
+    try {
+      this.wakeLock = await navigator.wakeLock.request('screen');
+      console.log('✅ Screen wake lock acquired');
+      
+      // Handle wake lock release
+      this.wakeLock.addEventListener('release', () => {
+        console.log('🔓 Screen wake lock released');
+      });
+      
+      // Handle visibility changes to re-acquire wake lock
+      document.addEventListener('visibilitychange', this.handleVisibilityChange.bind(this));
+      
+    } catch (err) {
+      console.error(`❌ Wake Lock failed: ${err.name}, ${err.message}`);
+    }
+  }
+
+  async handleVisibilityChange() {
+    if (this.wakeLock !== null && document.visibilityState === 'visible') {
+      try {
+        this.wakeLock = await navigator.wakeLock.request('screen');
+        console.log('✅ Screen wake lock re-acquired after visibility change');
+      } catch (err) {
+        console.error(`❌ Wake Lock re-acquisition failed: ${err.name}, ${err.message}`);
+      }
+    }
+  }
+
+  releaseWakeLock() {
+    if (this.wakeLock !== null) {
+      this.wakeLock.release().then(() => {
+        this.wakeLock = null;
+        console.log('🔓 Screen wake lock manually released');
+      });
+    }
+  }
+
+  cleanup() {
+    // Release wake lock
+    this.releaseWakeLock();
+    
+    // Clean up WebRTC connections
+    if (this.star) {
+      this.star.cleanup();
+    }
+    
+    // Stop audio worklets
+    if (this.phasorWorklet) {
+      this.phasorWorklet.disconnect();
+    }
+    
+    if (this.formantNode) {
+      this.formantNode.disconnect();
+    }
+    
+    this.stopWhiteNoise();
+    
+    console.log('🧹 Synth client cleaned up');
   }
 
 }
