@@ -409,7 +409,10 @@ class ControlClient {
       this.setupStarEventHandlers();
       
       // Connect to signaling server - use current host
-      const signalingUrl = `ws://${window.location.hostname}:8000/ws`;
+      // Dynamic WebSocket URL that works in production and development
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const port = window.location.port ? `:${window.location.port}` : '';
+      const signalingUrl = `${protocol}//${window.location.hostname}${port}/ws`;
       await this.star.connect(signalingUrl, this.forceTakeover);
       
       

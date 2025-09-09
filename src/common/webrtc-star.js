@@ -38,7 +38,7 @@ export class WebRTCStar extends EventTarget {
   }
 
   /**
-   * Connect to signaling server and join room
+   * Connect to signaling server and register
    */
   async connect(signalingUrl = 'ws://localhost:8000/ws', forceTakeover = false) {
     return new Promise((resolve, reject) => {
@@ -47,23 +47,37 @@ export class WebRTCStar extends EventTarget {
       this.signalingSocket.addEventListener('open', () => {
         console.log('📡 Connected to signaling server');
         
-        // Join room
+        // Register with server using new simplified protocol
         this.sendSignalingMessage({
-          type: 'join',
-          peerId: this.peerId,
-          peerType: this.peerType,
-          roomId: this.roomId,
-          forceTakeover: forceTakeover
+          type: 'register',
+          client_id: this.peerId,
+          roomId: this.roomId
         });
+        
+        // If we're a synth, immediately request ctrl list
+        if (this.peerType === 'synth') {
+          setTimeout(() => {
+            this.sendSignalingMessage({
+              type: 'request-ctrls', 
+              roomId: this.roomId
+            });
+          }, 100); // Small delay to ensure registration is processed
+        }
       });
 
       this.signalingSocket.addEventListener('message', async (event) => {
         const message = JSON.parse(event.data);
         await this.handleSignalingMessage(message);
         
-        if (message.type === 'join-success') {
+        // Handle successful connection for simplified protocol
+        if (message.type === 'ctrls-list' || message.type === 'ctrl-joined') {
           this.isConnectedToSignaling = true;
-          // Delay ping timer to allow data channels to establish
+          // Delay ping timer to allow data channels to establish  
+          setTimeout(() => this.startPingTimer(), 3000);
+          resolve(true);
+        } else if (this.peerType === 'ctrl') {
+          // Ctrl clients resolve immediately after registration
+          this.isConnectedToSignaling = true;
           setTimeout(() => this.startPingTimer(), 3000);
           resolve(true);
         }
@@ -87,33 +101,40 @@ export class WebRTCStar extends EventTarget {
    */
   async handleSignalingMessage(message) {
     switch (message.type) {
-      case 'join-success':
-        console.log(`✅ Successfully joined room ${this.roomId}`);
-        break;
-
-      case 'peer-list':
-        console.log('📋 Received peer-list message:', message.peers);
-        await this.handlePeerList(message.peers);
-        break;
-
-      case 'synth-available':
-        if (this.peerType === 'ctrl') {
-          console.log(`🎵 Synth available: ${message.synthId}`);
-          await this.createPeerConnection(message.synthId, true); // Ctrl initiates
-        }
-        break;
-
-      case 'ctrl-available':
+      case 'ctrls-list':
         if (this.peerType === 'synth') {
-          console.log(`🎛️ Ctrl available: ${message.ctrlId}`);
-          await this.createPeerConnection(message.ctrlId, false); // Ctrl initiates
+          console.log('📋 Received ctrls list:', message.ctrls);
+          // Synths initiate connections to all available ctrls
+          for (const ctrlId of message.ctrls) {
+            if (!this.peers.has(ctrlId)) {
+              console.log(`🎛️ Connecting to ctrl: ${ctrlId}`);
+              await this.createPeerConnection(ctrlId, true); // Synth initiates
+            }
+          }
         }
         break;
 
-      case 'peer-left':
-        if (message.peerId !== this.peerId) {
-          console.log(`👋 Peer left: ${message.peerId}`);
-          this.removePeer(message.peerId);
+      case 'ctrl-joined':
+        if (this.peerType === 'synth' && message.roomId === this.roomId) {
+          console.log(`🎛️ New ctrl joined: ${message.ctrl_id}`);
+          // Synth initiates connection to new ctrl
+          if (!this.peers.has(message.ctrl_id)) {
+            await this.createPeerConnection(message.ctrl_id, true);
+          }
+        }
+        break;
+
+      case 'ctrl-left':
+        if (message.roomId === this.roomId && message.ctrl_id !== this.peerId) {
+          console.log(`👋 Ctrl left: ${message.ctrl_id}`);
+          this.removePeer(message.ctrl_id);
+        }
+        break;
+
+      case 'synth-left':
+        if (message.synth_id !== this.peerId) {
+          console.log(`👋 Synth left: ${message.synth_id}`);
+          this.removePeer(message.synth_id);
         }
         break;
 
@@ -336,11 +357,26 @@ export class WebRTCStar extends EventTarget {
    */
   async handleOffer(message) {
     const { fromPeerId, offer } = message;
-    const peer = this.peers.get(fromPeerId);
+    let peer = this.peers.get(fromPeerId);
     
     if (!peer) {
-      console.error(`❌ Received offer from unknown peer: ${fromPeerId}`);
-      return;
+      // In simplified system, ctrl clients need to accept incoming offers from synths
+      // Create peer connection on-demand when receiving an offer
+      if (this.peerType === 'ctrl') {
+        console.log(`🎵 Creating peer connection for incoming synth: ${fromPeerId}`);
+        await this.createPeerConnection(fromPeerId, false); // Ctrl doesn't initiate
+        peer = this.peers.get(fromPeerId);
+      } else {
+        console.error(`❌ Received offer from unknown peer: ${fromPeerId}`);
+        return;
+      }
+    } else {
+      // If we already have a peer connection, clean up the old one before handling new offer
+      // This happens when synth client refreshes/reconnects quickly
+      console.log(`🔄 Replacing existing connection to ${fromPeerId}`);
+      this.removePeer(fromPeerId);
+      await this.createPeerConnection(fromPeerId, false);
+      peer = this.peers.get(fromPeerId);
     }
 
     await peer.connection.setRemoteDescription(offer);
@@ -374,11 +410,18 @@ export class WebRTCStar extends EventTarget {
    */
   async handleIceCandidate(message) {
     const { fromPeerId, candidate } = message;
-    const peer = this.peers.get(fromPeerId);
+    let peer = this.peers.get(fromPeerId);
     
     if (!peer) {
-      console.error(`❌ Received ICE candidate from unknown peer: ${fromPeerId}`);
-      return;
+      // Ctrl clients should accept ICE candidates from synths
+      if (this.peerType === 'ctrl') {
+        console.log(`🧊 Creating peer connection for ICE candidate from: ${fromPeerId}`);
+        await this.createPeerConnection(fromPeerId, false);
+        peer = this.peers.get(fromPeerId);
+      } else {
+        console.error(`❌ Received ICE candidate from unknown peer: ${fromPeerId}`);
+        return;
+      }
     }
 
     try {
@@ -392,9 +435,17 @@ export class WebRTCStar extends EventTarget {
    * Handle data channel messages
    */
   handleDataChannelMessage(peerId, channelType, message) {
-    // Record network health metrics
+    // Handle ping/pong at network level
+    if (message.type === MessageTypes.PING) {
+      // Respond to ping automatically
+      const pongMessage = MessageBuilder.pong(message.id, message.timestamp);
+      this.sendToPeer(peerId, pongMessage, channelType);
+      return; // Don't emit ping messages to application layer
+    }
+    
     if (message.type === MessageTypes.PONG) {
       this.handlePongMessage(peerId, message);
+      return; // Don't emit pong messages to application layer
     }
 
     // Emit event for upper layers to handle
@@ -532,10 +583,13 @@ export class WebRTCStar extends EventTarget {
 
     const pingMessage = MessageBuilder.ping();
     
-    // Set timeout for ping response
+    // Set timeout for ping response  
     const timeout = setTimeout(() => {
       console.log(`⚠️ Ping timeout for ${peerId}`);
       this.pingTimeouts.delete(pingMessage.id);
+      
+      // Don't automatically remove peers on ping timeout - let WebRTC connection state handle disconnections
+      // This prevents booting peers due to temporary network hiccups
     }, 5000); // 5 second timeout
     
     this.pingTimeouts.set(pingMessage.id, timeout);

@@ -57,6 +57,7 @@ class SynthClient {
       activeState: document.getElementById('active-state'),
       joinButton: document.getElementById('join-button'),
       connectionStatus: document.getElementById('connection-status'),
+      synthId: document.getElementById('synth-id'),
       loading: document.getElementById('loading'),
       canvas: document.getElementById('oscilloscope-canvas')
     };
@@ -98,6 +99,9 @@ class SynthClient {
 
     this.setupEventHandlers();
     this.setupKeyboardShortcuts();
+    
+    // Display synth ID
+    this.updateSynthIdDisplay();
     
     // Auto-connect to network on page load
     this.autoConnect();
@@ -276,7 +280,10 @@ class SynthClient {
     this.setupStarEventHandlers();
     
     // Connect to signaling server - use current host
-    const signalingUrl = `ws://${window.location.hostname}:8000/ws`;
+    // Dynamic WebSocket URL that works in production and development
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const port = window.location.port ? `:${window.location.port}` : '';
+    const signalingUrl = `${protocol}//${window.location.hostname}${port}/ws`;
     await this.star.connect(signalingUrl);
     
     
@@ -765,6 +772,14 @@ class SynthClient {
     }[status] || message;
     
     element.textContent = statusText;
+  }
+
+  updateSynthIdDisplay() {
+    if (this.elements.synthId) {
+      // Extract just the last part of the peer ID for cleaner display
+      const shortId = this.peerId.split('-').slice(-2).join('-');
+      this.elements.synthId.textContent = shortId;
+    }
   }
 
 }

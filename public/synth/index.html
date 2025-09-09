@@ -109,6 +109,14 @@
             pointer-events: none;
         }
 
+        .synth-id-overlay {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 10;
+            pointer-events: none;
+        }
+
         .connection-status {
             background: #2a2a2a;
             border: 1px solid #444;
@@ -203,6 +211,12 @@
         <div class="status-overlay">
             <div class="connection-status" id="connection-status">
                 connecting...
+            </div>
+        </div>
+        
+        <div class="synth-id-overlay">
+            <div class="connection-status" id="synth-id" style="color: #666;">
+                
             </div>
         </div>
         
