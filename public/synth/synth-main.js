@@ -33,6 +33,17 @@ class SynthClient {
     this.receivedBeatsPerCycle = 4;
     this.receivedCycleLength = 2.0;
     this.lastPhasorMessage = 0;
+    this.phasorRate = 0.5;              // Phasor increment per second (1.0 / cycleLength)
+    this.interpolatedPhasor = 0.0;      // Current interpolated phasor value
+    this.phasorUpdateId = null;         // RequestAnimationFrame ID for interpolation
+    
+    // AudioWorklet phasor
+    this.phasorWorklet = null;          // AudioWorkletNode for sample-accurate phasor
+    this.workletPhasor = 0.0;           // Current phasor from AudioWorklet
+    
+    // PLL (Phase-Locked Loop) settings
+    this.pllCorrectionFactor = 0.1;     // How aggressively to correct phase errors (0.1 = gentle)
+    this.pllEnabled = true;             // Enable/disable phase correction
     
     // UI Elements
     this.elements = {
@@ -160,10 +171,21 @@ class SynthClient {
       throw error;
     }
     
+    // Load phasor AudioWorklet processor
+    try {
+      await this.audioContext.audioWorklet.addModule('./worklets/phasor-processor.worklet.js');
+    } catch (error) {
+      console.error('❌ Failed to load phasor processor:', error);
+      throw error;
+    }
+    
     // Create master gain node
     this.masterGain = this.audioContext.createGain();
     this.masterGain.connect(this.audioContext.destination);
     this.updateVolume();
+    
+    // Create phasor worklet for sample-accurate timing
+    this.initializePhasorWorklet();
     
     // Initialize formant synthesis
     await this.initializeFormantSynthesis();
@@ -371,10 +393,130 @@ class SynthClient {
     this.receivedCycleLength = message.cycleLength;
     this.lastPhasorMessage = performance.now();
     
-    // Update connection status to show we're receiving phasor sync
-    if (this.elements.connectionStatus) {
-      this.elements.connectionStatus.textContent = `connected (${this.receivedBpm} bpm, ${this.receivedBeatsPerCycle}/cycle, φ=${this.receivedPhasor.toFixed(3)})`;
+    // Calculate phasor rate
+    this.phasorRate = 1.0 / this.receivedCycleLength;
+    
+    // Update worklet with new cycle length
+    this.updatePhasorWorklet();
+    
+    // Send phase correction to worklet (PLL behavior)
+    this.sendPhaseCorrection();
+    
+    // Start interpolation if not already running (for fallback display)
+    if (!this.phasorUpdateId) {
+      this.startPhasorInterpolation();
     }
+  }
+
+  startPhasorInterpolation() {
+    const updateLoop = () => {
+      this.updateInterpolatedPhasor();
+      this.phasorUpdateId = requestAnimationFrame(updateLoop);
+    };
+    updateLoop();
+  }
+
+  updateInterpolatedPhasor() {
+    const currentTime = performance.now();
+    const timeSinceMessage = (currentTime - this.lastPhasorMessage) / 1000.0; // Convert to seconds
+    
+    // Interpolate phasor position
+    this.interpolatedPhasor = this.receivedPhasor + (timeSinceMessage * this.phasorRate);
+    
+    // Wrap around at 1.0
+    if (this.interpolatedPhasor >= 1.0) {
+      this.interpolatedPhasor -= Math.floor(this.interpolatedPhasor);
+    }
+    
+    // Update connection status display
+    if (this.elements.connectionStatus) {
+      this.elements.connectionStatus.textContent = `connected (${this.receivedBpm} bpm, ${this.receivedBeatsPerCycle}/cycle, φ=${this.interpolatedPhasor.toFixed(3)})`;
+    }
+  }
+
+  stopPhasorInterpolation() {
+    if (this.phasorUpdateId) {
+      cancelAnimationFrame(this.phasorUpdateId);
+      this.phasorUpdateId = null;
+    }
+  }
+
+  initializePhasorWorklet() {
+    try {
+      // Create phasor AudioWorkletNode
+      this.phasorWorklet = new AudioWorkletNode(this.audioContext, 'phasor-processor', {
+        outputChannelCount: [1]
+      });
+      
+      // Set initial cycle length
+      this.phasorWorklet.parameters.get('cycleLength').value = this.receivedCycleLength;
+      
+      // Listen for phasor updates from the worklet
+      this.phasorWorklet.port.onmessage = (event) => {
+        if (event.data.type === 'phasor-update') {
+          this.workletPhasor = event.data.phase;
+          
+          // Calculate phase error for display (optional monitoring)
+          const currentTime = performance.now();
+          const timeSinceMessage = (currentTime - this.lastPhasorMessage) / 1000.0;
+          const expectedCtrlPhasor = (this.receivedPhasor + (timeSinceMessage * this.phasorRate)) % 1.0;
+          const phaseError = this.calculatePhaseError(expectedCtrlPhasor, this.workletPhasor);
+          
+          // Update display to show worklet phasor with error info
+          if (this.elements.connectionStatus) {
+            const errorDisplay = Math.abs(phaseError) > 0.001 ? ` Δ${(phaseError * 1000).toFixed(0)}ms` : '';
+            this.elements.connectionStatus.textContent = `connected (${this.receivedBpm} bpm, ${this.receivedBeatsPerCycle}/cycle, ♪=${this.workletPhasor.toFixed(3)}${errorDisplay})`;
+          }
+        }
+      };
+      
+      // Start the worklet phasor
+      this.phasorWorklet.port.postMessage({ type: 'start' });
+      
+      console.log('✅ Phasor worklet initialized');
+      
+    } catch (error) {
+      console.error('❌ Failed to initialize phasor worklet:', error);
+    }
+  }
+
+  updatePhasorWorklet() {
+    if (this.phasorWorklet) {
+      // Update cycle length in worklet
+      this.phasorWorklet.parameters.get('cycleLength').value = this.receivedCycleLength;
+    }
+  }
+
+  calculatePhaseError(targetPhase, currentPhase) {
+    // Calculate phase error (accounting for wrap-around)
+    let phaseError = targetPhase - currentPhase;
+    
+    // Handle wrap-around cases
+    if (phaseError > 0.5) {
+      phaseError -= 1.0;  // Target is behind, we're ahead
+    } else if (phaseError < -0.5) {
+      phaseError += 1.0;  // Target is ahead, we're behind
+    }
+    
+    return phaseError;
+  }
+
+  sendPhaseCorrection() {
+    if (!this.phasorWorklet || !this.pllEnabled) {
+      return;
+    }
+    
+    // Calculate what the ctrl's phasor should be right now
+    const currentTime = performance.now();
+    const timeSinceMessage = (currentTime - this.lastPhasorMessage) / 1000.0;
+    const expectedCtrlPhasor = (this.receivedPhasor + (timeSinceMessage * this.phasorRate)) % 1.0;
+    
+    // Send phase correction to worklet
+    this.phasorWorklet.port.postMessage({
+      type: 'phase-correction',
+      targetPhase: expectedCtrlPhasor,
+      correctionFactor: this.pllCorrectionFactor
+    });
   }
 
   startWhiteNoise(amplitude = 0.3) {
