@@ -347,52 +347,28 @@ async function handleRequest(request: Request): Promise<Response> {
     return response;
   }
 
-  // Serve static files
-  let fsPathRoot = "./public";
-  let requestedPath = url.pathname;
-
-  // Handle route aliases and default document
-  if (requestedPath === "/") {
-    requestedPath = "/index.html";
-  } else if (requestedPath === "/ctrl/" || requestedPath === "/ctrl") {
-    requestedPath = "/ctrl/index.html";
-  } else if (requestedPath === "/synth/" || requestedPath === "/synth") {
-    requestedPath = "/synth/index.html";
-  }
-
-  // Handle ctrl-main.js and synth-main.js at root level (deployment issue)
-  if (requestedPath === "/ctrl-main.js") {
-    requestedPath = "/ctrl/ctrl-main.js";
-  } else if (requestedPath === "/synth-main.js") {
-    requestedPath = "/synth/synth-main.js";
-  }
-
-  let fullFsPath;
-  if (requestedPath.startsWith("/src/") || requestedPath.startsWith("/worklets/")) {
-    fullFsPath = `.${requestedPath}`;
+  // Handle route aliases for the standard file server
+  if (url.pathname === "/") {
+    request = new Request(new URL("/public/index.html", request.url), request);
+  } else if (url.pathname === "/ctrl/" || url.pathname === "/ctrl") {
+    request = new Request(new URL("/public/ctrl/index.html", request.url), request);
+  } else if (url.pathname === "/synth/" || url.pathname === "/synth") {
+    request = new Request(new URL("/public/synth/index.html", request.url), request);
+  } else if (url.pathname.startsWith("/src/") || url.pathname.startsWith("/worklets/")) {
+    // Serve src files from project root
+    request = new Request(new URL("." + url.pathname, request.url), request);
   } else {
-    fullFsPath = `${fsPathRoot}${requestedPath}`;
+    // Serve everything else from public directory
+    request = new Request(new URL("/public" + url.pathname, request.url), request);
   }
-  
-  console.log(`🗂️ Serving: ${requestedPath} -> ${fullFsPath}`);
 
-  try {
-    const file = await Deno.readFile(fullFsPath);
-    const contentType = requestedPath.endsWith(".html") ? "text/html; charset=utf-8"
-      : requestedPath.endsWith(".js") ? "application/javascript; charset=utf-8" 
-      : requestedPath.endsWith(".css") ? "text/css; charset=utf-8"
-      : requestedPath.endsWith(".ico") ? "image/x-icon"
-      : "application/octet-stream";
+  // Use Deno's standard file server with proper MIME types
+  const response = await serveDir(request, {
+    fsRoot: ".",
+    headers: ["access-control-allow-origin: *"]
+  });
 
-    return new Response(file, { 
-      headers: { 
-        "content-type": contentType,
-        "access-control-allow-origin": "*"
-      } 
-    });
-  } catch (e) {
-    return new Response("not found", { status: 404 });
-  }
+  return response;
 }
 
 function getLocalIPs(): string[] {
