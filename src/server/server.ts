@@ -152,6 +152,9 @@ class SignalingServer {
       timestamp: Date.now()
     });
 
+    // Send peer list to the newly joined peer
+    this.sendPeerList(socket, roomId);
+
     // For star topology: notify based on peer type
     if (peerType === 'ctrl') {
       // Ctrl joining: notify all synths in room
@@ -219,6 +222,7 @@ class SignalingServer {
       };
     });
 
+    console.log(`📋 Sending peer list to new peer: ${peerList.length} peers`);
     this.sendMessage(socket, {
       type: 'peer-list',
       peers: peerList

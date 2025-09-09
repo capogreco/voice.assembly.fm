@@ -92,6 +92,7 @@ export class WebRTCStar extends EventTarget {
         break;
 
       case 'peer-list':
+        console.log('📋 Received peer-list message:', message.peers);
         await this.handlePeerList(message.peers);
         break;
 
@@ -159,7 +160,10 @@ export class WebRTCStar extends EventTarget {
     // Star topology: only connect to appropriate peer types
     for (const peer of peers) {
       if (peer.id !== this.peerId && this.shouldConnectToPeer(peer.type)) {
-        await this.createPeerConnection(peer.id, false); // They initiate
+        // In star topology: ctrl always initiates connections to synths
+        const shouldInitiate = (this.peerType === 'ctrl' && peer.type === 'synth');
+        console.log(`🔗 Creating connection to ${peer.id} (initiating: ${shouldInitiate})`);
+        await this.createPeerConnection(peer.id, shouldInitiate);
       }
     }
 
