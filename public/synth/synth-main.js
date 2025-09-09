@@ -106,9 +106,8 @@ class SynthClient {
 
     this.setupEventHandlers();
     this.setupKeyboardShortcuts();
-    this.setupLongPress();
     
-    // Display synth ID
+    // Display synth ID (but it won't be visible until after joinChoir)
     this.updateSynthIdDisplay();
     
     // Auto-connect to network on page load
@@ -177,10 +176,13 @@ class SynthClient {
       // Show active state first so canvas container has proper dimensions
       this.setState('active');
       
-      // Initialize oscilloscope after DOM is updated
+      // Initialize oscilloscope and long press after DOM is updated
       // Use requestAnimationFrame to ensure DOM changes are applied
       requestAnimationFrame(() => {
         this.initializeOscilloscope();
+        
+        // Set up long press now that the synth-id is visible
+        this.setupLongPress();
       });
       
     } catch (error) {
@@ -791,11 +793,13 @@ class SynthClient {
   }
 
   updateSynthIdDisplay() {
+    console.log('🔍 Updating synth ID display, element:', this.elements.synthId);
     if (this.elements.synthId) {
       // Extract just the last part of the peer ID for cleaner display
       const shortId = this.peerId.split('-').slice(-2).join('-');
       const rhythmIndicator = this.rhythmEnabled ? ' 🎵' : '';
       this.elements.synthId.textContent = shortId + rhythmIndicator;
+      console.log('✅ Synth ID updated to:', shortId + rhythmIndicator);
       
       // Apply CSS class for visual indication
       if (this.rhythmEnabled) {
@@ -803,22 +807,45 @@ class SynthClient {
       } else {
         this.elements.synthId.classList.remove('rhythm-active');
       }
+    } else {
+      console.error('❌ Synth ID element not found in updateSynthIdDisplay');
     }
   }
 
   setupLongPress() {
     const synthIdElement = this.elements.synthId;
-    if (!synthIdElement) return;
+    console.log('🔍 Setting up long press, synthId element:', synthIdElement);
+    console.log('🔍 All elements:', this.elements);
+    
+    if (!synthIdElement) {
+      console.error('❌ Synth ID element not found for long press setup');
+      // Try to find the element directly
+      const directElement = document.getElementById('synth-id');
+      console.log('🔍 Trying direct getElementById:', directElement);
+      if (directElement) {
+        this.elements.synthId = directElement;
+        this.setupLongPressOnElement(directElement);
+      }
+      return;
+    }
+    
+    this.setupLongPressOnElement(synthIdElement);
+  }
 
+  setupLongPressOnElement(synthIdElement) {
+    console.log('✅ Setting up long press on element:', synthIdElement);
+    
     let pressTimer = null;
     let isLongPress = false;
 
     const startPress = (e) => {
+      console.log('👆 Press started on synth ID');
       e.preventDefault();
       isLongPress = false;
       synthIdElement.classList.add('pressing');
       
       pressTimer = setTimeout(() => {
+        console.log('⏰ Long press triggered - toggling rhythm');
         isLongPress = true;
         this.toggleRhythm();
         this.updateSynthIdDisplay();
@@ -831,6 +858,7 @@ class SynthClient {
     };
 
     const endPress = (e) => {
+      console.log('👆 Press ended on synth ID');
       e.preventDefault();
       synthIdElement.classList.remove('pressing');
       
@@ -841,6 +869,7 @@ class SynthClient {
     };
 
     const cancelPress = (e) => {
+      console.log('❌ Press cancelled on synth ID');
       synthIdElement.classList.remove('pressing');
       if (pressTimer) {
         clearTimeout(pressTimer);
@@ -858,6 +887,8 @@ class SynthClient {
     synthIdElement.addEventListener('mousedown', startPress);
     synthIdElement.addEventListener('mouseup', endPress);
     synthIdElement.addEventListener('mouseleave', cancelPress);
+    
+    console.log('✅ Long press event listeners attached');
   }
 
   async requestWakeLock() {
