@@ -16,6 +16,7 @@ export const MessageTypes = {
   
   // Parameter Control
   MUSICAL_PARAMETERS: 'musical-parameters',
+  SCHEDULE_PARAMETER_UPDATE: 'schedule-parameter-update',
   
   // Timing Control
   PHASOR_SYNC: 'phasor-sync',
@@ -47,6 +48,21 @@ export class MessageBuilder {
   static musicalParameters(params) {
     return {
       type: MessageTypes.MUSICAL_PARAMETERS,
+      frequency: params.frequency,
+      zingMorph: params.zingMorph,
+      zingAmount: params.zingAmount,
+      vowelX: params.vowelX,
+      vowelY: params.vowelY,
+      symmetry: params.symmetry,
+      amplitude: params.amplitude,
+      isManualMode: params.isManualMode,
+      timestamp: performance.now()
+    };
+  }
+
+  static scheduleParameterUpdate(params) {
+    return {
+      type: MessageTypes.SCHEDULE_PARAMETER_UPDATE,
       frequency: params.frequency,
       zingMorph: params.zingMorph,
       zingAmount: params.zingAmount,

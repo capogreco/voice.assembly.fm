@@ -34,6 +34,9 @@ class ControlClient {
     this.es8Enabled = false;        // Enable/disable ES-8 output
     this.es8Node = null;            // ES-8 AudioWorklet node
     
+    // Parameter staging for EOC application
+    this.hasPendingChanges = false; // Track if there are pending parameter changes
+    
     
     // UI Elements
     this.elements = {
@@ -61,6 +64,9 @@ class ControlClient {
       // ES-8 controls
       es8EnableBtn: document.getElementById('es8-enable-btn'),
       
+      // Parameter controls
+      applyParamsBtn: document.getElementById('apply-params-btn'),
+      
       peerList: document.getElementById('peer-list'),
       debugLog: document.getElementById('debug-log'),
       clearLogBtn: document.getElementById('clear-log-btn')
@@ -85,6 +91,9 @@ class ControlClient {
     
     // Debug log
     this.elements.clearLogBtn.addEventListener('click', () => this.clearLog());
+    
+    // Apply button
+    this.elements.applyParamsBtn.addEventListener('click', () => this.applyParameterChanges());
     
     // Musical controls
     this.setupMusicalControls();
@@ -126,12 +135,8 @@ class ControlClient {
       this.broadcastMusicalParameters();
     });
     
-    // Amplitude slider
-    document.getElementById('amplitude-slider').addEventListener('input', (e) => {
-      const value = parseFloat(e.target.value);
-      document.getElementById('amplitude-value').textContent = value.toFixed(2);
-      this.broadcastMusicalParameters();
-    });
+    // Amplitude controls (envelope-aware)
+    this.setupAmplitudeControls();
     
     // Zing Amount slider (master blend control)
     document.getElementById('zingAmount-slider').addEventListener('input', (e) => {
@@ -164,6 +169,173 @@ class ControlClient {
       this.elements.es8EnableBtn.addEventListener('click', () => this.toggleES8());
     }
   }
+
+  setupAmplitudeControls() {
+    // Static checkbox
+    const staticCheckbox = document.getElementById('amplitude-static');
+    const envelopeSection = document.getElementById('amplitude-envelope');
+    const paramSuffix = document.getElementById('amplitude-suffix');
+    const envelopeControl = staticCheckbox.closest('.envelope-control');
+    
+    staticCheckbox.addEventListener('change', () => {
+      const isStatic = staticCheckbox.checked;
+      envelopeSection.style.display = isStatic ? 'none' : 'block';
+      paramSuffix.textContent = isStatic ? '' : '(start)';
+      
+      if (isStatic) {
+        envelopeControl.classList.remove('envelope-active');
+      } else {
+        envelopeControl.classList.add('envelope-active');
+      }
+      
+      this.updateEnvelopePreview();
+      this.markPendingChanges();
+    });
+    
+    // Start value slider
+    document.getElementById('amplitude-slider').addEventListener('input', (e) => {
+      const value = parseFloat(e.target.value);
+      document.getElementById('amplitude-value').textContent = value.toFixed(2);
+      this.updateEnvelopePreview();
+      
+      if (document.getElementById('amplitude-static').checked) {
+        // Static mode: broadcast immediately
+        this.broadcastMusicalParameters();
+      } else {
+        // Envelope mode: mark as pending for Apply button
+        this.markPendingChanges();
+      }
+    });
+    
+    // End value slider
+    document.getElementById('amplitude-end-slider').addEventListener('input', (e) => {
+      const value = parseFloat(e.target.value);
+      document.getElementById('amplitude-end-value').textContent = value.toFixed(2);
+      this.updateEnvelopePreview();
+      this.markPendingChanges();
+    });
+    
+    // Intensity slider
+    document.getElementById('amplitude-intensity').addEventListener('input', (e) => {
+      const value = parseFloat(e.target.value);
+      document.getElementById('amplitude-intensity-value').textContent = value.toFixed(2);
+      this.updateEnvelopePreview();
+      this.markPendingChanges();
+    });
+    
+    // Envelope type radio buttons
+    document.querySelectorAll('input[name="amplitude-env-type"]').forEach(radio => {
+      radio.addEventListener('change', () => {
+        this.updateEnvelopePreview();
+        this.markPendingChanges();
+      });
+    });
+    
+    // Initialize preview
+    this.updateEnvelopePreview();
+  }
+
+  updateEnvelopePreview() {
+    const staticCheckbox = document.getElementById('amplitude-static');
+    if (staticCheckbox.checked) return; // No preview needed for static mode
+    
+    const startValue = parseFloat(document.getElementById('amplitude-slider').value);
+    const endValue = parseFloat(document.getElementById('amplitude-end-slider').value);
+    const intensity = parseFloat(document.getElementById('amplitude-intensity').value);
+    const envType = document.querySelector('input[name="amplitude-env-type"]:checked').value;
+    
+    const pathElement = document.getElementById('amplitude-envelope-path');
+    const path = this.generateEnvelopePath(startValue, endValue, intensity, envType);
+    pathElement.setAttribute('d', path);
+  }
+
+  generateEnvelopePath(startValue, endValue, intensity, envType) {
+    const width = 60;
+    const height = 30;
+    const steps = 30; // Number of points along the curve
+    
+    let pathData = `M 0,${height * (1 - startValue)}`;
+    
+    for (let i = 1; i <= steps; i++) {
+      const phase = i / steps; // 0 to 1
+      let envelopeValue;
+      
+      if (envType === 'lin') {
+        envelopeValue = this.calculateLinTypeEnvelope(phase, intensity);
+      } else {
+        envelopeValue = this.calculateCosTypeEnvelope(phase, intensity);
+      }
+      
+      const interpolatedValue = startValue + (endValue - startValue) * envelopeValue;
+      const x = (i / steps) * width;
+      const y = height * (1 - interpolatedValue); // Flip Y axis
+      
+      pathData += ` L ${x},${y}`;
+    }
+    
+    return pathData;
+  }
+
+  // Envelope calculation methods (same as in worklet)
+  calculateLinTypeEnvelope(phase, intensity) {
+    const t = Math.max(0, Math.min(1, phase));
+    const p = Math.max(0, Math.min(1, intensity));
+    
+    let exponent;
+    const minExponent = 1 / 8;
+    const maxExponent = 8;
+    
+    if (p < 0.5) {
+      exponent = 1 + (p - 0.5) * 2 * (1 - minExponent);
+    } else {
+      exponent = 1 + (p - 0.5) * 2 * (maxExponent - 1);
+    }
+    
+    if (t === 0) return 0;
+    return Math.pow(t, exponent);
+  }
+
+  calculateCosTypeEnvelope(phase, intensity) {
+    const t = Math.max(0, Math.min(1, phase));
+    const p = Math.max(0, Math.min(1, intensity));
+    
+    const f_square = t > 0 ? 1 : 0;
+    const f_cosine = 0.5 - Math.cos(t * Math.PI) * 0.5;
+    const f_median = t < 0.5 ? 0 : 1;
+    
+    if (p < 0.5) {
+      const mix = p * 2;
+      return f_square * (1 - mix) + f_cosine * mix;
+    } else {
+      const mix = (p - 0.5) * 2;
+      return f_cosine * (1 - mix) + f_median * mix;
+    }
+  }
+
+  markPendingChanges() {
+    this.hasPendingChanges = true;
+    this.elements.applyParamsBtn.disabled = false;
+    this.elements.applyParamsBtn.textContent = 'apply changes*';
+  }
+
+  clearPendingChanges() {
+    this.hasPendingChanges = false;
+    this.elements.applyParamsBtn.disabled = true;
+    this.elements.applyParamsBtn.textContent = 'apply changes';
+  }
+
+  applyParameterChanges() {
+    if (!this.hasPendingChanges) return;
+    
+    // Schedule parameter application at next cycle boundary (EOC)
+    if (this.star) {
+      const message = MessageBuilder.scheduleParameterUpdate(this.getMusicalParameters());
+      const sent = this.star.broadcastToType('synth', message, 'control');
+      this.log(`Scheduled parameter update for EOC to ${sent} synths`, 'info');
+    }
+    
+    this.clearPendingChanges();
+  }
   
   
   getMusicalParameters() {
@@ -172,7 +344,6 @@ class ControlClient {
     const vowelYValue = parseFloat(document.getElementById('vowelY-slider').value);
     const zingMorphValue = parseFloat(document.getElementById('zingMorph-slider').value);
     const symmetryValue = parseFloat(document.getElementById('symmetry-slider').value);
-    const amplitudeValue = parseFloat(document.getElementById('amplitude-slider').value);
     const zingAmountValue = parseFloat(document.getElementById('zingAmount-slider').value);
     
     return {
@@ -181,10 +352,32 @@ class ControlClient {
         vowelY: isNaN(vowelYValue) ? 0.5 : vowelYValue,
         zingMorph: isNaN(zingMorphValue) ? 0 : zingMorphValue,
         symmetry: isNaN(symmetryValue) ? 0.5 : symmetryValue,
-        amplitude: isNaN(amplitudeValue) ? 1.0 : amplitudeValue,
+        amplitude: this.getAmplitudeParameter(),
         zingAmount: isNaN(zingAmountValue) ? 0 : zingAmountValue,
         isManualMode: this.isManualMode,
     };
+  }
+
+  getAmplitudeParameter() {
+    const staticCheckbox = document.getElementById('amplitude-static');
+    const startValue = parseFloat(document.getElementById('amplitude-slider').value);
+    
+    if (staticCheckbox.checked) {
+      // Static mode: return simple number
+      return isNaN(startValue) ? 1.0 : startValue;
+    } else {
+      // Envelope mode: return envelope object
+      const endValue = parseFloat(document.getElementById('amplitude-end-slider').value);
+      const intensity = parseFloat(document.getElementById('amplitude-intensity').value);
+      const envType = document.querySelector('input[name="amplitude-env-type"]:checked').value;
+      
+      return {
+        startValue: isNaN(startValue) ? 1.0 : startValue,
+        endValue: isNaN(endValue) ? 1.0 : endValue,
+        intensity: isNaN(intensity) ? 0.5 : intensity,
+        envType: envType || 'lin'
+      };
+    }
   }
 
   broadcastMusicalParameters() {
@@ -522,13 +715,13 @@ class ControlClient {
     this.isManualMode = !this.isManualMode;
     
     if (this.isManualMode) {
-      this.elements.manualModeBtn.textContent = 'Stop Test';
+      this.elements.manualModeBtn.textContent = 'Disable Synthesis';
       this.elements.manualModeBtn.classList.add('active');
-      this.log('Test audio enabled - real-time parameter control active', 'info');
+      this.log('Synthesis enabled - real-time parameter control active', 'info');
     } else {
-      this.elements.manualModeBtn.textContent = 'Test Audio';
+      this.elements.manualModeBtn.textContent = 'Enable Synthesis';
       this.elements.manualModeBtn.classList.remove('active');
-      this.log('Test audio disabled', 'info');
+      this.log('Synthesis disabled', 'info');
     }
     
     // Immediately broadcast parameters with new mode

@@ -65,6 +65,7 @@ class SynthClient {
       joinButton: document.getElementById('join-button'),
       connectionStatus: document.getElementById('connection-status'),
       synthId: document.getElementById('synth-id'),
+      synthesisStatus: document.getElementById('synthesis-status'),
       loading: document.getElementById('loading'),
       canvas: document.getElementById('oscilloscope-canvas')
     };
@@ -264,6 +265,13 @@ class SynthClient {
       // Connect directly to master gain
       this.formantNode.connect(this.masterGain);
       
+      // Set up formant worklet message handler
+      this.formantNode.port.onmessage = (event) => {
+        if (event.data.type === 'apply-scheduled-parameters') {
+          this.applyScheduledParametersFromWorklet(event.data.parameters);
+        }
+      };
+      
       // Apply any stored state that was received before audio was ready
       this.applyStoredState();
       
@@ -334,6 +342,10 @@ class SynthClient {
       case MessageTypes.MUSICAL_PARAMETERS:
         this.handleMusicalParameters(message);
         break;
+
+      case MessageTypes.SCHEDULE_PARAMETER_UPDATE:
+        this.handleScheduledParameterUpdate(message);
+        break;
         
       case MessageTypes.PHASOR_SYNC:
         this.handlePhasorSync(message);
@@ -392,6 +404,9 @@ class SynthClient {
     const wasManualMode = this.isManualControlMode;
     this.isManualControlMode = message.isManualMode;
     
+    // Update synthesis status display
+    this.updateSynthesisStatus(this.isManualControlMode);
+    
     // If exiting manual mode, stop synthesis
     if (wasManualMode && !this.isManualControlMode) {
       this.formantNode.parameters.get('active').value = 0;
@@ -416,22 +431,84 @@ class SynthClient {
       });
     }
     
-    // Apply parameters directly to AudioWorklet
-    this.formantNode.parameters.get('frequency').value = message.frequency;
-    this.formantNode.parameters.get('vowelX').value = extractValue(message.vowelX);
-    this.formantNode.parameters.get('vowelY').value = extractValue(message.vowelY);
-    this.formantNode.parameters.get('zingAmount').value = message.zingAmount;
-    this.formantNode.parameters.get('zingMorph').value = extractValue(message.zingMorph);
-    this.formantNode.parameters.get('symmetry').value = extractValue(message.symmetry);
-    this.formantNode.parameters.get('amplitude').value = extractValue(message.amplitude);
+    // Apply parameters to AudioWorklet with envelope support
+    this.applyParameterWithEnvelope('frequency', message.frequency);
+    this.applyParameterWithEnvelope('vowelX', message.vowelX);
+    this.applyParameterWithEnvelope('vowelY', message.vowelY);
+    this.applyParameterWithEnvelope('zingAmount', message.zingAmount);
+    this.applyParameterWithEnvelope('zingMorph', message.zingMorph);
+    this.applyParameterWithEnvelope('symmetry', message.symmetry);
+    this.applyParameterWithEnvelope('amplitude', message.amplitude);
+    
     this.formantNode.parameters.get('active').value = 1;
     
+  }
+
+  /**
+   * Apply a parameter value that may be static or have envelope configuration
+   */
+  applyParameterWithEnvelope(paramName, paramValue) {
+    if (!this.formantNode) return;
     
-    // Store amplitude envelope for future use (if needed)
-    if (message.amplitude) {
-      this.amplitudeEnvelope = message.amplitude;
+    // Check if the parameter is a simple value or envelope object
+    if (typeof paramValue === 'number') {
+      // Legacy format: simple static value
+      this.formantNode.parameters.get(`${paramName}_static`).value = 1; // Static mode
+      this.formantNode.parameters.get(`${paramName}_startValue`).value = paramValue;
+      this.formantNode.parameters.get(paramName).value = paramValue; // For backward compatibility
+    } else if (paramValue && typeof paramValue === 'object') {
+      // New format: envelope configuration object
+      const isStatic = paramValue.static !== undefined ? paramValue.static : true;
+      
+      if (isStatic) {
+        // Static mode
+        this.formantNode.parameters.get(`${paramName}_static`).value = 1;
+        this.formantNode.parameters.get(`${paramName}_startValue`).value = paramValue.value || paramValue.startValue || 0;
+      } else {
+        // Envelope mode
+        this.formantNode.parameters.get(`${paramName}_static`).value = 0;
+        this.formantNode.parameters.get(`${paramName}_startValue`).value = paramValue.startValue || 0;
+        this.formantNode.parameters.get(`${paramName}_endValue`).value = paramValue.endValue || paramValue.startValue || 0;
+        this.formantNode.parameters.get(`${paramName}_envType`).value = paramValue.envType === 'cos' ? 1 : 0;
+        this.formantNode.parameters.get(`${paramName}_envIntensity`).value = paramValue.intensity || 0.5;
+      }
+      
+      // Set the main parameter for backward compatibility
+      this.formantNode.parameters.get(paramName).value = paramValue.value || paramValue.startValue || 0;
+    }
+  }
+
+  handleScheduledParameterUpdate(message) {
+    // Store the scheduled parameters to apply at next EOC
+    this.scheduledParams = message;
+    
+    if (!this.formantNode) {
+      console.warn('⚠️ Cannot schedule parameter update: formant synthesis not ready');
+      return;
     }
     
+    // Send scheduled parameters to worklet for EOC application
+    this.formantNode.port.postMessage({
+      type: 'schedule-parameter-update',
+      parameters: {
+        frequency: message.frequency,
+        vowelX: message.vowelX,
+        vowelY: message.vowelY,
+        zingAmount: message.zingAmount,
+        zingMorph: message.zingMorph,
+        symmetry: message.symmetry,
+        amplitude: message.amplitude
+      }
+    });
+  }
+
+  applyScheduledParametersFromWorklet(parameters) {
+    if (!this.formantNode || !parameters) return;
+    
+    // Apply each parameter by setting the corresponding AudioParam
+    for (const [paramName, paramValue] of Object.entries(parameters)) {
+      this.applyParameterWithEnvelope(paramName, paramValue);
+    }
   }
 
   handlePhasorSync(message) {
@@ -503,6 +580,14 @@ class SynthClient {
       this.phasorWorklet.port.onmessage = (event) => {
         if (event.data.type === 'phasor-update') {
           this.workletPhasor = event.data.phase;
+          
+          // Forward phasor to formant worklet for envelope calculations
+          if (this.formantNode) {
+            this.formantNode.port.postMessage({
+              type: 'phasor-update',
+              phase: event.data.phase
+            });
+          }
           
           // Calculate phase error for display (optional monitoring)
           const currentTime = performance.now();
@@ -790,6 +875,19 @@ class SynthClient {
     }[status] || message;
     
     element.textContent = statusText;
+  }
+
+  updateSynthesisStatus(isActive) {
+    const element = this.elements.synthesisStatus;
+    if (!element) return;
+    
+    if (isActive) {
+      element.classList.add('active');
+      element.textContent = 'synthesis on';
+    } else {
+      element.classList.remove('active');
+      element.textContent = 'synthesis off';
+    }
   }
 
   updateSynthIdDisplay() {

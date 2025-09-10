@@ -36,6 +36,55 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
             
             // Amplitude control
             { name: 'amplitude', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            
+            // Envelope control parameters for frequency
+            { name: 'frequency_static', defaultValue: 1, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'frequency_envType', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'frequency_envIntensity', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'frequency_startValue', defaultValue: 220, minValue: 20, maxValue: 2000, automationRate: 'k-rate' },
+            { name: 'frequency_endValue', defaultValue: 220, minValue: 20, maxValue: 2000, automationRate: 'k-rate' },
+            
+            // Envelope control parameters for vowelX
+            { name: 'vowelX_static', defaultValue: 1, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'vowelX_envType', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'vowelX_envIntensity', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'vowelX_startValue', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'vowelX_endValue', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            
+            // Envelope control parameters for vowelY
+            { name: 'vowelY_static', defaultValue: 1, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'vowelY_envType', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'vowelY_envIntensity', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'vowelY_startValue', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'vowelY_endValue', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            
+            // Envelope control parameters for zingAmount
+            { name: 'zingAmount_static', defaultValue: 1, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'zingAmount_envType', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'zingAmount_envIntensity', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'zingAmount_startValue', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'zingAmount_endValue', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            
+            // Envelope control parameters for zingMorph
+            { name: 'zingMorph_static', defaultValue: 1, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'zingMorph_envType', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'zingMorph_envIntensity', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'zingMorph_startValue', defaultValue: 0, minValue: -1, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'zingMorph_endValue', defaultValue: 0, minValue: -1, maxValue: 1, automationRate: 'k-rate' },
+            
+            // Envelope control parameters for symmetry
+            { name: 'symmetry_static', defaultValue: 1, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'symmetry_envType', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'symmetry_envIntensity', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'symmetry_startValue', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'symmetry_endValue', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            
+            // Envelope control parameters for amplitude
+            { name: 'amplitude_static', defaultValue: 1, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'amplitude_envType', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'amplitude_envIntensity', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'amplitude_startValue', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'amplitude_endValue', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
         ];
     }
 
@@ -72,6 +121,26 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
         this.formantFreqs = [800, 1150, 2900]; // Default to neutral vowel
         this.formantAmps = [0.6, 0.6, 0.25];   // Default amplitudes
         
+        // Envelope system
+        this.phasorValue = 0.0;                // Current phasor from phasor worklet
+        this.kRateCounter = 0;                 // Counter for k-rate processing
+        this.kRateInterval = 128;              // Process envelopes every 128 samples
+        
+        // EOC parameter scheduling
+        this.lastPhasor = 0.0;                 // Previous phasor value for EOC detection
+        this.scheduledParameters = null;       // Parameters to apply at next EOC
+        
+        // Envelope values (calculated at k-rate)
+        this.envelopeValues = {
+            frequency: 220.0,
+            vowelX: 0.5,
+            vowelY: 0.5,
+            zingAmount: 0.5,
+            zingMorph: 0.0,
+            symmetry: 0.5,
+            amplitude: 0.0
+        };
+        
         // Formant synthesis parameters (copied from formant synth)
         this.formants = [
             { 
@@ -98,10 +167,16 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
         ];
         
         // Message handling for advanced formant tweaking
+        // Set up message handling for phasor updates and parameter scheduling
         this.port.onmessage = (event) => {
-            const { type, payload } = event.data;
+            const { type, payload, parameters } = event.data;
             
-            if (type === 'setFormant' && payload.formantIndex >= 0 && payload.formantIndex < this.formants.length) {
+            if (type === 'phasor-update') {
+                this.phasorValue = event.data.phase;
+            } else if (type === 'schedule-parameter-update') {
+                // Store parameters to apply at next EOC
+                this.scheduledParameters = parameters;
+            } else if (type === 'setFormant' && payload.formantIndex >= 0 && payload.formantIndex < this.formants.length) {
                 const formant = this.formants[payload.formantIndex];
                 if (payload.frequency !== undefined) formant.targetFreq = payload.frequency;
                 if (payload.bandwidth !== undefined) formant.bandwidth = payload.bandwidth;
@@ -112,6 +187,117 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
         
         // Initialize formant carriers
         this.updateFormantCarriers();
+    }
+
+    /**
+     * Linear interpolation helper
+     */
+    lerp(a, b, mix) {
+        return a * (1 - mix) + b * mix;
+    }
+
+    /**
+     * Calculate lin-type envelope: log → lin → exp curves
+     * @param {number} phase - Phase from 0 to 1
+     * @param {number} intensity - Envelope intensity (0 to 1)
+     * @returns {number} Envelope value from 0 to 1
+     */
+    calculateLinTypeEnvelope(phase, intensity) {
+        const t = Math.max(0, Math.min(1, phase));
+        const p = Math.max(0, Math.min(1, intensity));
+        
+        let exponent;
+        const minExponent = 1 / 8;
+        const maxExponent = 8;
+        
+        if (p < 0.5) {
+            exponent = 1 + (p - 0.5) * 2 * (1 - minExponent);
+        } else {
+            exponent = 1 + (p - 0.5) * 2 * (maxExponent - 1);
+        }
+        
+        if (t === 0) return 0;
+        return Math.pow(t, exponent);
+    }
+
+    /**
+     * Calculate cos-type envelope: square → cos → median curves
+     * @param {number} phase - Phase from 0 to 1  
+     * @param {number} intensity - Envelope intensity (0 to 1)
+     * @returns {number} Envelope value from 0 to 1
+     */
+    calculateCosTypeEnvelope(phase, intensity) {
+        const t = Math.max(0, Math.min(1, phase));
+        const p = Math.max(0, Math.min(1, intensity));
+        
+        const f_square = t > 0 ? 1 : 0;
+        const f_cosine = 0.5 - Math.cos(t * Math.PI) * 0.5;
+        const f_median = t < 0.5 ? 0 : 1;
+        
+        if (p < 0.5) {
+            const mix = p * 2;
+            return this.lerp(f_square, f_cosine, mix);
+        } else {
+            const mix = (p - 0.5) * 2;
+            return this.lerp(f_cosine, f_median, mix);
+        }
+    }
+
+    /**
+     * Process envelopes at k-rate (every 128 samples)
+     */
+    processEnvelopes(parameters) {
+        // List of parameters that support envelopes
+        const paramNames = ['frequency', 'vowelX', 'vowelY', 'zingAmount', 'zingMorph', 'symmetry', 'amplitude'];
+        
+        for (const paramName of paramNames) {
+            const staticParam = parameters[`${paramName}_static`];
+            const isStatic = staticParam ? staticParam[0] : 1; // Default to static
+            
+            if (isStatic > 0.5) {
+                // Static mode: use start value
+                const startValue = parameters[`${paramName}_startValue`];
+                this.envelopeValues[paramName] = startValue ? startValue[0] : (parameters[paramName] ? parameters[paramName][0] : 0);
+            } else {
+                // Envelope mode: calculate envelope value
+                const startValue = parameters[`${paramName}_startValue`];
+                const endValue = parameters[`${paramName}_endValue`];
+                const envType = parameters[`${paramName}_envType`];
+                const envIntensity = parameters[`${paramName}_envIntensity`];
+                
+                const start = startValue ? startValue[0] : (parameters[paramName] ? parameters[paramName][0] : 0);
+                const end = endValue ? endValue[0] : start;
+                const type = envType ? envType[0] : 0;
+                const intensity = envIntensity ? envIntensity[0] : 0.5;
+                
+                // Calculate envelope curve
+                let envelopeValue;
+                if (type < 0.5) {
+                    envelopeValue = this.calculateLinTypeEnvelope(this.phasorValue, intensity);
+                } else {
+                    envelopeValue = this.calculateCosTypeEnvelope(this.phasorValue, intensity);
+                }
+                
+                // Interpolate between start and end values
+                this.envelopeValues[paramName] = this.lerp(start, end, envelopeValue);
+            }
+        }
+    }
+
+    /**
+     * Apply scheduled parameters at End of Cycle
+     */
+    applyScheduledParameters(parameters) {
+        if (!this.scheduledParameters) return;
+        
+        // Send message back to main thread to update parameters
+        this.port.postMessage({
+            type: 'apply-scheduled-parameters',
+            parameters: this.scheduledParameters
+        });
+        
+        // Clear scheduled parameters after applying
+        this.scheduledParameters = null;
     }
     
     
@@ -416,19 +602,33 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
             this.sampleRate = sampleRate;
         }
         
-        // Read AudioParam values
-        const frequency = parameters.frequency[0];
+        // EOC (End of Cycle) detection and parameter application
+        if (this.scheduledParameters && this.phasorValue < this.lastPhasor) {
+            // Phasor wrapped around (EOC detected), apply scheduled parameters
+            this.applyScheduledParameters(parameters);
+        }
+        this.lastPhasor = this.phasorValue;
+        
+        // K-rate envelope processing (every 128 samples)
+        this.kRateCounter += blockSize;
+        if (this.kRateCounter >= this.kRateInterval) {
+            this.processEnvelopes(parameters);
+            this.kRateCounter = 0;
+        }
+        
+        // Read AudioParam values (non-envelope parameters)
         const active = parameters.active[0];
         
-        // Read direct parameter values (no envelopes)
-        const vowelX = parameters.vowelX[0];
-        const vowelY = parameters.vowelY[0];
-        const amplitude = parameters.amplitude[0];
+        // Use envelope values calculated at k-rate
+        const frequency = this.envelopeValues.frequency;
+        const vowelX = this.envelopeValues.vowelX;
+        const vowelY = this.envelopeValues.vowelY;
+        const amplitude = this.envelopeValues.amplitude;
         
-        // Get a-rate parameters
-        const zingAmount = this.expandParameter(parameters.zingAmount, blockSize);
-        const zingMorph = this.expandParameter(parameters.zingMorph, blockSize);
-        const symmetry = this.expandParameter(parameters.symmetry, blockSize);
+        // Create a-rate parameters from envelope values (expand to buffer size)
+        const zingAmount = Array(blockSize).fill(this.envelopeValues.zingAmount);
+        const zingMorph = Array(blockSize).fill(this.envelopeValues.zingMorph);
+        const symmetry = Array(blockSize).fill(this.envelopeValues.symmetry);
         
         // Internal gain compensation constants (empirically balanced)
         const formantGain = 3.0; // Restore original PM path calibration

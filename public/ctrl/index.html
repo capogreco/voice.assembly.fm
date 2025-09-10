@@ -131,6 +131,20 @@
             background: #4a7c8a;
             border-color: #4a7c8a;
             color: #e0e0e0;
+            position: relative;
+        }
+
+        .button.manual-mode-btn.active::before {
+            content: "●";
+            position: absolute;
+            left: 8px;
+            color: #4ade80;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
         }
 
         .input-group {
@@ -224,6 +238,116 @@
             border: none;
         }
 
+        /* Envelope Control Styles */
+        .envelope-control {
+            border-left: 2px solid transparent;
+            padding-left: 8px;
+            transition: border-color 0.2s;
+        }
+
+        .envelope-control.envelope-active {
+            border-left-color: #4a7c8a;
+        }
+
+        .param-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 4px;
+        }
+
+        .static-checkbox {
+            font-size: 11px;
+            color: #888;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .static-checkbox input[type="checkbox"] {
+            margin: 0;
+            transform: scale(0.8);
+        }
+
+        .param-main {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .param-suffix {
+            font-size: 10px;
+            color: #666;
+            min-width: 40px;
+        }
+
+        .envelope-section {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid #333;
+        }
+
+        .param-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .param-row .param-label {
+            min-width: 60px;
+            font-size: 10px;
+        }
+
+        .param-row .param-value {
+            min-width: 35px;
+        }
+
+        .envelope-controls {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 8px;
+            font-size: 10px;
+        }
+
+        .envelope-type label {
+            color: #888;
+            cursor: pointer;
+            margin-right: 8px;
+        }
+
+        .envelope-type input[type="radio"] {
+            margin-right: 3px;
+            transform: scale(0.8);
+        }
+
+        .envelope-intensity {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .small-slider {
+            width: 60px;
+        }
+
+        .param-value.small {
+            font-size: 9px;
+            min-width: 25px;
+        }
+
+        .envelope-preview {
+            display: flex;
+            justify-content: center;
+            margin-top: 4px;
+        }
+
+        .envelope-preview svg {
+            background: #1a1a1a;
+            border-radius: 2px;
+        }
+
         /* Phasor Bar Styles */
         .phasor-bar-container {
             background: #1a1a1a;
@@ -280,8 +404,8 @@
                 <button class="button" id="calibration-btn">enable calibration mode</button>
             </div>
             <div class="control-section">
-                <h3>test</h3>
-                <button class="button manual-mode-btn" id="manual-mode-btn">test audio</button>
+                <h3>synthesis</h3>
+                <button class="button manual-mode-btn" id="manual-mode-btn">enable synthesis</button>
             </div>
             <div class="control-section">
                 <h3>es-8</h3>
@@ -335,11 +459,58 @@
                        min="0" max="1" step="0.01" value="0.5">
             </div>
 
-            <div class="param-control">
-                <div class="param-label">amplitude</div>
-                <div class="param-value" id="amplitude-value">1.00</div>
-                <input type="range" class="slider" id="amplitude-slider" 
-                       min="0" max="1" step="0.01" value="1.0">
+            <div class="param-control envelope-control">
+                <div class="param-header">
+                    <div class="param-label">amplitude</div>
+                    <label class="static-checkbox">
+                        <input type="checkbox" id="amplitude-static" checked>
+                        static
+                    </label>
+                </div>
+                <div class="param-main">
+                    <div class="param-value" id="amplitude-value">1.00</div>
+                    <input type="range" class="slider" id="amplitude-slider" 
+                           min="0" max="1" step="0.01" value="1.0">
+                    <span class="param-suffix" id="amplitude-suffix"></span>
+                </div>
+                
+                <!-- Envelope Controls (hidden when static) -->
+                <div class="envelope-section" id="amplitude-envelope" style="display: none;">
+                    <div class="param-row">
+                        <div class="param-label">end value</div>
+                        <div class="param-value" id="amplitude-end-value">1.00</div>
+                        <input type="range" class="slider" id="amplitude-end-slider" 
+                               min="0" max="1" step="0.01" value="1.0">
+                    </div>
+                    
+                    <div class="envelope-controls">
+                        <div class="envelope-type">
+                            <label>type:</label>
+                            <label><input type="radio" name="amplitude-env-type" value="lin" checked> lin</label>
+                            <label><input type="radio" name="amplitude-env-type" value="cos"> cos</label>
+                        </div>
+                        
+                        <div class="envelope-intensity">
+                            <label>intensity:</label>
+                            <input type="range" class="slider small-slider" id="amplitude-intensity" 
+                                   min="0" max="1" step="0.01" value="0.5">
+                            <span class="param-value small" id="amplitude-intensity-value">0.50</span>
+                        </div>
+                    </div>
+                    
+                    <!-- SVG Envelope Preview -->
+                    <div class="envelope-preview">
+                        <svg id="amplitude-envelope-svg" width="60" height="30" viewBox="0 0 60 30">
+                            <path id="amplitude-envelope-path" stroke="#4a7c8a" stroke-width="1" fill="none"/>
+                            <rect width="60" height="30" fill="none" stroke="#333" stroke-width="1"/>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Apply Button -->
+            <div class="control-section">
+                <button class="button" id="apply-params-btn" disabled>apply changes</button>
             </div>
         </div>
 

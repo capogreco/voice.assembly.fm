@@ -21,7 +21,38 @@ export class WebRTCStar extends EventTarget {
     this.pingInterval = null;
     this.pingTimeouts = new Map();
     
+    // ICE servers configuration
+    this.iceServers = [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' }
+    ];
+    
     console.log(`🔗 WebRTC Star initialized: ${this.peerId} (${this.peerType})`);
+    
+    // Fetch ICE servers from server
+    this.fetchIceServers();
+  }
+
+  async fetchIceServers() {
+    try {
+      console.log('🔍 Fetching ICE servers from /ice-servers...');
+      const response = await fetch('/ice-servers');
+      if (response.ok) {
+        const data = await response.json();
+        if (data.ice_servers && data.ice_servers.length > 0) {
+          this.iceServers = data.ice_servers;
+          console.log(`✅ Successfully fetched ${this.iceServers.length} ICE servers`);
+        } else {
+          console.log('⚠️ No ICE servers returned, using fallback STUN');
+        }
+      } else {
+        throw new Error(`Failed to fetch ICE servers: ${response.status} ${response.statusText}`);
+      }
+    } catch (error) {
+      console.log(`⚠️ ICE server fetch failed: ${error.message}`);
+      console.log('Using fallback STUN servers');
+      // Keep default STUN servers as fallback
+    }
   }
 
   /**
@@ -208,10 +239,7 @@ export class WebRTCStar extends EventTarget {
     }
 
     const peerConnection = new RTCPeerConnection({
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
-      ]
+      iceServers: this.iceServers
     });
 
     // Create peer record first

@@ -138,6 +138,25 @@
             color: #e0e0e0;
         }
 
+        .synthesis-status {
+            background: #2a2a2a;
+            border: 1px solid #444;
+            padding: 4px 8px;
+            font-size: 10px;
+            color: #666;
+            font-family: inherit;
+            margin-top: 4px;
+        }
+
+        .synthesis-status.active {
+            color: #4ade80;
+        }
+
+        .synthesis-status.active::before {
+            content: "● ";
+            color: #4ade80;
+        }
+
         /* Long press feedback for synth ID */
         #synth-id {
             transition: transform 0.2s ease, opacity 0.2s ease;
@@ -231,6 +250,9 @@
         <div class="status-overlay">
             <div class="connection-status" id="connection-status">
                 connecting...
+            </div>
+            <div class="synthesis-status" id="synthesis-status">
+                synthesis off
             </div>
         </div>
         
