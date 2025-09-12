@@ -135,8 +135,8 @@ class ControlClient {
       this.broadcastMusicalParameters();
     });
     
-    // Amplitude controls (envelope-aware)
-    this.setupAmplitudeControls();
+    // Envelope controls for all parameters that support them
+    this.setupEnvelopeControls();
     
     // Zing Amount slider (master blend control)
     document.getElementById('zingAmount-slider').addEventListener('input', (e) => {
@@ -170,17 +170,38 @@ class ControlClient {
     }
   }
 
-  setupAmplitudeControls() {
-    // Static checkbox
-    const staticCheckbox = document.getElementById('amplitude-static');
-    const envelopeSection = document.getElementById('amplitude-envelope');
-    const paramSuffix = document.getElementById('amplitude-suffix');
-    const envelopeControl = staticCheckbox.closest('.envelope-control');
+  setupEnvelopeControls() {
+    // Parameters that support envelopes
+    const envelopeParams = [
+      { name: 'frequency', suffix: ' Hz', precision: 0 },
+      { name: 'vowelX', suffix: '', precision: 2 },
+      { name: 'vowelY', suffix: '', precision: 2 },
+      { name: 'amplitude', suffix: '', precision: 2 }
+    ];
     
+    envelopeParams.forEach(param => {
+      this.setupParameterEnvelopeControls(param.name, param.suffix, param.precision);
+    });
+  }
+
+  setupParameterEnvelopeControls(paramName, suffix, precision) {
+    // Get elements
+    const staticCheckbox = document.getElementById(`${paramName}-static`);
+    const envelopeSection = document.getElementById(`${paramName}-envelope`);
+    const paramSuffix = document.getElementById(`${paramName}-suffix`);
+    const envelopeControl = staticCheckbox.closest('.envelope-control');
+    const startSlider = document.getElementById(`${paramName}-slider`);
+    const startValue = document.getElementById(`${paramName}-value`);
+    const endSlider = document.getElementById(`${paramName}-end-slider`);
+    const endValue = document.getElementById(`${paramName}-end-value`);
+    const intensitySlider = document.getElementById(`${paramName}-intensity`);
+    const intensityValue = document.getElementById(`${paramName}-intensity-value`);
+    
+    // Static checkbox
     staticCheckbox.addEventListener('change', () => {
       const isStatic = staticCheckbox.checked;
       envelopeSection.style.display = isStatic ? 'none' : 'block';
-      paramSuffix.textContent = isStatic ? '' : '(start)';
+      paramSuffix.textContent = isStatic ? suffix : '(start)';
       
       if (isStatic) {
         envelopeControl.classList.remove('envelope-active');
@@ -188,17 +209,17 @@ class ControlClient {
         envelopeControl.classList.add('envelope-active');
       }
       
-      this.updateEnvelopePreview();
+      this.updateParameterEnvelopePreview(paramName);
       this.markPendingChanges();
     });
     
     // Start value slider
-    document.getElementById('amplitude-slider').addEventListener('input', (e) => {
+    startSlider.addEventListener('input', (e) => {
       const value = parseFloat(e.target.value);
-      document.getElementById('amplitude-value').textContent = value.toFixed(2);
-      this.updateEnvelopePreview();
+      startValue.textContent = precision === 0 ? value.toString() : value.toFixed(precision);
+      this.updateParameterEnvelopePreview(paramName);
       
-      if (document.getElementById('amplitude-static').checked) {
+      if (staticCheckbox.checked) {
         // Static mode: broadcast immediately
         this.broadcastMusicalParameters();
       } else {
@@ -208,43 +229,43 @@ class ControlClient {
     });
     
     // End value slider
-    document.getElementById('amplitude-end-slider').addEventListener('input', (e) => {
+    endSlider.addEventListener('input', (e) => {
       const value = parseFloat(e.target.value);
-      document.getElementById('amplitude-end-value').textContent = value.toFixed(2);
-      this.updateEnvelopePreview();
+      endValue.textContent = precision === 0 ? value.toString() : value.toFixed(precision);
+      this.updateParameterEnvelopePreview(paramName);
       this.markPendingChanges();
     });
     
     // Intensity slider
-    document.getElementById('amplitude-intensity').addEventListener('input', (e) => {
+    intensitySlider.addEventListener('input', (e) => {
       const value = parseFloat(e.target.value);
-      document.getElementById('amplitude-intensity-value').textContent = value.toFixed(2);
-      this.updateEnvelopePreview();
+      intensityValue.textContent = value.toFixed(2);
+      this.updateParameterEnvelopePreview(paramName);
       this.markPendingChanges();
     });
     
     // Envelope type radio buttons
-    document.querySelectorAll('input[name="amplitude-env-type"]').forEach(radio => {
+    document.querySelectorAll(`input[name="${paramName}-env-type"]`).forEach(radio => {
       radio.addEventListener('change', () => {
-        this.updateEnvelopePreview();
+        this.updateParameterEnvelopePreview(paramName);
         this.markPendingChanges();
       });
     });
     
     // Initialize preview
-    this.updateEnvelopePreview();
+    this.updateParameterEnvelopePreview(paramName);
   }
 
-  updateEnvelopePreview() {
-    const staticCheckbox = document.getElementById('amplitude-static');
+  updateParameterEnvelopePreview(paramName) {
+    const staticCheckbox = document.getElementById(`${paramName}-static`);
     if (staticCheckbox.checked) return; // No preview needed for static mode
     
-    const startValue = parseFloat(document.getElementById('amplitude-slider').value);
-    const endValue = parseFloat(document.getElementById('amplitude-end-slider').value);
-    const intensity = parseFloat(document.getElementById('amplitude-intensity').value);
-    const envType = document.querySelector('input[name="amplitude-env-type"]:checked').value;
+    const startValue = parseFloat(document.getElementById(`${paramName}-slider`).value);
+    const endValue = parseFloat(document.getElementById(`${paramName}-end-slider`).value);
+    const intensity = parseFloat(document.getElementById(`${paramName}-intensity`).value);
+    const envType = document.querySelector(`input[name="${paramName}-env-type"]:checked`).value;
     
-    const pathElement = document.getElementById('amplitude-envelope-path');
+    const pathElement = document.getElementById(`${paramName}-envelope-path`);
     const path = this.generateEnvelopePath(startValue, endValue, intensity, envType);
     pathElement.setAttribute('d', path);
   }
@@ -339,41 +360,39 @@ class ControlClient {
   
   
   getMusicalParameters() {
-    const frequencyValue = parseFloat(this.elements.frequencySlider.value);
-    const vowelXValue = parseFloat(document.getElementById('vowelX-slider').value);
-    const vowelYValue = parseFloat(document.getElementById('vowelY-slider').value);
     const zingMorphValue = parseFloat(document.getElementById('zingMorph-slider').value);
     const symmetryValue = parseFloat(document.getElementById('symmetry-slider').value);
     const zingAmountValue = parseFloat(document.getElementById('zingAmount-slider').value);
     
     return {
-        frequency: isNaN(frequencyValue) ? 220 : frequencyValue,
-        vowelX: isNaN(vowelXValue) ? 0.5 : vowelXValue,
-        vowelY: isNaN(vowelYValue) ? 0.5 : vowelYValue,
+        frequency: this.getParameterValue('frequency', 220),
+        vowelX: this.getParameterValue('vowelX', 0.5),
+        vowelY: this.getParameterValue('vowelY', 0.5),
+        amplitude: this.getParameterValue('amplitude', 1.0),
         zingMorph: isNaN(zingMorphValue) ? 0 : zingMorphValue,
         symmetry: isNaN(symmetryValue) ? 0.5 : symmetryValue,
-        amplitude: this.getAmplitudeParameter(),
         zingAmount: isNaN(zingAmountValue) ? 0 : zingAmountValue,
         isManualMode: this.isManualMode,
     };
   }
 
-  getAmplitudeParameter() {
-    const staticCheckbox = document.getElementById('amplitude-static');
-    const startValue = parseFloat(document.getElementById('amplitude-slider').value);
+  getParameterValue(paramName, defaultValue) {
+    const staticCheckbox = document.getElementById(`${paramName}-static`);
+    const startValue = parseFloat(document.getElementById(`${paramName}-slider`).value);
     
     if (staticCheckbox.checked) {
       // Static mode: return simple number
-      return isNaN(startValue) ? 1.0 : startValue;
+      return isNaN(startValue) ? defaultValue : startValue;
     } else {
       // Envelope mode: return envelope object
-      const endValue = parseFloat(document.getElementById('amplitude-end-slider').value);
-      const intensity = parseFloat(document.getElementById('amplitude-intensity').value);
-      const envType = document.querySelector('input[name="amplitude-env-type"]:checked').value;
+      const endValue = parseFloat(document.getElementById(`${paramName}-end-slider`).value);
+      const intensity = parseFloat(document.getElementById(`${paramName}-intensity`).value);
+      const envType = document.querySelector(`input[name="${paramName}-env-type"]:checked`).value;
       
       return {
-        startValue: isNaN(startValue) ? 1.0 : startValue,
-        endValue: isNaN(endValue) ? 1.0 : endValue,
+        static: false,
+        startValue: isNaN(startValue) ? defaultValue : startValue,
+        endValue: isNaN(endValue) ? defaultValue : endValue,
         intensity: isNaN(intensity) ? 0.5 : intensity,
         envType: envType || 'lin'
       };

@@ -417,25 +417,151 @@
         <div class="panel">
             <h2>parameters</h2>
             
-            <div class="param-control">
-                <div class="param-label">frequency</div>
-                <div class="param-value" id="frequency-value">220</div>
-                <input type="range" class="slider" id="frequency-slider" 
-                       min="80" max="800" value="220" step="1">
+            <div class="param-control envelope-control">
+                <div class="param-header">
+                    <div class="param-label">frequency</div>
+                    <label class="static-checkbox">
+                        <input type="checkbox" id="frequency-static" checked>
+                        static
+                    </label>
+                </div>
+                <div class="param-main">
+                    <div class="param-value" id="frequency-value">220</div>
+                    <input type="range" class="slider" id="frequency-slider" 
+                           min="80" max="800" value="220" step="1">
+                    <span class="param-suffix" id="frequency-suffix"> Hz</span>
+                </div>
+                
+                <!-- Envelope Controls (hidden when static) -->
+                <div class="envelope-section" id="frequency-envelope" style="display: none;">
+                    <div class="param-row">
+                        <div class="param-label">end value</div>
+                        <div class="param-value" id="frequency-end-value">220</div>
+                        <input type="range" class="slider" id="frequency-end-slider" 
+                               min="80" max="800" step="1" value="220">
+                    </div>
+                    
+                    <div class="envelope-controls">
+                        <div class="envelope-type">
+                            <label>type:</label>
+                            <label><input type="radio" name="frequency-env-type" value="lin" checked> lin</label>
+                            <label><input type="radio" name="frequency-env-type" value="cos"> cos</label>
+                        </div>
+                        
+                        <div class="envelope-intensity">
+                            <label>intensity:</label>
+                            <input type="range" class="slider small-slider" id="frequency-intensity" 
+                                   min="0" max="1" step="0.01" value="0.5">
+                            <span class="param-value small" id="frequency-intensity-value">0.50</span>
+                        </div>
+                    </div>
+                    
+                    <!-- SVG Envelope Preview -->
+                    <div class="envelope-preview">
+                        <svg id="frequency-envelope-svg" width="60" height="30" viewBox="0 0 60 30">
+                            <path id="frequency-envelope-path" stroke="#4a7c8a" stroke-width="1" fill="none"/>
+                            <rect width="60" height="30" fill="none" stroke="#333" stroke-width="1"/>
+                        </svg>
+                    </div>
+                </div>
             </div>
 
-            <div class="param-control">
-                <div class="param-label">vowel x</div>
-                <div class="param-value" id="vowelX-value">0.50</div>
-                <input type="range" class="slider" id="vowelX-slider" 
-                       min="0" max="1" step="0.01" value="0.5">
+            <div class="param-control envelope-control">
+                <div class="param-header">
+                    <div class="param-label">vowel x</div>
+                    <label class="static-checkbox">
+                        <input type="checkbox" id="vowelX-static" checked>
+                        static
+                    </label>
+                </div>
+                <div class="param-main">
+                    <div class="param-value" id="vowelX-value">0.50</div>
+                    <input type="range" class="slider" id="vowelX-slider" 
+                           min="0" max="1" step="0.01" value="0.5">
+                    <span class="param-suffix" id="vowelX-suffix"></span>
+                </div>
+                
+                <!-- Envelope Controls (hidden when static) -->
+                <div class="envelope-section" id="vowelX-envelope" style="display: none;">
+                    <div class="param-row">
+                        <div class="param-label">end value</div>
+                        <div class="param-value" id="vowelX-end-value">0.50</div>
+                        <input type="range" class="slider" id="vowelX-end-slider" 
+                               min="0" max="1" step="0.01" value="0.5">
+                    </div>
+                    
+                    <div class="envelope-controls">
+                        <div class="envelope-type">
+                            <label>type:</label>
+                            <label><input type="radio" name="vowelX-env-type" value="lin" checked> lin</label>
+                            <label><input type="radio" name="vowelX-env-type" value="cos"> cos</label>
+                        </div>
+                        
+                        <div class="envelope-intensity">
+                            <label>intensity:</label>
+                            <input type="range" class="slider small-slider" id="vowelX-intensity" 
+                                   min="0" max="1" step="0.01" value="0.5">
+                            <span class="param-value small" id="vowelX-intensity-value">0.50</span>
+                        </div>
+                    </div>
+                    
+                    <!-- SVG Envelope Preview -->
+                    <div class="envelope-preview">
+                        <svg id="vowelX-envelope-svg" width="60" height="30" viewBox="0 0 60 30">
+                            <path id="vowelX-envelope-path" stroke="#4a7c8a" stroke-width="1" fill="none"/>
+                            <rect width="60" height="30" fill="none" stroke="#333" stroke-width="1"/>
+                        </svg>
+                    </div>
+                </div>
             </div>
 
-            <div class="param-control">
-                <div class="param-label">vowel y</div>
-                <div class="param-value" id="vowelY-value">0.50</div>
-                <input type="range" class="slider" id="vowelY-slider" 
-                       min="0" max="1" step="0.01" value="0.5">
+            <div class="param-control envelope-control">
+                <div class="param-header">
+                    <div class="param-label">vowel y</div>
+                    <label class="static-checkbox">
+                        <input type="checkbox" id="vowelY-static" checked>
+                        static
+                    </label>
+                </div>
+                <div class="param-main">
+                    <div class="param-value" id="vowelY-value">0.50</div>
+                    <input type="range" class="slider" id="vowelY-slider" 
+                           min="0" max="1" step="0.01" value="0.5">
+                    <span class="param-suffix" id="vowelY-suffix"></span>
+                </div>
+                
+                <!-- Envelope Controls (hidden when static) -->
+                <div class="envelope-section" id="vowelY-envelope" style="display: none;">
+                    <div class="param-row">
+                        <div class="param-label">end value</div>
+                        <div class="param-value" id="vowelY-end-value">0.50</div>
+                        <input type="range" class="slider" id="vowelY-end-slider" 
+                               min="0" max="1" step="0.01" value="0.5">
+                    </div>
+                    
+                    <div class="envelope-controls">
+                        <div class="envelope-type">
+                            <label>type:</label>
+                            <label><input type="radio" name="vowelY-env-type" value="lin" checked> lin</label>
+                            <label><input type="radio" name="vowelY-env-type" value="cos"> cos</label>
+                        </div>
+                        
+                        <div class="envelope-intensity">
+                            <label>intensity:</label>
+                            <input type="range" class="slider small-slider" id="vowelY-intensity" 
+                                   min="0" max="1" step="0.01" value="0.5">
+                            <span class="param-value small" id="vowelY-intensity-value">0.50</span>
+                        </div>
+                    </div>
+                    
+                    <!-- SVG Envelope Preview -->
+                    <div class="envelope-preview">
+                        <svg id="vowelY-envelope-svg" width="60" height="30" viewBox="0 0 60 30">
+                            <path id="vowelY-envelope-path" stroke="#4a7c8a" stroke-width="1" fill="none"/>
+                            <rect width="60" height="30" fill="none" stroke="#333" stroke-width="1"/>
+                        </svg>
+                    </div>
+                </div>
             </div>
 
             <div class="param-control">
