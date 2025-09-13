@@ -130,6 +130,12 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
         this.lastPhasor = 0.0;                 // Previous phasor value for EOC detection
         this.scheduledParameters = null;       // Parameters to apply at next EOC
         
+        // Randomization configuration and state
+        this.randomizationConfig = null;
+        this.synthId = null;
+        this.lastRandomValues = {}; // Track previous values to avoid repetition
+        this.randomSeed = 0; // Will be initialized from synthId
+        
         // Envelope values (calculated at k-rate)
         this.envelopeValues = {
             frequency: 220.0,
@@ -176,6 +182,11 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
             } else if (type === 'schedule-parameter-update') {
                 // Store parameters to apply at next EOC
                 this.scheduledParameters = parameters;
+            } else if (type === 'randomization-config') {
+                this.randomizationConfig = event.data.config;
+                this.synthId = event.data.synthId;
+                // Initialize random seed from synthId hash
+                this.randomSeed = this.hashString(this.synthId);
             } else if (type === 'setFormant' && payload.formantIndex >= 0 && payload.formantIndex < this.formants.length) {
                 const formant = this.formants[payload.formantIndex];
                 if (payload.frequency !== undefined) formant.targetFreq = payload.frequency;
@@ -187,6 +198,161 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
         
         // Initialize formant carriers
         this.updateFormantCarriers();
+    }
+
+    /**
+     * Simple hash function to generate seed from string
+     */
+    hashString(str) {
+        let hash = 0;
+        if (str.length === 0) return hash;
+        for (let i = 0; i < str.length; i++) {
+            const char = str.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash = hash & hash; // Convert to 32bit integer
+        }
+        return Math.abs(hash);
+    }
+
+    /**
+     * Seeded random number generator (simple LCG)
+     */
+    seededRandom() {
+        this.randomSeed = (this.randomSeed * 1664525 + 1013904223) % 4294967296;
+        return (this.randomSeed / 4294967296);
+    }
+
+    /**
+     * Generate random value in range with non-repetition logic
+     */
+    generateRandomValue(paramName, min, max) {
+        let attempts = 0;
+        let value;
+        const threshold = Math.abs(max - min) * 0.1; // 10% difference threshold
+        
+        do {
+            value = min + this.seededRandom() * (max - min);
+            attempts++;
+        } while (
+            attempts < 10 && 
+            this.lastRandomValues[paramName] !== undefined &&
+            Math.abs(value - this.lastRandomValues[paramName]) < threshold
+        );
+        
+        this.lastRandomValues[paramName] = value;
+        return value;
+    }
+
+    /**
+     * Parse SIN (Stochastic Integer Notation) string into array
+     * Example: "1-3, 5, 7-9" -> [1, 2, 3, 5, 7, 8, 9]
+     */
+    parseSIN(sinString) {
+        if (!sinString || typeof sinString !== 'string') return [];
+        
+        const result = [];
+        const segments = sinString.split(',').map(s => s.trim());
+        
+        for (const segment of segments) {
+            if (segment.includes('-')) {
+                // Range like "1-3" or "7-9"
+                const [startStr, endStr] = segment.split('-').map(s => s.trim());
+                const start = parseInt(startStr, 10);
+                const end = parseInt(endStr, 10);
+                
+                if (isNaN(start) || isNaN(end)) continue;
+                
+                // Add all integers in the range (inclusive)
+                for (let i = Math.min(start, end); i <= Math.max(start, end); i++) {
+                    if (!result.includes(i)) {
+                        result.push(i);
+                    }
+                }
+            } else {
+                // Single integer like "5"
+                const num = parseInt(segment, 10);
+                if (!isNaN(num) && !result.includes(num)) {
+                    result.push(num);
+                }
+            }
+        }
+        
+        return result.sort((a, b) => a - b);
+    }
+
+    /**
+     * Apply HRG behavior to select value from integer set
+     */
+    applyHRGBehavior(integerSet, behavior, synthIndex = 0) {
+        if (!integerSet || integerSet.length === 0) return 1;
+        
+        const setSize = integerSet.length;
+        
+        switch (behavior) {
+            case 'static':
+                // All synths get the same value (first in set)
+                return integerSet[0];
+                
+            case 'ascending':
+                // Distribute values in ascending order
+                return integerSet[synthIndex % setSize];
+                
+            case 'descending':
+                // Distribute values in descending order
+                const descending = [...integerSet].reverse();
+                return descending[synthIndex % setSize];
+                
+            case 'shuffle':
+                // Fixed shuffle based on synthIndex (deterministic)
+                const shuffled = this.deterministicShuffle([...integerSet], synthIndex);
+                return shuffled[synthIndex % setSize];
+                
+            case 'random':
+                // Random selection using seeded random
+                const randomIndex = Math.floor(this.seededRandom() * setSize);
+                return integerSet[randomIndex];
+                
+            default:
+                return integerSet[0];
+        }
+    }
+
+    /**
+     * Deterministic shuffle based on seed
+     */
+    deterministicShuffle(array, seed) {
+        const seedBackup = this.randomSeed;
+        this.randomSeed = this.hashString(`shuffle_${seed}`);
+        
+        for (let i = array.length - 1; i > 0; i--) {
+            const j = Math.floor(this.seededRandom() * (i + 1));
+            [array[i], array[j]] = [array[j], array[i]];
+        }
+        
+        this.randomSeed = seedBackup;
+        return array;
+    }
+
+    /**
+     * Generate HRG frequency value from numerator and denominator sets
+     */
+    generateHRGFrequency(frequencyConfig, baseFreq = 220) {
+        if (!frequencyConfig || !frequencyConfig.numerators || !frequencyConfig.denominators) {
+            return baseFreq;
+        }
+        
+        const numeratorSet = this.parseSIN(frequencyConfig.numerators);
+        const denominatorSet = this.parseSIN(frequencyConfig.denominators);
+        const behavior = frequencyConfig.behavior || 'static';
+        
+        // Use synthId hash as synth index for deterministic distribution
+        const synthIndex = this.randomSeed % 1000; // Use part of seed as index
+        
+        const numerator = this.applyHRGBehavior(numeratorSet, behavior, synthIndex);
+        const denominator = this.applyHRGBehavior(denominatorSet, behavior, synthIndex);
+        
+        const ratio = numerator / denominator;
+        return baseFreq * ratio;
     }
 
     /**
@@ -298,6 +464,84 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
         
         // Clear scheduled parameters after applying
         this.scheduledParameters = null;
+    }
+
+    /**
+     * Generate randomized values at End of Cycle
+     */
+    generateRandomizedValuesAtEOC(parameters) {
+        if (!this.randomizationConfig) return;
+        
+        const randomizedParams = {};
+        let hasRandomizedValues = false;
+        
+        // Process each parameter that has randomization enabled
+        for (const [paramName, paramConfig] of Object.entries(this.randomizationConfig)) {
+            const paramData = randomizedParams[paramName] = {};
+            
+            if (paramName === 'frequency') {
+                // Handle frequency with HRG
+                if (paramConfig.start && paramConfig.start.enabled) {
+                    if (paramConfig.start.numerators && paramConfig.start.denominators) {
+                        // HRG mode - generate harmonic ratio
+                        paramData.startValue = this.generateHRGFrequency(paramConfig.start, 220);
+                    } else {
+                        // Range mode - generate within min/max
+                        paramData.startValue = this.generateRandomValue(
+                            `${paramName}_start`, 
+                            paramConfig.start.min, 
+                            paramConfig.start.max
+                        );
+                    }
+                    hasRandomizedValues = true;
+                }
+                
+                if (paramConfig.end && paramConfig.end.enabled) {
+                    if (paramConfig.end.numerators && paramConfig.end.denominators) {
+                        // HRG mode - generate harmonic ratio
+                        paramData.endValue = this.generateHRGFrequency(paramConfig.end, 220);
+                    } else {
+                        // Range mode - generate within min/max
+                        paramData.endValue = this.generateRandomValue(
+                            `${paramName}_end`, 
+                            paramConfig.end.min, 
+                            paramConfig.end.max
+                        );
+                    }
+                    hasRandomizedValues = true;
+                }
+            } else {
+                // Handle normalized parameters (vowelX, vowelY, etc.)
+                
+                // Generate randomized start value if enabled
+                if (paramConfig.start && paramConfig.start.enabled) {
+                    paramData.startValue = this.generateRandomValue(
+                        `${paramName}_start`, 
+                        paramConfig.start.min, 
+                        paramConfig.start.max
+                    );
+                    hasRandomizedValues = true;
+                }
+                
+                // Generate randomized end value if enabled
+                if (paramConfig.end && paramConfig.end.enabled) {
+                    paramData.endValue = this.generateRandomValue(
+                        `${paramName}_end`, 
+                        paramConfig.end.min, 
+                        paramConfig.end.max
+                    );
+                    hasRandomizedValues = true;
+                }
+            }
+        }
+        
+        // Send randomized parameters back to main thread if any were generated
+        if (hasRandomizedValues) {
+            this.port.postMessage({
+                type: 'randomized-parameters',
+                parameters: randomizedParams
+            });
+        }
     }
     
     
@@ -603,9 +847,16 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
         }
         
         // EOC (End of Cycle) detection and parameter application
-        if (this.scheduledParameters && this.phasorValue < this.lastPhasor) {
-            // Phasor wrapped around (EOC detected), apply scheduled parameters
-            this.applyScheduledParameters(parameters);
+        if (this.phasorValue < this.lastPhasor) {
+            // Phasor wrapped around (EOC detected)
+            
+            // Apply scheduled parameters if any
+            if (this.scheduledParameters) {
+                this.applyScheduledParameters(parameters);
+            }
+            
+            // Generate new random values if randomization is enabled
+            this.generateRandomizedValuesAtEOC(parameters);
         }
         this.lastPhasor = this.phasorValue;
         

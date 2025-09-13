@@ -37,6 +37,34 @@ class ControlClient {
     // Parameter staging for EOC application
     this.hasPendingChanges = false; // Track if there are pending parameter changes
     
+    // Randomization configuration - separate start and end for each parameter
+    this.randomizationConfig = {
+      vowelX: {
+        start: { enabled: false, min: 0, max: 1 },
+        end: { enabled: false, min: 0, max: 1 }
+      },
+      vowelY: {
+        start: { enabled: false, min: 0, max: 1 },
+        end: { enabled: false, min: 0, max: 1 }
+      },
+      zingAmount: {
+        start: { enabled: false, min: 0, max: 1 },
+        end: { enabled: false, min: 0, max: 1 }
+      },
+      zingMorph: {
+        start: { enabled: false, min: -1, max: 1 },
+        end: { enabled: false, min: -1, max: 1 }
+      },
+      symmetry: {
+        start: { enabled: false, min: 0, max: 1 },
+        end: { enabled: false, min: 0, max: 1 }
+      },
+      amplitude: {
+        start: { enabled: false, min: 0, max: 1 },
+        end: { enabled: false, min: 0, max: 1 }
+      }
+    };
+    
     
     // UI Elements
     this.elements = {
@@ -104,6 +132,9 @@ class ControlClient {
     
     // Envelope controls for all parameters that support them
     this.setupEnvelopeControls();
+    
+    // Randomizer controls for normalized parameters
+    this.setupRandomizerControls();
     
     // CPM slider
     if (this.elements.cpmSlider) {
@@ -849,6 +880,438 @@ class ControlClient {
 
   clearLog() {
     this.elements.debugLog.textContent = '';
+  }
+
+  setupRandomizerControls() {
+    // Only normalized parameters get randomizers (not frequency, which gets HRG)
+    const randomizerParams = ['vowelX', 'vowelY', 'zingAmount', 'zingMorph', 'symmetry', 'amplitude'];
+    
+    randomizerParams.forEach(paramName => {
+      this.setupParameterRandomizer(paramName, 'start');
+      this.setupParameterRandomizer(paramName, 'end');
+    });
+    
+    // Set up global click handler to close modals
+    this.setupGlobalClickHandler();
+  }
+
+  setupParameterRandomizer(paramName, valueType) {
+    // valueType is either 'start' or 'end'
+    const randBtn = document.getElementById(`${paramName}-${valueType}-randomizer-btn`);
+    let modal = document.getElementById(`${paramName}-${valueType}-randomizer-modal`);
+    
+    // If modal doesn't exist, create it
+    if (!modal) {
+      this.createRandomizerModal(paramName, valueType);
+      modal = document.getElementById(`${paramName}-${valueType}-randomizer-modal`);
+    }
+    
+    const enableCheckbox = document.getElementById(`${paramName}-${valueType}-rand-enable`);
+    const minSlider = document.getElementById(`${paramName}-${valueType}-rand-min`);
+    const maxSlider = document.getElementById(`${paramName}-${valueType}-rand-max`);
+    const minValue = document.getElementById(`${paramName}-${valueType}-rand-min-value`);
+    const maxValue = document.getElementById(`${paramName}-${valueType}-rand-max-value`);
+    const applyBtn = document.getElementById(`${paramName}-${valueType}-apply-random`);
+    const closeBtn = document.getElementById(`${paramName}-${valueType}-close-random`);
+
+    // Load existing configuration
+    const config = this.randomizationConfig[paramName][valueType];
+    enableCheckbox.checked = config.enabled;
+    minSlider.value = config.min;
+    maxSlider.value = config.max;
+    minValue.textContent = config.min.toFixed(2);
+    maxValue.textContent = config.max.toFixed(2);
+
+    // Update button state
+    this.updateRandomizerButtonState(paramName, valueType, config.enabled);
+
+    // Show/hide modal
+    randBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // Hide all other modals first
+      document.querySelectorAll('.randomizer-modal').forEach(m => m.classList.remove('show'));
+      modal.classList.toggle('show');
+      
+      // Position modal near the button
+      const rect = randBtn.getBoundingClientRect();
+      modal.style.left = `${rect.left}px`;
+      modal.style.top = `${rect.bottom + 4}px`;
+    });
+
+    // Enable/disable continuous randomization
+    enableCheckbox.addEventListener('change', (e) => {
+      const enabled = e.target.checked;
+      this.randomizationConfig[paramName][valueType].enabled = enabled;
+      this.updateRandomizerButtonState(paramName, valueType, enabled);
+      
+      // Update apply button text
+      applyBtn.textContent = enabled ? 'enable' : 'apply';
+      
+      // Send updated config to synths
+      this.broadcastRandomizationConfig();
+    });
+
+    // Update value displays and config
+    minSlider.addEventListener('input', (e) => {
+      const value = parseFloat(e.target.value);
+      minValue.textContent = value.toFixed(2);
+      this.randomizationConfig[paramName][valueType].min = value;
+      
+      // Send updated config to synths
+      this.broadcastRandomizationConfig();
+    });
+    
+    maxSlider.addEventListener('input', (e) => {
+      const value = parseFloat(e.target.value);
+      maxValue.textContent = value.toFixed(2);
+      this.randomizationConfig[paramName][valueType].max = value;
+      
+      // Send updated config to synths
+      this.broadcastRandomizationConfig();
+    });
+
+    // Apply random values or save configuration
+    applyBtn.addEventListener('click', () => {
+      const min = parseFloat(minSlider.value);
+      const max = parseFloat(maxSlider.value);
+      
+      if (min >= max) {
+        alert('Min value must be less than max value');
+        return;
+      }
+      
+      if (enableCheckbox.checked) {
+        // Save configuration and enable continuous randomization
+        this.log(`Enabled continuous randomization for ${paramName} ${valueType} (range: ${min.toFixed(2)}-${max.toFixed(2)})`, 'info');
+      } else {
+        // One-time random application
+        this.applyRandomValueSeparate(paramName, valueType, min, max);
+      }
+      
+      modal.classList.remove('show');
+    });
+
+    // Close modal
+    closeBtn.addEventListener('click', () => {
+      modal.classList.remove('show');
+    });
+  }
+
+  createRandomizerModal(paramName, valueType) {
+    // Create modal dynamically for parameters that don't have one in HTML
+    const paramControl = document.getElementById(`${paramName}-static`).closest('.param-control');
+    const modal = document.createElement('div');
+    modal.className = 'randomizer-modal';
+    modal.id = `${paramName}-${valueType}-randomizer-modal`;
+    
+    // Get parameter range for this specific parameter
+    const slider = document.getElementById(`${paramName}-slider`);
+    const min = slider.min;
+    const max = slider.max;
+    const step = slider.step;
+    
+    const valueTypeDisplay = valueType === 'start' ? 'Start Value' : 'End Value';
+    
+    modal.innerHTML = `
+      <div class="randomizer-enable">
+        <label>
+          <input type="checkbox" id="${paramName}-${valueType}-rand-enable">
+          continuous randomization (${valueTypeDisplay.toLowerCase()})
+        </label>
+      </div>
+      <div class="randomizer-range">
+        <label>min value</label>
+        <input type="range" id="${paramName}-${valueType}-rand-min" min="${min}" max="${max}" step="${step}" value="${min}">
+        <span id="${paramName}-${valueType}-rand-min-value">${parseFloat(min).toFixed(2)}</span>
+      </div>
+      <div class="randomizer-range">
+        <label>max value</label>
+        <input type="range" id="${paramName}-${valueType}-rand-max" min="${min}" max="${max}" step="${step}" value="${max}">
+        <span id="${paramName}-${valueType}-rand-max-value">${parseFloat(max).toFixed(2)}</span>
+      </div>
+      <div class="randomizer-buttons">
+        <button class="button" id="${paramName}-${valueType}-apply-random">apply</button>
+        <button class="button" id="${paramName}-${valueType}-close-random">close</button>
+      </div>
+    `;
+    
+    paramControl.appendChild(modal);
+  }
+
+  applyRandomValue(paramName, min, max) {
+    const randomValue = min + Math.random() * (max - min);
+    const staticCheckbox = document.getElementById(`${paramName}-static`);
+    
+    if (staticCheckbox.checked) {
+      // Static mode: set start value and broadcast immediately
+      const slider = document.getElementById(`${paramName}-slider`);
+      const valueDisplay = document.getElementById(`${paramName}-value`);
+      
+      slider.value = randomValue;
+      const precision = paramName === 'frequency' ? 0 : 2;
+      valueDisplay.textContent = precision === 0 ? randomValue.toString() : randomValue.toFixed(precision);
+      
+      this.broadcastMusicalParameters();
+    } else {
+      // Envelope mode: randomize both start and end values
+      const startSlider = document.getElementById(`${paramName}-slider`);
+      const endSlider = document.getElementById(`${paramName}-end-slider`);
+      const startValue = document.getElementById(`${paramName}-value`);
+      const endValue = document.getElementById(`${paramName}-end-value`);
+      
+      const randomStart = min + Math.random() * (max - min);
+      const randomEnd = min + Math.random() * (max - min);
+      
+      const precision = paramName === 'frequency' ? 0 : 2;
+      
+      startSlider.value = randomStart;
+      endSlider.value = randomEnd;
+      startValue.textContent = precision === 0 ? randomStart.toString() : randomStart.toFixed(precision);
+      endValue.textContent = precision === 0 ? randomEnd.toString() : randomEnd.toFixed(precision);
+      
+      // Update envelope preview
+      this.updateParameterEnvelopePreview(paramName);
+      this.markPendingChanges();
+    }
+    
+    this.log(`Applied random ${paramName}: ${randomValue.toFixed(3)} (range: ${min.toFixed(2)}-${max.toFixed(2)})`, 'info');
+  }
+
+  // Close all randomizer modals when clicking outside
+  setupGlobalClickHandler() {
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.randomizer-modal') && !e.target.closest('.randomizer-btn')) {
+        document.querySelectorAll('.randomizer-modal').forEach(modal => {
+          modal.classList.remove('show');
+        });
+      }
+    });
+  }
+
+  // SIN (Stochastic Integer Notation) Parser
+  // Parses notation like "1-3, 5, 7-9" into [1, 2, 3, 5, 7, 8, 9]
+  parseSIN(sinString) {
+    if (!sinString || sinString.trim() === '') {
+      return [];
+    }
+
+    const result = [];
+    const segments = sinString.split(',').map(s => s.trim());
+
+    for (const segment of segments) {
+      if (segment.includes('-')) {
+        // Range notation like "1-3" or "7-9"
+        const [startStr, endStr] = segment.split('-').map(s => s.trim());
+        const start = parseInt(startStr, 10);
+        const end = parseInt(endStr, 10);
+
+        if (isNaN(start) || isNaN(end)) {
+          continue; // Skip invalid ranges
+        }
+
+        // Add all integers in the range (inclusive)
+        for (let i = Math.min(start, end); i <= Math.max(start, end); i++) {
+          if (!result.includes(i)) {
+            result.push(i);
+          }
+        }
+      } else {
+        // Single integer like "5"
+        const num = parseInt(segment, 10);
+        if (!isNaN(num) && !result.includes(num)) {
+          result.push(num);
+        }
+      }
+    }
+
+    // Sort the result array
+    result.sort((a, b) => a - b);
+    return result;
+  }
+
+  // Convert array back to SIN string for display
+  arrayToSIN(integerArray) {
+    if (!integerArray || integerArray.length === 0) {
+      return '';
+    }
+
+    // Sort the array first
+    const sorted = [...integerArray].sort((a, b) => a - b);
+    const ranges = [];
+    let rangeStart = sorted[0];
+    let rangeEnd = sorted[0];
+
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i] === rangeEnd + 1) {
+        // Continue the current range
+        rangeEnd = sorted[i];
+      } else {
+        // End the current range and start a new one
+        if (rangeStart === rangeEnd) {
+          ranges.push(rangeStart.toString());
+        } else {
+          ranges.push(`${rangeStart}-${rangeEnd}`);
+        }
+        rangeStart = sorted[i];
+        rangeEnd = sorted[i];
+      }
+    }
+
+    // Add the final range
+    if (rangeStart === rangeEnd) {
+      ranges.push(rangeStart.toString());
+    } else {
+      ranges.push(`${rangeStart}-${rangeEnd}`);
+    }
+
+    return ranges.join(', ');
+  }
+
+  // HRG Behavior implementations
+  applyHRGBehavior(integerSet, behavior, synthIndex, totalSynths) {
+    if (!integerSet || integerSet.length === 0) {
+      return 1; // Default ratio
+    }
+
+    const setSize = integerSet.length;
+
+    switch (behavior) {
+      case 'static':
+        // All synths get the same value (first in set)
+        return integerSet[0];
+
+      case 'ascending':
+        // Distribute values in ascending order
+        return integerSet[synthIndex % setSize];
+
+      case 'descending':
+        // Distribute values in descending order
+        const descending = [...integerSet].reverse();
+        return descending[synthIndex % setSize];
+
+      case 'shuffle':
+        // Fixed shuffle based on synthIndex (deterministic)
+        const shuffled = this.deterministicShuffle([...integerSet], synthIndex);
+        return shuffled[synthIndex % setSize];
+
+      case 'random':
+        // True random selection (non-repeating until all used)
+        if (!this.hrgRandomState) {
+          this.hrgRandomState = {};
+        }
+        if (!this.hrgRandomState[synthIndex]) {
+          this.hrgRandomState[synthIndex] = [...integerSet];
+          this.shuffleArray(this.hrgRandomState[synthIndex]);
+        }
+        
+        const randomSet = this.hrgRandomState[synthIndex];
+        if (randomSet.length === 0) {
+          // Reset when exhausted
+          this.hrgRandomState[synthIndex] = [...integerSet];
+          this.shuffleArray(this.hrgRandomState[synthIndex]);
+        }
+        
+        return randomSet.pop();
+
+      default:
+        return integerSet[0];
+    }
+  }
+
+  // Deterministic shuffle based on seed
+  deterministicShuffle(array, seed) {
+    const rng = this.seededRandom(seed);
+    for (let i = array.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
+  }
+
+  // Seeded random number generator
+  seededRandom(seed) {
+    let x = Math.sin(seed) * 10000;
+    return function() {
+      x = Math.sin(x) * 10000;
+      return x - Math.floor(x);
+    };
+  }
+
+  // Fisher-Yates shuffle
+  shuffleArray(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
+  }
+
+  // Generate harmonic ratio from numerator and denominator sets
+  generateHarmonicRatio(numeratorSet, denominatorSet, behavior, synthIndex, totalSynths) {
+    const num = this.applyHRGBehavior(numeratorSet, behavior, synthIndex, totalSynths);
+    const den = this.applyHRGBehavior(denominatorSet, behavior, synthIndex, totalSynths);
+    return num / den;
+  }
+
+  // Update the visual state of randomizer buttons
+  updateRandomizerButtonState(paramName, valueType, enabled) {
+    const button = document.getElementById(`${paramName}-${valueType}-randomizer-btn`);
+    if (button) {
+      if (enabled) {
+        button.classList.add('active');
+        button.textContent = `rand ${valueType.charAt(0).toUpperCase()}*`;
+      } else {
+        button.classList.remove('active');
+        button.textContent = `rand ${valueType.charAt(0).toUpperCase()}`;
+      }
+    }
+  }
+
+  // Send randomization configuration to synths
+  broadcastRandomizationConfig() {
+    if (!this.star) return;
+    
+    const message = MessageBuilder.randomizationConfig(this.randomizationConfig);
+    const sent = this.star.broadcastToType('synth', message, 'control');
+    this.log(`Sent randomization config to ${sent} synths`, 'info');
+  }
+
+  // Apply random value to specific start or end
+  applyRandomValueSeparate(paramName, valueType, min, max) {
+    const randomValue = min + Math.random() * (max - min);
+    const staticCheckbox = document.getElementById(`${paramName}-static`);
+    
+    if (valueType === 'start') {
+      const slider = document.getElementById(`${paramName}-slider`);
+      const valueDisplay = document.getElementById(`${paramName}-value`);
+      
+      if (slider && valueDisplay) {
+        slider.value = randomValue;
+        const precision = paramName === 'frequency' ? 0 : 2;
+        valueDisplay.textContent = precision === 0 ? randomValue.toString() : randomValue.toFixed(precision);
+        
+        if (staticCheckbox.checked) {
+          this.broadcastMusicalParameters();
+        } else {
+          this.updateParameterEnvelopePreview(paramName);
+          this.markPendingChanges();
+        }
+      }
+    } else if (valueType === 'end' && staticCheckbox && !staticCheckbox.checked) {
+      const endSlider = document.getElementById(`${paramName}-end-slider`);
+      const endValue = document.getElementById(`${paramName}-end-value`);
+      
+      if (endSlider && endValue) {
+        endSlider.value = randomValue;
+        const precision = paramName === 'frequency' ? 0 : 2;
+        endValue.textContent = precision === 0 ? randomValue.toString() : randomValue.toFixed(precision);
+        
+        this.updateParameterEnvelopePreview(paramName);
+        this.markPendingChanges();
+      }
+    }
+    
+    this.log(`Applied random ${paramName} ${valueType}: ${randomValue.toFixed(3)} (range: ${min.toFixed(2)}-${max.toFixed(2)})`, 'info');
   }
 }
 

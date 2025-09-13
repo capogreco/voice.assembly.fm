@@ -348,6 +348,117 @@
             border-radius: 2px;
         }
 
+        /* Randomizer Styles */
+        .randomizer-btn {
+            background: transparent;
+            border: 1px solid #666;
+            color: #888;
+            padding: 2px 6px;
+            cursor: pointer;
+            font-size: 9px;
+            font-family: inherit;
+            margin-left: 4px;
+        }
+
+        .randomizer-btn:hover {
+            background: #3a3a3a;
+            color: #e0e0e0;
+        }
+
+        .randomizer-btn.active {
+            background: #4a7c8a;
+            border-color: #4a7c8a;
+            color: #e0e0e0;
+        }
+
+        .randomizer-modal {
+            display: none;
+            position: absolute;
+            background: #2a2a2a;
+            border: 1px solid #444;
+            padding: 8px;
+            z-index: 1000;
+            font-size: 10px;
+            min-width: 120px;
+        }
+
+        .randomizer-modal.show {
+            display: block;
+        }
+
+        .randomizer-range {
+            margin-bottom: 6px;
+        }
+
+        .randomizer-range label {
+            display: block;
+            margin-bottom: 2px;
+            color: #888;
+        }
+
+        .randomizer-range input {
+            width: 100%;
+        }
+
+        .randomizer-buttons {
+            display: flex;
+            gap: 4px;
+            margin-top: 6px;
+        }
+
+        .randomizer-buttons button {
+            flex: 1;
+            padding: 2px 4px;
+            font-size: 9px;
+        }
+
+        .randomizer-enable {
+            margin-bottom: 6px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid #444;
+        }
+
+        .randomizer-enable label {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            color: #e0e0e0;
+            font-size: 10px;
+        }
+
+        .randomizer-target {
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .randomizer-target label {
+            color: #888;
+            font-size: 10px;
+        }
+
+        .randomizer-target select {
+            background: #1a1a1a;
+            border: 1px solid #444;
+            color: #e0e0e0;
+            padding: 2px 4px;
+            font-size: 9px;
+            font-family: inherit;
+        }
+
+        .randomizer-btn.active {
+            background: #4a7c8a;
+            border-color: #4a7c8a;
+            color: #e0e0e0;
+            animation: pulse-randomizer 2s infinite;
+        }
+
+        @keyframes pulse-randomizer {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
         /* Phasor Bar Styles */
         .phasor-bar-container {
             background: #1a1a1a;
@@ -473,6 +584,8 @@
                         <input type="checkbox" id="vowelX-static" checked>
                         static
                     </label>
+                    <button class="randomizer-btn" id="vowelX-start-randomizer-btn">rand S</button>
+                    <button class="randomizer-btn" id="vowelX-end-randomizer-btn">rand E</button>
                 </div>
                 <div class="param-main">
                     <div class="param-value" id="vowelX-value">0.50</div>
@@ -513,6 +626,7 @@
                         </svg>
                     </div>
                 </div>
+                
             </div>
 
             <div class="param-control envelope-control">
@@ -522,6 +636,8 @@
                         <input type="checkbox" id="vowelY-static" checked>
                         static
                     </label>
+                    <button class="randomizer-btn" id="vowelY-start-randomizer-btn">rand S</button>
+                    <button class="randomizer-btn" id="vowelY-end-randomizer-btn">rand E</button>
                 </div>
                 <div class="param-main">
                     <div class="param-value" id="vowelY-value">0.50</div>
@@ -571,6 +687,8 @@
                         <input type="checkbox" id="zingAmount-static" checked>
                         static
                     </label>
+                    <button class="randomizer-btn" id="zingAmount-start-randomizer-btn">rand S</button>
+                    <button class="randomizer-btn" id="zingAmount-end-randomizer-btn">rand E</button>
                 </div>
                 <div class="param-main">
                     <div class="param-value" id="zingAmount-value">0.00</div>
@@ -620,6 +738,8 @@
                         <input type="checkbox" id="zingMorph-static" checked>
                         static
                     </label>
+                    <button class="randomizer-btn" id="zingMorph-start-randomizer-btn">rand S</button>
+                    <button class="randomizer-btn" id="zingMorph-end-randomizer-btn">rand E</button>
                 </div>
                 <div class="param-main">
                     <div class="param-value" id="zingMorph-value">0.00</div>
@@ -669,6 +789,8 @@
                         <input type="checkbox" id="symmetry-static" checked>
                         static
                     </label>
+                    <button class="randomizer-btn" id="symmetry-start-randomizer-btn">rand S</button>
+                    <button class="randomizer-btn" id="symmetry-end-randomizer-btn">rand E</button>
                 </div>
                 <div class="param-main">
                     <div class="param-value" id="symmetry-value">0.50</div>
@@ -718,6 +840,8 @@
                         <input type="checkbox" id="amplitude-static" checked>
                         static
                     </label>
+                    <button class="randomizer-btn" id="amplitude-start-randomizer-btn">rand S</button>
+                    <button class="randomizer-btn" id="amplitude-end-randomizer-btn">rand E</button>
                 </div>
                 <div class="param-main">
                     <div class="param-value" id="amplitude-value">1.00</div>

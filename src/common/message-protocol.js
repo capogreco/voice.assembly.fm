@@ -23,7 +23,8 @@ export const MessageTypes = {
   
   // System Control
   CALIBRATION_MODE: 'calibration-mode',
-  SYNTH_READY: 'synth-ready'
+  SYNTH_READY: 'synth-ready',
+  RANDOMIZATION_CONFIG: 'randomization-config'
 };
 
 export class MessageBuilder {
@@ -101,6 +102,14 @@ export class MessageBuilder {
       timestamp: performance.now()
     };
   }
+
+  static randomizationConfig(config) {
+    return {
+      type: MessageTypes.RANDOMIZATION_CONFIG,
+      config,
+      timestamp: performance.now()
+    };
+  }
 }
 
 export function validateMessage(message) {
@@ -156,6 +165,12 @@ export function validateMessage(message) {
           typeof message.stepsPerCycle !== 'number' ||
           typeof message.cycleLength !== 'number') {
         throw new Error('Phasor sync message missing required numeric fields');
+      }
+      break;
+
+    case MessageTypes.RANDOMIZATION_CONFIG:
+      if (!message.config || typeof message.config !== 'object') {
+        throw new Error('Randomization config message must have config object');
       }
       break;
   }

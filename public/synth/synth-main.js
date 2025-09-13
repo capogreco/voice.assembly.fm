@@ -27,6 +27,9 @@ class SynthClient {
     // Store received state for application after audio init
     this.lastMusicalParams = null;
     
+    // Randomization configuration
+    this.randomizationConfig = null;
+    
     // Phasor synchronization
     this.receivedPhasor = 0.0;
     this.receivedBpm = 120;
@@ -269,11 +272,22 @@ class SynthClient {
       this.formantNode.port.onmessage = (event) => {
         if (event.data.type === 'apply-scheduled-parameters') {
           this.applyScheduledParametersFromWorklet(event.data.parameters);
+        } else if (event.data.type === 'randomized-parameters') {
+          this.applyRandomizedParametersFromWorklet(event.data.parameters);
         }
       };
       
       // Apply any stored state that was received before audio was ready
       this.applyStoredState();
+      
+      // Send randomization config if available
+      if (this.randomizationConfig) {
+        this.formantNode.port.postMessage({
+          type: 'randomization-config',
+          config: this.randomizationConfig,
+          synthId: this.peerId
+        });
+      }
       
     } catch (error) {
       console.error('❌ Failed to initialize formant synthesis:', error);
@@ -349,6 +363,10 @@ class SynthClient {
         
       case MessageTypes.PHASOR_SYNC:
         this.handlePhasorSync(message);
+        break;
+        
+      case MessageTypes.RANDOMIZATION_CONFIG:
+        this.handleRandomizationConfig(message);
         break;
         
       default:
@@ -511,6 +529,27 @@ class SynthClient {
     }
   }
 
+  applyRandomizedParametersFromWorklet(parameters) {
+    if (!this.formantNode || !parameters) return;
+    
+    // Apply randomized values by updating envelope start/end values
+    for (const [paramName, paramData] of Object.entries(parameters)) {
+      if (paramData.startValue !== undefined) {
+        const startParam = this.formantNode.parameters.get(`${paramName}_startValue`);
+        if (startParam) {
+          startParam.value = paramData.startValue;
+        }
+      }
+      
+      if (paramData.endValue !== undefined) {
+        const endParam = this.formantNode.parameters.get(`${paramName}_endValue`);
+        if (endParam) {
+          endParam.value = paramData.endValue;
+        }
+      }
+    }
+  }
+
   handlePhasorSync(message) {
     this.receivedPhasor = message.phasor;
     this.receivedCpm = message.cpm;
@@ -530,6 +569,19 @@ class SynthClient {
     // Start interpolation if not already running (for fallback display)
     if (!this.phasorUpdateId) {
       this.startPhasorInterpolation();
+    }
+  }
+
+  handleRandomizationConfig(message) {
+    this.randomizationConfig = message.config;
+    
+    // If formant worklet is available, send config
+    if (this.formantNode && this.randomizationConfig) {
+      this.formantNode.port.postMessage({
+        type: 'randomization-config',
+        config: this.randomizationConfig,
+        synthId: this.peerId
+      });
     }
   }
 
