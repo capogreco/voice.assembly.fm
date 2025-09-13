@@ -100,50 +100,10 @@ class ControlClient {
   }
   
   setupMusicalControls() {
-    // Frequency slider
-    this.elements.frequencySlider.addEventListener('input', (e) => {
-      const frequency = parseFloat(e.target.value);
-      this.elements.frequencyValue.textContent = `${frequency} Hz`;
-      this.broadcastMusicalParameters();
-    });
-    
-    // Vowel X slider
-    document.getElementById('vowelX-slider').addEventListener('input', (e) => {
-      const value = parseFloat(e.target.value);
-      document.getElementById('vowelX-value').textContent = value.toFixed(2);
-      this.broadcastMusicalParameters();
-    });
-    
-    // Vowel Y slider
-    document.getElementById('vowelY-slider').addEventListener('input', (e) => {
-      const value = parseFloat(e.target.value);
-      document.getElementById('vowelY-value').textContent = value.toFixed(2);
-      this.broadcastMusicalParameters();
-    });
-    
-    // Zing Morph slider
-    document.getElementById('zingMorph-slider').addEventListener('input', (e) => {
-      const value = parseFloat(e.target.value);
-      document.getElementById('zingMorph-value').textContent = value.toFixed(2);
-      this.broadcastMusicalParameters();
-    });
-    
-    // Symmetry slider
-    document.getElementById('symmetry-slider').addEventListener('input', (e) => {
-      const value = parseFloat(e.target.value);
-      document.getElementById('symmetry-value').textContent = value.toFixed(2);
-      this.broadcastMusicalParameters();
-    });
+    // Note: All synthesis parameters are now handled by setupEnvelopeControls()
     
     // Envelope controls for all parameters that support them
     this.setupEnvelopeControls();
-    
-    // Zing Amount slider (master blend control)
-    document.getElementById('zingAmount-slider').addEventListener('input', (e) => {
-      const zingAmount = parseFloat(e.target.value);
-      document.getElementById('zingAmount-value').textContent = zingAmount.toFixed(2);
-      this.broadcastMusicalParameters();
-    });
     
     // CPM slider
     if (this.elements.cpmSlider) {
@@ -176,6 +136,9 @@ class ControlClient {
       { name: 'frequency', suffix: ' Hz', precision: 0 },
       { name: 'vowelX', suffix: '', precision: 2 },
       { name: 'vowelY', suffix: '', precision: 2 },
+      { name: 'zingAmount', suffix: '', precision: 2 },
+      { name: 'zingMorph', suffix: '', precision: 2 },
+      { name: 'symmetry', suffix: '', precision: 2 },
       { name: 'amplitude', suffix: '', precision: 2 }
     ];
     
@@ -360,18 +323,14 @@ class ControlClient {
   
   
   getMusicalParameters() {
-    const zingMorphValue = parseFloat(document.getElementById('zingMorph-slider').value);
-    const symmetryValue = parseFloat(document.getElementById('symmetry-slider').value);
-    const zingAmountValue = parseFloat(document.getElementById('zingAmount-slider').value);
-    
     return {
         frequency: this.getParameterValue('frequency', 220),
         vowelX: this.getParameterValue('vowelX', 0.5),
         vowelY: this.getParameterValue('vowelY', 0.5),
+        zingAmount: this.getParameterValue('zingAmount', 0.0),
+        zingMorph: this.getParameterValue('zingMorph', 0.0),
+        symmetry: this.getParameterValue('symmetry', 0.5),
         amplitude: this.getParameterValue('amplitude', 1.0),
-        zingMorph: isNaN(zingMorphValue) ? 0 : zingMorphValue,
-        symmetry: isNaN(symmetryValue) ? 0.5 : symmetryValue,
-        zingAmount: isNaN(zingAmountValue) ? 0 : zingAmountValue,
         isManualMode: this.isManualMode,
     };
   }

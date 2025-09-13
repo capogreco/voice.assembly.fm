@@ -564,25 +564,151 @@
                 </div>
             </div>
 
-            <div class="param-control">
-                <div class="param-label">zing amount</div>
-                <div class="param-value" id="zingAmount-value">0.00</div>
-                <input type="range" class="slider" id="zingAmount-slider" 
-                       min="0" max="1" value="0" step="0.01">
+            <div class="param-control envelope-control">
+                <div class="param-header">
+                    <div class="param-label">zing amount</div>
+                    <label class="static-checkbox">
+                        <input type="checkbox" id="zingAmount-static" checked>
+                        static
+                    </label>
+                </div>
+                <div class="param-main">
+                    <div class="param-value" id="zingAmount-value">0.00</div>
+                    <input type="range" class="slider" id="zingAmount-slider" 
+                           min="0" max="1" value="0" step="0.01">
+                    <span class="param-suffix" id="zingAmount-suffix"></span>
+                </div>
+                
+                <!-- Envelope Controls (hidden when static) -->
+                <div class="envelope-section" id="zingAmount-envelope" style="display: none;">
+                    <div class="param-row">
+                        <div class="param-label">end value</div>
+                        <div class="param-value" id="zingAmount-end-value">0.00</div>
+                        <input type="range" class="slider" id="zingAmount-end-slider" 
+                               min="0" max="1" step="0.01" value="0">
+                    </div>
+                    
+                    <div class="envelope-controls">
+                        <div class="envelope-type">
+                            <label>type:</label>
+                            <label><input type="radio" name="zingAmount-env-type" value="lin" checked> lin</label>
+                            <label><input type="radio" name="zingAmount-env-type" value="cos"> cos</label>
+                        </div>
+                        
+                        <div class="envelope-intensity">
+                            <label>intensity:</label>
+                            <input type="range" class="slider small-slider" id="zingAmount-intensity" 
+                                   min="0" max="1" step="0.01" value="0.5">
+                            <span class="param-value small" id="zingAmount-intensity-value">0.50</span>
+                        </div>
+                    </div>
+                    
+                    <!-- SVG Envelope Preview -->
+                    <div class="envelope-preview">
+                        <svg id="zingAmount-envelope-svg" width="60" height="30" viewBox="0 0 60 30">
+                            <path id="zingAmount-envelope-path" stroke="#4a7c8a" stroke-width="1" fill="none"/>
+                            <rect width="60" height="30" fill="none" stroke="#333" stroke-width="1"/>
+                        </svg>
+                    </div>
+                </div>
             </div>
 
-            <div class="param-control">
-                <div class="param-label">zing morph</div>
-                <div class="param-value" id="zingMorph-value">0.00</div>
-                <input type="range" class="slider" id="zingMorph-slider" 
-                       min="-1" max="1" step="0.01" value="0">
+            <div class="param-control envelope-control">
+                <div class="param-header">
+                    <div class="param-label">zing morph</div>
+                    <label class="static-checkbox">
+                        <input type="checkbox" id="zingMorph-static" checked>
+                        static
+                    </label>
+                </div>
+                <div class="param-main">
+                    <div class="param-value" id="zingMorph-value">0.00</div>
+                    <input type="range" class="slider" id="zingMorph-slider" 
+                           min="-1" max="1" step="0.01" value="0">
+                    <span class="param-suffix" id="zingMorph-suffix"></span>
+                </div>
+                
+                <!-- Envelope Controls (hidden when static) -->
+                <div class="envelope-section" id="zingMorph-envelope" style="display: none;">
+                    <div class="param-row">
+                        <div class="param-label">end value</div>
+                        <div class="param-value" id="zingMorph-end-value">0.00</div>
+                        <input type="range" class="slider" id="zingMorph-end-slider" 
+                               min="-1" max="1" step="0.01" value="0">
+                    </div>
+                    
+                    <div class="envelope-controls">
+                        <div class="envelope-type">
+                            <label>type:</label>
+                            <label><input type="radio" name="zingMorph-env-type" value="lin" checked> lin</label>
+                            <label><input type="radio" name="zingMorph-env-type" value="cos"> cos</label>
+                        </div>
+                        
+                        <div class="envelope-intensity">
+                            <label>intensity:</label>
+                            <input type="range" class="slider small-slider" id="zingMorph-intensity" 
+                                   min="0" max="1" step="0.01" value="0.5">
+                            <span class="param-value small" id="zingMorph-intensity-value">0.50</span>
+                        </div>
+                    </div>
+                    
+                    <!-- SVG Envelope Preview -->
+                    <div class="envelope-preview">
+                        <svg id="zingMorph-envelope-svg" width="60" height="30" viewBox="0 0 60 30">
+                            <path id="zingMorph-envelope-path" stroke="#4a7c8a" stroke-width="1" fill="none"/>
+                            <rect width="60" height="30" fill="none" stroke="#333" stroke-width="1"/>
+                        </svg>
+                    </div>
+                </div>
             </div>
 
-            <div class="param-control">
-                <div class="param-label">symmetry</div>
-                <div class="param-value" id="symmetry-value">0.50</div>
-                <input type="range" class="slider" id="symmetry-slider" 
-                       min="0" max="1" step="0.01" value="0.5">
+            <div class="param-control envelope-control">
+                <div class="param-header">
+                    <div class="param-label">symmetry</div>
+                    <label class="static-checkbox">
+                        <input type="checkbox" id="symmetry-static" checked>
+                        static
+                    </label>
+                </div>
+                <div class="param-main">
+                    <div class="param-value" id="symmetry-value">0.50</div>
+                    <input type="range" class="slider" id="symmetry-slider" 
+                           min="0" max="1" step="0.01" value="0.5">
+                    <span class="param-suffix" id="symmetry-suffix"></span>
+                </div>
+                
+                <!-- Envelope Controls (hidden when static) -->
+                <div class="envelope-section" id="symmetry-envelope" style="display: none;">
+                    <div class="param-row">
+                        <div class="param-label">end value</div>
+                        <div class="param-value" id="symmetry-end-value">0.50</div>
+                        <input type="range" class="slider" id="symmetry-end-slider" 
+                               min="0" max="1" step="0.01" value="0.5">
+                    </div>
+                    
+                    <div class="envelope-controls">
+                        <div class="envelope-type">
+                            <label>type:</label>
+                            <label><input type="radio" name="symmetry-env-type" value="lin" checked> lin</label>
+                            <label><input type="radio" name="symmetry-env-type" value="cos"> cos</label>
+                        </div>
+                        
+                        <div class="envelope-intensity">
+                            <label>intensity:</label>
+                            <input type="range" class="slider small-slider" id="symmetry-intensity" 
+                                   min="0" max="1" step="0.01" value="0.5">
+                            <span class="param-value small" id="symmetry-intensity-value">0.50</span>
+                        </div>
+                    </div>
+                    
+                    <!-- SVG Envelope Preview -->
+                    <div class="envelope-preview">
+                        <svg id="symmetry-envelope-svg" width="60" height="30" viewBox="0 0 60 30">
+                            <path id="symmetry-envelope-path" stroke="#4a7c8a" stroke-width="1" fill="none"/>
+                            <rect width="60" height="30" fill="none" stroke="#333" stroke-width="1"/>
+                        </svg>
+                    </div>
+                </div>
             </div>
 
             <div class="param-control envelope-control">

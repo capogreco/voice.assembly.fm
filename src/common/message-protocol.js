@@ -133,8 +133,20 @@ export function validateMessage(message) {
       break;
 
     case MessageTypes.MUSICAL_PARAMETERS:
-      if (typeof message.frequency !== 'number') {
-        throw new Error('Musical parameters message missing frequency');
+      // Validate that frequency exists and is either a number (static) or envelope object
+      if (!message.frequency || 
+          (typeof message.frequency !== 'number' && typeof message.frequency !== 'object')) {
+        throw new Error('Musical parameters message missing or invalid frequency');
+      }
+      
+      // Validate envelope object structure if frequency is an object
+      if (typeof message.frequency === 'object') {
+        if (typeof message.frequency.startValue !== 'number' ||
+            typeof message.frequency.endValue !== 'number' ||
+            typeof message.frequency.intensity !== 'number' ||
+            typeof message.frequency.envType !== 'string') {
+          throw new Error('Musical parameters frequency envelope object missing required fields');
+        }
       }
       break;
 
