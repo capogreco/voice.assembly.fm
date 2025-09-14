@@ -415,6 +415,67 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
     }
 
     /**
+     * Calculate parabolic envelope that peaks at 50% phase
+     * @param {number} phase - Phase from 0 to 1
+     * @param {number} intensity - Intensity control (0 to 1) 
+     * @param {number} startValue - Starting value
+     * @param {number} endValue - Ending value
+     * @returns {number} Envelope value
+     */
+    calculateParTypeEnvelope(phase, intensity, startValue, endValue, paramName) {
+        const t = Math.max(0, Math.min(1, phase));
+        const p = Math.max(0, Math.min(1, intensity));
+        
+        // Calculate peak value based on parameter type and intensity
+        let peakValue;
+        
+        // Check if this is a frequency parameter by name
+        if (paramName === 'frequency') {
+            // Frequency parameter: intensity controls how far the peak deviates from the midpoint
+            // First, calculate the geometric mean (midpoint in log space) between start and end
+            const logStart = Math.log2(Math.max(1, startValue));
+            const logEnd = Math.log2(Math.max(1, endValue));
+            const logMidpoint = (logStart + logEnd) / 2;
+            const midpointFreq = Math.pow(2, logMidpoint);
+            
+            // intensity controls octave offset from this midpoint
+            // intensity=0 -> -1 octave from midpoint, intensity=0.5 -> midpoint, intensity=1 -> +1 octave from midpoint
+            const octaveOffset = (p - 0.5) * 2.0; // -1 to +1 octave range
+            peakValue = midpointFreq * Math.pow(2, octaveOffset);
+            
+            // Ensure peak stays within reasonable bounds
+            const minFreq = Math.min(startValue, endValue) * 0.5;
+            const maxFreq = Math.max(startValue, endValue) * 2.0;
+            peakValue = Math.max(minFreq, Math.min(maxFreq, peakValue));
+            
+        } else {
+            // Normalized parameter (0-1): intensity controls how far peak deviates from midpoint
+            const midpoint = (startValue + endValue) / 2;
+            const maxRange = Math.min(0.5, Math.abs(endValue - startValue) + 0.2); // Dynamic range based on start/end difference
+            const offset = (p - 0.5) * 2.0 * maxRange; // Scale to ±maxRange
+            peakValue = Math.max(0, Math.min(1, midpoint + offset));
+        }
+        
+        // Create parabola passing through three points:
+        // (0, startValue), (0.5, peakValue), (1, endValue)
+        
+        // Solve for quadratic coefficients: y = at² + bt + c
+        const c = startValue;
+        const a = 2 * (startValue + endValue - 2 * peakValue);
+        const b = 4 * peakValue - endValue - 3 * startValue;
+        
+        // Evaluate parabola at phase t
+        const result = a * t * t + b * t + c;
+        
+        // Add debug logging for troubleshooting
+        if (this.debugCounter % 22050 === 0) { // Log every ~0.5 seconds at 44.1kHz
+            console.log(`DEBUG ParEnv ${paramName}: phase=${t.toFixed(3)}, intensity=${p.toFixed(3)}, start=${startValue.toFixed(2)}, peak=${peakValue.toFixed(2)}, end=${endValue.toFixed(2)}, result=${result.toFixed(2)}`);
+        }
+        
+        return result;
+    }
+
+    /**
      * Process envelopes at k-rate (every 128 samples)
      */
     processEnvelopes(parameters) {
@@ -442,15 +503,19 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
                 const intensity = envIntensity ? envIntensity[0] : 0.5;
                 
                 // Calculate envelope curve
-                let envelopeValue;
-                if (type < 0.5) {
-                    envelopeValue = this.calculateLinTypeEnvelope(this.phasorValue, intensity);
+                // type mapping: 0=lin, 0.5=cos, 1=par
+                if (type < 0.25) {
+                    // Linear envelope type
+                    const envelopeValue = this.calculateLinTypeEnvelope(this.phasorValue, intensity);
+                    this.envelopeValues[paramName] = this.lerp(start, end, envelopeValue);
+                } else if (type < 0.75) {
+                    // Cosine envelope type 
+                    const envelopeValue = this.calculateCosTypeEnvelope(this.phasorValue, intensity);
+                    this.envelopeValues[paramName] = this.lerp(start, end, envelopeValue);
                 } else {
-                    envelopeValue = this.calculateCosTypeEnvelope(this.phasorValue, intensity);
+                    // Parabolic type - calculate directly without interpolation
+                    this.envelopeValues[paramName] = this.calculateParTypeEnvelope(this.phasorValue, intensity, start, end, paramName);
                 }
-                
-                // Interpolate between start and end values
-                this.envelopeValues[paramName] = this.lerp(start, end, envelopeValue);
             }
         }
     }
@@ -879,6 +944,13 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
         const frequency = this.envelopeValues.frequency;
         const vowelX = this.envelopeValues.vowelX;
         const vowelY = this.envelopeValues.vowelY;
+        
+        // Debug frequency every ~1 second (44100 samples)
+        if (this.debugCounter === undefined) this.debugCounter = 0;
+        this.debugCounter++;
+        if (this.debugCounter % 44100 === 0) {
+            console.log(`DEBUG process: frequency=${frequency}Hz, phasor=${this.phasorValue}`);
+        }
         const amplitude = this.envelopeValues.amplitude;
         
         // Create a-rate parameters from envelope values (expand to buffer size)

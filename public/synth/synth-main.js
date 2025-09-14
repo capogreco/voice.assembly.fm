@@ -528,8 +528,16 @@ class SynthClient {
         }
         this.formantNode.parameters.get(`${paramName}_endValue`).value = endVal;
         
-        this.formantNode.parameters.get(`${paramName}_envType`).value = paramValue.envType === 'cos' ? 1 : 0;
-        this.formantNode.parameters.get(`${paramName}_envIntensity`).value = paramValue.intensity || 0.5;
+        // Map envelope types to numeric values for worklet
+        let envTypeValue = 0; // default 'lin'
+        if (paramValue.envType === 'cos') {
+          envTypeValue = 0.5;
+        } else if (paramValue.envType === 'par') {
+          envTypeValue = 1;
+        }
+        this.formantNode.parameters.get(`${paramName}_envType`).value = envTypeValue;
+        this.formantNode.parameters.get(`${paramName}_envIntensity`).value = 
+            paramValue.intensity !== undefined ? paramValue.intensity : 0.5;
         
         backwardCompatValue = startVal; // Use start value for backward compatibility
       }

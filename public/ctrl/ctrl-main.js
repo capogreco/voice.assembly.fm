@@ -468,7 +468,7 @@ class ControlClient {
     
     if (hasAnyRange) {
       // Range visualization mode
-      const paths = this.generateRangeEnvelopePaths(startMin, startMax, endMin, endMax, intensity, envType);
+      const paths = this.generateRangeEnvelopePaths(startMin, startMax, endMin, endMax, intensity, envType, paramName);
       
       // Show range visualization elements
       rangeArea.style.display = 'block';
@@ -484,7 +484,7 @@ class ControlClient {
       maxPath.setAttribute('d', paths.maxPath);
     } else {
       // Standard single envelope mode
-      const path = this.generateEnvelopePath(startMin, endMin, intensity, envType);
+      const path = this.generateEnvelopePath(startMin, endMin, intensity, envType, paramName);
       pathElement.setAttribute('d', path);
       pathElement.style.display = 'block';
       
@@ -495,26 +495,48 @@ class ControlClient {
     }
   }
 
-  generateEnvelopePath(startValue, endValue, intensity, envType) {
+  // Helper function to normalize parameter values for visualization (0-1 range)
+  normalizeForVisualization(value, paramName) {
+    if (paramName === 'frequency') {
+      // Frequency: 80-800 Hz -> 0-1
+      return (value - 80) / (800 - 80);
+    } else {
+      // Normalized parameters already in 0-1 range
+      return value;
+    }
+  }
+
+  generateEnvelopePath(startValue, endValue, intensity, envType, paramName) {
     const width = 300;
     const height = 80;
     const steps = 150; // Number of points along the curve
     
-    let pathData = `M 0,${height * (1 - startValue)}`;
+    // Normalize start value for display
+    const normalizedStart = this.normalizeForVisualization(startValue, paramName);
+    let pathData = `M 0,${height * (1 - normalizedStart)}`;
     
     for (let i = 1; i <= steps; i++) {
       const phase = i / steps; // 0 to 1
-      let envelopeValue;
+      let interpolatedValue;
       
-      if (envType === 'lin') {
-        envelopeValue = this.calculateLinTypeEnvelope(phase, intensity);
+      if (envType === 'par') {
+        // Parabolic envelope calculates the value directly
+        interpolatedValue = this.calculateParTypeEnvelope(phase, intensity, startValue, endValue, paramName);
       } else {
-        envelopeValue = this.calculateCosTypeEnvelope(phase, intensity);
+        // Lin and cos envelopes use the interpolation pattern
+        let envelopeValue;
+        if (envType === 'lin') {
+          envelopeValue = this.calculateLinTypeEnvelope(phase, intensity);
+        } else {
+          envelopeValue = this.calculateCosTypeEnvelope(phase, intensity);
+        }
+        interpolatedValue = startValue + (endValue - startValue) * envelopeValue;
       }
       
-      const interpolatedValue = startValue + (endValue - startValue) * envelopeValue;
+      // Normalize interpolated value for display
+      const normalizedValue = this.normalizeForVisualization(interpolatedValue, paramName);
       const x = (i / steps) * width;
-      const y = height * (1 - interpolatedValue); // Flip Y axis
+      const y = height * (1 - normalizedValue); // Flip Y axis
       
       pathData += ` L ${x},${y}`;
     }
@@ -522,16 +544,20 @@ class ControlClient {
     return pathData;
   }
 
-  generateRangeEnvelopePaths(startMin, startMax, endMin, endMax, intensity, envType) {
+  generateRangeEnvelopePaths(startMin, startMax, endMin, endMax, intensity, envType, paramName) {
     const width = 300;
     const height = 80;
     const steps = 150;
     
+    // Normalize start values for display
+    const normalizedStartMin = this.normalizeForVisualization(startMin, paramName);
+    const normalizedStartMax = this.normalizeForVisualization(startMax, paramName);
+    
     // Generate min envelope path (startMin -> endMin)
-    let minPathData = `M 0,${height * (1 - startMin)}`;
+    let minPathData = `M 0,${height * (1 - normalizedStartMin)}`;
     
     // Generate max envelope path (startMax -> endMax)
-    let maxPathData = `M 0,${height * (1 - startMax)}`;
+    let maxPathData = `M 0,${height * (1 - normalizedStartMax)}`;
     
     // Arrays to store polygon points for filled area
     const topPoints = [];
@@ -540,24 +566,38 @@ class ControlClient {
     // Calculate all envelope paths
     for (let i = 1; i <= steps; i++) {
       const phase = i / steps; // 0 to 1
-      let envelopeValue;
-      
-      if (envType === 'lin') {
-        envelopeValue = this.calculateLinTypeEnvelope(phase, intensity);
-      } else {
-        envelopeValue = this.calculateCosTypeEnvelope(phase, intensity);
-      }
-      
       const x = (i / steps) * width;
       
-      // Min envelope (startMin -> endMin)
-      const minInterpolated = startMin + (endMin - startMin) * envelopeValue;
-      const minY = height * (1 - minInterpolated);
+      let minInterpolated, maxInterpolated;
+      
+      if (envType === 'par') {
+        // Parabolic envelopes calculate values directly
+        minInterpolated = this.calculateParTypeEnvelope(phase, intensity, startMin, endMin, paramName);
+        maxInterpolated = this.calculateParTypeEnvelope(phase, intensity, startMax, endMax, paramName);
+      } else {
+        // Lin and cos envelopes use the interpolation pattern
+        let envelopeValue;
+        if (envType === 'lin') {
+          envelopeValue = this.calculateLinTypeEnvelope(phase, intensity);
+        } else {
+          envelopeValue = this.calculateCosTypeEnvelope(phase, intensity);
+        }
+        
+        // Min envelope (startMin -> endMin)
+        minInterpolated = startMin + (endMin - startMin) * envelopeValue;
+        
+        // Max envelope (startMax -> endMax)
+        maxInterpolated = startMax + (endMax - startMax) * envelopeValue;
+      }
+      
+      // Normalize interpolated values for display
+      const normalizedMinValue = this.normalizeForVisualization(minInterpolated, paramName);
+      const normalizedMaxValue = this.normalizeForVisualization(maxInterpolated, paramName);
+      
+      const minY = height * (1 - normalizedMinValue);
       minPathData += ` L ${x},${minY}`;
       
-      // Max envelope (startMax -> endMax)
-      const maxInterpolated = startMax + (endMax - startMax) * envelopeValue;
-      const maxY = height * (1 - maxInterpolated);
+      const maxY = height * (1 - normalizedMaxValue);
       maxPathData += ` L ${x},${maxY}`;
       
       // Determine top and bottom for polygon (max envelope could be above or below min)
@@ -570,9 +610,9 @@ class ControlClient {
       }
     }
     
-    // Add starting points for polygon
-    const startMinY = height * (1 - startMin);
-    const startMaxY = height * (1 - startMax);
+    // Add starting points for polygon (using normalized values)
+    const startMinY = height * (1 - normalizedStartMin);
+    const startMaxY = height * (1 - normalizedStartMax);
     if (startMaxY <= startMinY) {
       topPoints.unshift(`0,${startMaxY}`);
       bottomPoints.push(`0,${startMinY}`);
@@ -630,6 +670,52 @@ class ControlClient {
     const x = (t - 0.5) * k;
     
     return 1 / (1 + Math.exp(-x));
+  }
+
+  calculateParTypeEnvelope(phase, intensity, startValue, endValue, paramName) {
+    const t = Math.max(0, Math.min(1, phase));
+    const p = Math.max(0, Math.min(1, intensity));
+    
+    // Calculate peak value based on parameter type and intensity
+    let peakValue;
+    
+    // Check if this is a frequency parameter by name
+    if (paramName === 'frequency') {
+      // Frequency parameter: intensity controls how far the peak deviates from the midpoint
+      // First, calculate the geometric mean (midpoint in log space) between start and end
+      const logStart = Math.log2(Math.max(1, startValue));
+      const logEnd = Math.log2(Math.max(1, endValue));
+      const logMidpoint = (logStart + logEnd) / 2;
+      const midpointFreq = Math.pow(2, logMidpoint);
+      
+      // intensity controls octave offset from this midpoint
+      // intensity=0 -> -1 octave from midpoint, intensity=0.5 -> midpoint, intensity=1 -> +1 octave from midpoint
+      const octaveOffset = (p - 0.5) * 2.0; // -1 to +1 octave range
+      peakValue = midpointFreq * Math.pow(2, octaveOffset);
+      
+      // Ensure peak stays within reasonable bounds
+      const minFreq = Math.min(startValue, endValue) * 0.5;
+      const maxFreq = Math.max(startValue, endValue) * 2.0;
+      peakValue = Math.max(minFreq, Math.min(maxFreq, peakValue));
+      
+    } else {
+      // Normalized parameter (0-1): intensity controls how far peak deviates from midpoint
+      const midpoint = (startValue + endValue) / 2;
+      const maxRange = Math.min(0.5, Math.abs(endValue - startValue) + 0.2); // Dynamic range based on start/end difference
+      const offset = (p - 0.5) * 2.0 * maxRange; // Scale to ±maxRange
+      peakValue = Math.max(0, Math.min(1, midpoint + offset));
+    }
+    
+    // Create parabola passing through three points:
+    // (0, startValue), (0.5, peakValue), (1, endValue)
+    
+    // Solve for quadratic coefficients: y = at² + bt + c
+    const c = startValue;
+    const a = 2 * (startValue + endValue - 2 * peakValue);
+    const b = 4 * peakValue - endValue - 3 * startValue;
+    
+    // Evaluate parabola at phase t
+    return a * t * t + b * t + c;
   }
 
   markPendingChanges() {

@@ -694,20 +694,35 @@
                         static
                     </label>
                 </div>
-                <div class="param-main">
-                    <div class="param-value" id="frequency-value">220</div>
-                    <input type="range" class="slider" id="frequency-slider" 
-                           min="80" max="800" value="220" step="1">
-                    <span class="param-suffix" id="frequency-suffix"> Hz</span>
+                <div class="param-row">
+                    <div class="param-label">start:</div>
+                    <div class="dual-range-slider" data-mode="static" data-param="frequency" data-type="start">
+                        <input type="range" class="range-min" id="frequency-start-min" 
+                               min="80" max="800" step="1" value="220">
+                        <input type="range" class="range-max" id="frequency-start-max" 
+                               min="80" max="800" step="1" value="220">
+                        <div class="slider-track"></div>
+                        <div class="slider-range"></div>
+                    </div>
+                    <span class="value-display" id="frequency-start-display">220</span>
+                    <div class="param-value" id="frequency-value" style="display: none;">220</div>
+                    <div class="param-suffix" id="frequency-suffix" style="display: none;"> Hz</div>
                 </div>
                 
                 <!-- Envelope Controls (hidden when static) -->
                 <div class="envelope-section" id="frequency-envelope">
                     <div class="param-row">
-                        <div class="param-label">end value</div>
-                        <div class="param-value" id="frequency-end-value">220</div>
-                        <input type="range" class="slider" id="frequency-end-slider" 
-                               min="80" max="800" step="1" value="220">
+                        <div class="param-label">end:</div>
+                        <div class="dual-range-slider" data-mode="static" data-param="frequency" data-type="end">
+                            <input type="range" class="range-min" id="frequency-end-min" 
+                                   min="80" max="800" step="1" value="220">
+                            <input type="range" class="range-max" id="frequency-end-max" 
+                                   min="80" max="800" step="1" value="220">
+                            <div class="slider-track"></div>
+                            <div class="slider-range"></div>
+                        </div>
+                        <span class="value-display" id="frequency-end-display">220</span>
+                        <div class="param-value" id="frequency-end-value" style="display: none;">220</div>
                     </div>
                     
                     <div class="envelope-controls">
@@ -715,6 +730,7 @@
                             <label>type:</label>
                             <label><input type="radio" name="frequency-env-type" value="lin" checked> lin</label>
                             <label><input type="radio" name="frequency-env-type" value="cos"> cos</label>
+                            <label><input type="radio" name="frequency-env-type" value="par"> par</label>
                         </div>
                         
                         <div class="envelope-intensity">
@@ -785,6 +801,7 @@
                             <label>type:</label>
                             <label><input type="radio" name="vowelX-env-type" value="lin" checked> lin</label>
                             <label><input type="radio" name="vowelX-env-type" value="cos"> cos</label>
+                            <label><input type="radio" name="vowelX-env-type" value="par"> par</label>
                         </div>
                         
                         <div class="envelope-intensity">
@@ -857,6 +874,7 @@
                             <label>type:</label>
                             <label><input type="radio" name="vowelY-env-type" value="lin" checked> lin</label>
                             <label><input type="radio" name="vowelY-env-type" value="cos"> cos</label>
+                            <label><input type="radio" name="vowelY-env-type" value="par"> par</label>
                         </div>
                         
                         <div class="envelope-intensity">
@@ -928,6 +946,7 @@
                             <label>type:</label>
                             <label><input type="radio" name="zingAmount-env-type" value="lin" checked> lin</label>
                             <label><input type="radio" name="zingAmount-env-type" value="cos"> cos</label>
+                            <label><input type="radio" name="zingAmount-env-type" value="par"> par</label>
                         </div>
                         
                         <div class="envelope-intensity">
@@ -999,6 +1018,7 @@
                             <label>type:</label>
                             <label><input type="radio" name="zingMorph-env-type" value="lin" checked> lin</label>
                             <label><input type="radio" name="zingMorph-env-type" value="cos"> cos</label>
+                            <label><input type="radio" name="zingMorph-env-type" value="par"> par</label>
                         </div>
                         
                         <div class="envelope-intensity">
@@ -1070,6 +1090,7 @@
                             <label>type:</label>
                             <label><input type="radio" name="symmetry-env-type" value="lin" checked> lin</label>
                             <label><input type="radio" name="symmetry-env-type" value="cos"> cos</label>
+                            <label><input type="radio" name="symmetry-env-type" value="par"> par</label>
                         </div>
                         
                         <div class="envelope-intensity">
@@ -1141,6 +1162,7 @@
                             <label>type:</label>
                             <label><input type="radio" name="amplitude-env-type" value="lin" checked> lin</label>
                             <label><input type="radio" name="amplitude-env-type" value="cos"> cos</label>
+                            <label><input type="radio" name="amplitude-env-type" value="par"> par</label>
                         </div>
                         
                         <div class="envelope-intensity">

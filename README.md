@@ -16,6 +16,7 @@ This initial phase implements the core WebRTC star networking and phasor-based t
 - ✅ **Ctrl Client**: Network management, timing control, calibration interface, and musical control
 - ✅ **Synth Client**: Join UI with XY oscilloscope, white noise calibration, and zing synthesis
 - ✅ **Musical Control**: Real-time parameter control (frequency, morph, vowel position, harmonic ratio)
+- ✅ **Envelope System**: Phasor-driven parameter modulation with multiple envelope types and randomization
 
 ### Quick Start
 
@@ -87,9 +88,9 @@ deno task launch
 
 - ✅ ~~**Test synthesis only**: Simple sine wave oscillator, not voice synthesis~~ → **COMPLETED**: Morphing zing synthesis with formant control
 - ✅ ~~**No musical control**: No pitch, rhythm, or parameter control from ctrl client~~ → **COMPLETED**: Musical control interface with real-time parameter broadcast
+- ✅ ~~**No envelope system**: No parameter modulation over phasor cycles~~ → **COMPLETED**: Full envelope system with linear, cosine, and parabolic envelope types
 - **No ES-8 integration**: Timing is software-only
 - **No HRG system**: No harmonic ratio generation yet
-- **No envelope system**: No parameter modulation over phasor cycles
 
 ### Next Phase
 
@@ -114,6 +115,41 @@ Phase 2 will implement the audio synthesis engine, replacing the test oscillator
 - **Bilinear interpolation**: Vowel corners (u, ɔ, i, æ) interpolated based on X/Y position
 
 The `harmonicRatio` AudioParam exists in the worklet for internal DSP calculations, but should never be exposed as a direct user control. User controls vowel position; harmonic relationships emerge naturally.
+
+### Envelope System
+
+**Overview**: The envelope system provides phasor-driven parameter modulation over each timing cycle, allowing for dynamic control of all synthesis parameters.
+
+**Supported Parameters**: All synthesis parameters support envelope control:
+- `frequency` (80-800 Hz range)
+- `vowelX`, `vowelY` (0-1 normalized)
+- `zingAmount`, `zingMorph`, `symmetry` (0-1 normalized)
+- `amplitude` (0-1 normalized)
+
+**Envelope Types**:
+1. **Linear (lin)**: Exponential curves controlled by intensity parameter
+   - `intensity=0`: Ease-in (slow start, fast end)
+   - `intensity=0.5`: Perfect linear interpolation
+   - `intensity=1`: Ease-out (fast start, slow end)
+
+2. **Cosine (cos)**: Sigmoid-to-square wave morphing
+   - `intensity=0`: Gentle sigmoid curve
+   - `intensity=0.5`: Moderate S-curve
+   - `intensity=1`: Nearly square wave transition
+
+3. **Parabolic (par)**: Parabolic curves that peak at 50% phase
+   - For `frequency`: Peak calculated as geometric mean of start/end, with octave offset controlled by intensity
+   - For normalized params: Peak calculated as arithmetic mean with linear offset controlled by intensity
+   - `intensity=0`: Peak below midpoint
+   - `intensity=0.5`: Peak at midpoint
+   - `intensity=1`: Peak above midpoint
+
+**Control Modes**:
+- **Static Mode**: Parameter uses a single fixed value throughout the cycle
+- **Envelope Mode**: Parameter modulates between start and end values using the selected envelope type
+- **Range Mode**: Start and/or end values can be randomized within specified ranges
+
+**Randomization**: Each synth can receive randomized start/end values at the beginning of each phasor cycle, enabling emergent ensemble behavior while maintaining synchronization.
 
 ### File Structure
 
