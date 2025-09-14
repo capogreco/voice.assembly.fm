@@ -31,7 +31,7 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
             
             // Synthesis blend and character
             { name: 'zingAmount', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'a-rate' }, // 0=pure PM formant, 1=max zing augmentation
-            { name: 'zingMorph', defaultValue: 0, minValue: -1, maxValue: 1, automationRate: 'a-rate' }, // Zing character morph parameter
+            { name: 'zingMorph', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'a-rate' }, // Zing character morph parameter
             { name: 'symmetry', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'a-rate' },
             
             // Amplitude control
@@ -69,8 +69,8 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
             { name: 'zingMorph_static', defaultValue: 1, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
             { name: 'zingMorph_envType', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
             { name: 'zingMorph_envIntensity', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
-            { name: 'zingMorph_startValue', defaultValue: 0, minValue: -1, maxValue: 1, automationRate: 'k-rate' },
-            { name: 'zingMorph_endValue', defaultValue: 0, minValue: -1, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'zingMorph_startValue', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+            { name: 'zingMorph_endValue', defaultValue: 0.5, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
             
             // Envelope control parameters for symmetry
             { name: 'symmetry_static', defaultValue: 1, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
@@ -142,7 +142,7 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
             vowelX: 0.5,
             vowelY: 0.5,
             zingAmount: 0.5,
-            zingMorph: 0.0,
+            zingMorph: 0.5,
             symmetry: 0.5,
             amplitude: 0.0
         };
@@ -918,9 +918,12 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
             
             // Generate both synthesis paths with individual formant tracking
             const { total: formantOutput, f1: formantF1, f2: formantF2, f3: formantF3 } = this.generateFormantSynthesis(this.masterPhase, modulator, symmetry[sample]);
+            // Convert normalized zingMorph (0-1) to bipolar (-1 to 1) for synthesis algorithm
+            const bipolarZingMorph = (zingMorph[sample] - 0.5) * 2.0;
+            
             const { total: zingOutput, f1: zingF1, f2: zingF2, f3: zingF3 } = this.generateZingSynthesis(
                 this.masterPhase, 
-                zingMorph[sample], 
+                bipolarZingMorph, 
                 modDepth, 
                 symmetry[sample]
             );

@@ -52,8 +52,8 @@ class ControlClient {
         end: { enabled: false, min: 0, max: 1 }
       },
       zingMorph: {
-        start: { enabled: false, min: -1, max: 1 },
-        end: { enabled: false, min: -1, max: 1 }
+        start: { enabled: false, min: 0, max: 1 },
+        end: { enabled: false, min: 0, max: 1 }
       },
       symmetry: {
         start: { enabled: false, min: 0, max: 1 },
@@ -359,7 +359,7 @@ class ControlClient {
         vowelX: this.getParameterValue('vowelX', 0.5),
         vowelY: this.getParameterValue('vowelY', 0.5),
         zingAmount: this.getParameterValue('zingAmount', 0.0),
-        zingMorph: this.getParameterValue('zingMorph', 0.0),
+        zingMorph: this.getParameterValue('zingMorph', 0.5),
         symmetry: this.getParameterValue('symmetry', 0.5),
         amplitude: this.getParameterValue('amplitude', 1.0),
         isManualMode: this.isManualMode,
