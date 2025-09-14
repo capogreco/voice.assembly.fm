@@ -372,14 +372,20 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
         const t = Math.max(0, Math.min(1, phase));
         const p = Math.max(0, Math.min(1, intensity));
         
-        let exponent;
-        const minExponent = 1 / 8;
-        const maxExponent = 8;
+        // More intuitive exponential mapping:
+        // p=0: strong ease-in (slow start, fast end)
+        // p=0.5: linear
+        // p=1: strong ease-out (fast start, slow end)
         
+        if (Math.abs(p - 0.5) < 0.001) return t; // Perfect linear at 0.5
+        
+        let exponent;
         if (p < 0.5) {
-            exponent = 1 + (p - 0.5) * 2 * (1 - minExponent);
+            // Ease-in: higher exponent makes slower start
+            exponent = 1 / (0.1 + p * 1.8); // Range: ~5.6 to 1
         } else {
-            exponent = 1 + (p - 0.5) * 2 * (maxExponent - 1);
+            // Ease-out: lower exponent makes faster start  
+            exponent = 0.1 + (p - 0.5) * 1.8; // Range: 0.1 to 1
         }
         
         if (t === 0) return 0;
@@ -396,17 +402,16 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
         const t = Math.max(0, Math.min(1, phase));
         const p = Math.max(0, Math.min(1, intensity));
         
-        const f_square = t > 0 ? 1 : 0;
-        const f_cosine = 0.5 - Math.cos(t * Math.PI) * 0.5;
-        const f_median = t < 0.5 ? 0 : 1;
+        // Logistic function with variable growth rate for smooth sigmoid-to-square morph
+        // p=0: k=4 (gentle sigmoid)
+        // p=0.5: k=10 (moderate)  
+        // p=1: k=100 (nearly square)
+        const k = 4 + p * p * 96;
         
-        if (p < 0.5) {
-            const mix = p * 2;
-            return this.lerp(f_square, f_cosine, mix);
-        } else {
-            const mix = (p - 0.5) * 2;
-            return this.lerp(f_cosine, f_median, mix);
-        }
+        // Center around 0.5 and apply logistic function
+        const x = (t - 0.5) * k;
+        
+        return 1 / (1 + Math.exp(-x));
     }
 
     /**

@@ -262,18 +262,27 @@
 
         .param-control .param-main {
             display: grid;
-            grid-template-columns: auto 1fr auto;
+            grid-template-columns: 40px 1fr 80px;
             align-items: center;
-            gap: 10px;
+            gap: 8px;
+        }
+        
+        .param-row {
+            display: grid;
+            grid-template-columns: 40px 1fr 80px;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
         }
 
         .param-label {
             font-size: 10px;
             color: #888;
             margin-bottom: 4px;
-            text-align: center;
+            text-align: right;
             text-transform: lowercase;
             font-weight: normal;
+            min-width: 40px;
         }
 
         .param-value {
@@ -381,15 +390,29 @@
 
         .envelope-controls {
             display: flex;
-            gap: 16px;
-            margin-bottom: 8px;
+            gap: 20px;
+            margin: 6px 0;
             font-size: 10px;
+            align-items: center;
+            justify-content: center;
         }
 
+        .envelope-type {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
         .envelope-type label {
             color: #888;
             cursor: pointer;
             margin-right: 8px;
+        }
+        
+        .envelope-intensity {
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
 
         .envelope-type input[type="radio"] {
@@ -415,90 +438,158 @@
         .envelope-preview {
             display: flex;
             justify-content: center;
-            margin-top: 4px;
+            margin: 4px 0;
         }
 
         .envelope-preview svg {
             background: #1a1a1a;
-            border-radius: 2px;
+            border-radius: 3px;
+            border: 1px solid #333;
         }
 
         /* Randomizer Styles */
-        .randomizer-btn {
-            background: transparent;
-            border: 1px solid #666;
-            color: #888;
-            padding: 2px 6px;
+        .randomizer-toggle {
+            font-size: 14px;
             cursor: pointer;
-            font-size: 9px;
-            font-family: inherit;
-            margin-left: 4px;
+            padding: 2px 4px;
+            margin-left: 6px;
+            color: #666;
+            user-select: none;
+            transition: color 0.2s;
         }
-
-        .randomizer-btn:hover {
-            background: #3a3a3a;
-            color: #e0e0e0;
+        
+        .randomizer-toggle:hover {
+            color: #4a7c8a;
         }
-
-        .randomizer-btn.active {
-            background: #4a7c8a;
-            border-color: #4a7c8a;
-            color: #e0e0e0;
+        
+        .randomizer-toggle.active {
+            color: #4a7c8a;
         }
-
-        .randomizer-modal {
+        
+        .randomizer-inline-range {
             display: none;
-            position: absolute;
-            background: #2a2a2a;
-            border: 1px solid #444;
-            padding: 8px;
-            z-index: 1000;
-            font-size: 10px;
-            min-width: 120px;
-        }
-
-        .randomizer-modal.show {
-            display: block;
-        }
-
-        .randomizer-range {
-            margin-bottom: 6px;
-        }
-
-        .randomizer-range label {
-            display: block;
-            margin-bottom: 2px;
+            font-size: 9px;
+            margin-left: 4px;
             color: #888;
         }
+        
+        .randomizer-inline-range.show {
+            display: inline;
+        }
+        
+        .randomizer-inline-range input {
+            width: 30px;
+            font-size: 8px;
+            background: #2a2a2a;
+            border: 1px solid #555;
+            color: #ccc;
+            padding: 1px 2px;
+            margin: 0 1px;
+        }
 
-        .randomizer-range input {
+        /* Dual-Handle Range Slider */
+        .dual-range-slider {
+            position: relative;
             width: 100%;
+            height: 20px;
+            margin: 0;
         }
-
-        .randomizer-buttons {
-            display: flex;
-            gap: 4px;
-            margin-top: 6px;
+        
+        .dual-range-slider .range-min,
+        .dual-range-slider .range-max {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 20px;
+            -webkit-appearance: none;
+            background: transparent;
+            outline: none;
+            pointer-events: none;
+            z-index: 2;
         }
-
-        .randomizer-buttons button {
-            flex: 1;
-            padding: 2px 4px;
-            font-size: 9px;
+        
+        .dual-range-slider .range-min::-webkit-slider-thumb,
+        .dual-range-slider .range-max::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            background: #4a7c8a;
+            border-radius: 50%;
+            cursor: pointer;
+            pointer-events: all;
+            z-index: 3;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
         }
-
-        .randomizer-enable {
-            margin-bottom: 6px;
-            padding-bottom: 6px;
-            border-bottom: 1px solid #444;
+        
+        .dual-range-slider .range-min::-moz-range-thumb,
+        .dual-range-slider .range-max::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            background: #4a7c8a;
+            border-radius: 50%;
+            cursor: pointer;
+            pointer-events: all;
+            border: none;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
         }
-
-        .randomizer-enable label {
-            display: flex;
-            align-items: center;
-            gap: 4px;
+        
+        .slider-track {
+            position: absolute;
+            top: 50%;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: #333;
+            border-radius: 2px;
+            transform: translateY(-50%);
+            z-index: 1;
+        }
+        
+        .slider-range {
+            position: absolute;
+            top: 50%;
+            height: 4px;
+            background: #4a7c8a;
+            border-radius: 2px;
+            transform: translateY(-50%);
+            z-index: 1;
+            transition: all 0.1s ease;
+        }
+        
+        /* Static mode: single handle appearance */
+        .dual-range-slider[data-mode="static"] .slider-range {
+            background: transparent;
+        }
+        
+        .dual-range-slider[data-mode="static"] .range-max::-webkit-slider-thumb {
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        .dual-range-slider[data-mode="static"] .range-max::-moz-range-thumb {
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        /* Range mode: dual handle appearance */
+        .dual-range-slider[data-mode="range"] .range-max::-webkit-slider-thumb {
+            opacity: 1;
+            pointer-events: all;
+        }
+        
+        .dual-range-slider[data-mode="range"] .range-max::-moz-range-thumb {
+            opacity: 1;
+            pointer-events: all;
+        }
+        
+        /* Value display */
+        .value-display {
+            font-size: 12px;
             color: #e0e0e0;
-            font-size: 10px;
+            font-family: Monaco, monospace;
+            min-width: 80px;
+            text-align: center;
         }
 
         .randomizer-target {
@@ -611,7 +702,7 @@
                 </div>
                 
                 <!-- Envelope Controls (hidden when static) -->
-                <div class="envelope-section" id="frequency-envelope" style="display: none;">
+                <div class="envelope-section" id="frequency-envelope">
                     <div class="param-row">
                         <div class="param-label">end value</div>
                         <div class="param-value" id="frequency-end-value">220</div>
@@ -636,9 +727,18 @@
                     
                     <!-- SVG Envelope Preview -->
                     <div class="envelope-preview">
-                        <svg id="frequency-envelope-svg" width="60" height="30" viewBox="0 0 60 30">
+                        <svg id="frequency-envelope-svg" width="300" height="80" viewBox="0 0 300 80">
+                            <defs>
+                                <linearGradient id="frequency-range-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                                    <stop offset="0%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
+                                    <stop offset="100%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
+                                </linearGradient>
+                            </defs>
+                            <polygon id="frequency-range-area" fill="url(#frequency-range-gradient)" style="display:none"/>
+                            <path id="frequency-min-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
+                            <path id="frequency-max-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
                             <path id="frequency-envelope-path" stroke="#4a7c8a" stroke-width="1" fill="none"/>
-                            <rect width="60" height="30" fill="none" stroke="#333" stroke-width="1"/>
+                            <rect width="300" height="80" fill="none" stroke="#333" stroke-width="1"/>
                         </svg>
                     </div>
                 </div>
@@ -651,23 +751,33 @@
                         <input type="checkbox" id="vowelX-static" checked>
                         static
                     </label>
-                    <button class="randomizer-btn" id="vowelX-start-randomizer-btn">rand S</button>
-                    <button class="randomizer-btn" id="vowelX-end-randomizer-btn">rand E</button>
                 </div>
-                <div class="param-main">
-                    <div class="param-value" id="vowelX-value">0.50</div>
-                    <input type="range" class="slider" id="vowelX-slider" 
-                           min="0" max="1" step="0.01" value="0.5">
-                    <span class="param-suffix" id="vowelX-suffix"></span>
+                <div class="param-row">
+                    <div class="param-label">start:</div>
+                    <div class="dual-range-slider" data-mode="static" data-param="vowelX" data-type="start">
+                        <input type="range" class="range-min" id="vowelX-start-min" 
+                               min="0" max="1" step="0.01" value="0.5">
+                        <input type="range" class="range-max" id="vowelX-start-max" 
+                               min="0" max="1" step="0.01" value="0.5">
+                        <div class="slider-track"></div>
+                        <div class="slider-range"></div>
+                    </div>
+                    <span class="value-display" id="vowelX-start-display">0.50</span>
                 </div>
                 
                 <!-- Envelope Controls (hidden when static) -->
-                <div class="envelope-section" id="vowelX-envelope" style="display: none;">
+                <div class="envelope-section" id="vowelX-envelope">
                     <div class="param-row">
-                        <div class="param-label">end value</div>
-                        <div class="param-value" id="vowelX-end-value">0.50</div>
-                        <input type="range" class="slider" id="vowelX-end-slider" 
-                               min="0" max="1" step="0.01" value="0.5">
+                        <div class="param-label">end:</div>
+                        <div class="dual-range-slider" data-mode="static" data-param="vowelX" data-type="end">
+                            <input type="range" class="range-min" id="vowelX-end-min" 
+                                   min="0" max="1" step="0.01" value="0.5">
+                            <input type="range" class="range-max" id="vowelX-end-max" 
+                                   min="0" max="1" step="0.01" value="0.5">
+                            <div class="slider-track"></div>
+                            <div class="slider-range"></div>
+                        </div>
+                        <span class="value-display" id="vowelX-end-display">0.50</span>
                     </div>
                     
                     <div class="envelope-controls">
@@ -683,13 +793,23 @@
                                    min="0" max="1" step="0.01" value="0.5">
                             <span class="param-value small" id="vowelX-intensity-value">0.50</span>
                         </div>
+                        
                     </div>
                     
                     <!-- SVG Envelope Preview -->
                     <div class="envelope-preview">
-                        <svg id="vowelX-envelope-svg" width="60" height="30" viewBox="0 0 60 30">
+                        <svg id="vowelX-envelope-svg" width="300" height="80" viewBox="0 0 300 80">
+                            <defs>
+                                <linearGradient id="vowelX-range-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                                    <stop offset="0%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
+                                    <stop offset="100%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
+                                </linearGradient>
+                            </defs>
+                            <polygon id="vowelX-range-area" fill="url(#vowelX-range-gradient)" style="display:none"/>
+                            <path id="vowelX-min-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
+                            <path id="vowelX-max-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
                             <path id="vowelX-envelope-path" stroke="#4a7c8a" stroke-width="1" fill="none"/>
-                            <rect width="60" height="30" fill="none" stroke="#333" stroke-width="1"/>
+                            <rect width="300" height="80" fill="none" stroke="#333" stroke-width="1"/>
                         </svg>
                     </div>
                 </div>
@@ -703,23 +823,33 @@
                         <input type="checkbox" id="vowelY-static" checked>
                         static
                     </label>
-                    <button class="randomizer-btn" id="vowelY-start-randomizer-btn">rand S</button>
-                    <button class="randomizer-btn" id="vowelY-end-randomizer-btn">rand E</button>
                 </div>
-                <div class="param-main">
-                    <div class="param-value" id="vowelY-value">0.50</div>
-                    <input type="range" class="slider" id="vowelY-slider" 
-                           min="0" max="1" step="0.01" value="0.5">
-                    <span class="param-suffix" id="vowelY-suffix"></span>
+                <div class="param-row">
+                    <div class="param-label">start:</div>
+                    <div class="dual-range-slider" data-mode="static" data-param="vowelY" data-type="start">
+                        <input type="range" class="range-min" id="vowelY-start-min" 
+                               min="0" max="1" step="0.01" value="0.5">
+                        <input type="range" class="range-max" id="vowelY-start-max" 
+                               min="0" max="1" step="0.01" value="0.5">
+                        <div class="slider-track"></div>
+                        <div class="slider-range"></div>
+                    </div>
+                    <span class="value-display" id="vowelY-start-display">0.50</span>
                 </div>
                 
                 <!-- Envelope Controls (hidden when static) -->
-                <div class="envelope-section" id="vowelY-envelope" style="display: none;">
+                <div class="envelope-section" id="vowelY-envelope">
                     <div class="param-row">
-                        <div class="param-label">end value</div>
-                        <div class="param-value" id="vowelY-end-value">0.50</div>
-                        <input type="range" class="slider" id="vowelY-end-slider" 
-                               min="0" max="1" step="0.01" value="0.5">
+                        <div class="param-label">end:</div>
+                        <div class="dual-range-slider" data-mode="static" data-param="vowelY" data-type="end">
+                            <input type="range" class="range-min" id="vowelY-end-min" 
+                                   min="0" max="1" step="0.01" value="0.5">
+                            <input type="range" class="range-max" id="vowelY-end-max" 
+                                   min="0" max="1" step="0.01" value="0.5">
+                            <div class="slider-track"></div>
+                            <div class="slider-range"></div>
+                        </div>
+                        <span class="value-display" id="vowelY-end-display">0.50</span>
                     </div>
                     
                     <div class="envelope-controls">
@@ -735,13 +865,23 @@
                                    min="0" max="1" step="0.01" value="0.5">
                             <span class="param-value small" id="vowelY-intensity-value">0.50</span>
                         </div>
+                        
                     </div>
                     
                     <!-- SVG Envelope Preview -->
                     <div class="envelope-preview">
-                        <svg id="vowelY-envelope-svg" width="60" height="30" viewBox="0 0 60 30">
+                        <svg id="vowelY-envelope-svg" width="300" height="80" viewBox="0 0 300 80">
+                            <defs>
+                                <linearGradient id="vowelY-range-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                                    <stop offset="0%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
+                                    <stop offset="100%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
+                                </linearGradient>
+                            </defs>
+                            <polygon id="vowelY-range-area" fill="url(#vowelY-range-gradient)" style="display:none"/>
+                            <path id="vowelY-min-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
+                            <path id="vowelY-max-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
                             <path id="vowelY-envelope-path" stroke="#4a7c8a" stroke-width="1" fill="none"/>
-                            <rect width="60" height="30" fill="none" stroke="#333" stroke-width="1"/>
+                            <rect width="300" height="80" fill="none" stroke="#333" stroke-width="1"/>
                         </svg>
                     </div>
                 </div>
@@ -754,23 +894,33 @@
                         <input type="checkbox" id="zingAmount-static" checked>
                         static
                     </label>
-                    <button class="randomizer-btn" id="zingAmount-start-randomizer-btn">rand S</button>
-                    <button class="randomizer-btn" id="zingAmount-end-randomizer-btn">rand E</button>
                 </div>
-                <div class="param-main">
-                    <div class="param-value" id="zingAmount-value">0.00</div>
-                    <input type="range" class="slider" id="zingAmount-slider" 
-                           min="0" max="1" value="0" step="0.01">
-                    <span class="param-suffix" id="zingAmount-suffix"></span>
+                <div class="param-row">
+                    <div class="param-label">start:</div>
+                    <div class="dual-range-slider" data-mode="static" data-param="zingAmount" data-type="start">
+                        <input type="range" class="range-min" id="zingAmount-start-min" 
+                               min="0" max="1" step="0.01" value="0">
+                        <input type="range" class="range-max" id="zingAmount-start-max" 
+                               min="0" max="1" step="0.01" value="0">
+                        <div class="slider-track"></div>
+                        <div class="slider-range"></div>
+                    </div>
+                    <span class="value-display" id="zingAmount-start-display">0.00</span>
                 </div>
                 
                 <!-- Envelope Controls (hidden when static) -->
-                <div class="envelope-section" id="zingAmount-envelope" style="display: none;">
+                <div class="envelope-section" id="zingAmount-envelope">
                     <div class="param-row">
-                        <div class="param-label">end value</div>
-                        <div class="param-value" id="zingAmount-end-value">0.00</div>
-                        <input type="range" class="slider" id="zingAmount-end-slider" 
-                               min="0" max="1" step="0.01" value="0">
+                        <div class="param-label">end:</div>
+                        <div class="dual-range-slider" data-mode="static" data-param="zingAmount" data-type="end">
+                            <input type="range" class="range-min" id="zingAmount-end-min" 
+                                   min="0" max="1" step="0.01" value="0">
+                            <input type="range" class="range-max" id="zingAmount-end-max" 
+                                   min="0" max="1" step="0.01" value="0">
+                            <div class="slider-track"></div>
+                            <div class="slider-range"></div>
+                        </div>
+                        <span class="value-display" id="zingAmount-end-display">0.00</span>
                     </div>
                     
                     <div class="envelope-controls">
@@ -786,13 +936,23 @@
                                    min="0" max="1" step="0.01" value="0.5">
                             <span class="param-value small" id="zingAmount-intensity-value">0.50</span>
                         </div>
+                        
                     </div>
                     
                     <!-- SVG Envelope Preview -->
                     <div class="envelope-preview">
-                        <svg id="zingAmount-envelope-svg" width="60" height="30" viewBox="0 0 60 30">
+                        <svg id="zingAmount-envelope-svg" width="300" height="80" viewBox="0 0 300 80">
+                            <defs>
+                                <linearGradient id="zingAmount-range-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                                    <stop offset="0%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
+                                    <stop offset="100%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
+                                </linearGradient>
+                            </defs>
+                            <polygon id="zingAmount-range-area" fill="url(#zingAmount-range-gradient)" style="display:none"/>
+                            <path id="zingAmount-min-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
+                            <path id="zingAmount-max-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
                             <path id="zingAmount-envelope-path" stroke="#4a7c8a" stroke-width="1" fill="none"/>
-                            <rect width="60" height="30" fill="none" stroke="#333" stroke-width="1"/>
+                            <rect width="300" height="80" fill="none" stroke="#333" stroke-width="1"/>
                         </svg>
                     </div>
                 </div>
@@ -805,23 +965,33 @@
                         <input type="checkbox" id="zingMorph-static" checked>
                         static
                     </label>
-                    <button class="randomizer-btn" id="zingMorph-start-randomizer-btn">rand S</button>
-                    <button class="randomizer-btn" id="zingMorph-end-randomizer-btn">rand E</button>
                 </div>
-                <div class="param-main">
-                    <div class="param-value" id="zingMorph-value">0.50</div>
-                    <input type="range" class="slider" id="zingMorph-slider" 
-                           min="0" max="1" step="0.01" value="0.5">
-                    <span class="param-suffix" id="zingMorph-suffix"></span>
+                <div class="param-row">
+                    <div class="param-label">start:</div>
+                    <div class="dual-range-slider" data-mode="static" data-param="zingMorph" data-type="start">
+                        <input type="range" class="range-min" id="zingMorph-start-min" 
+                               min="0" max="1" step="0.01" value="0.5">
+                        <input type="range" class="range-max" id="zingMorph-start-max" 
+                               min="0" max="1" step="0.01" value="0.5">
+                        <div class="slider-track"></div>
+                        <div class="slider-range"></div>
+                    </div>
+                    <span class="value-display" id="zingMorph-start-display">0.50</span>
                 </div>
                 
                 <!-- Envelope Controls (hidden when static) -->
-                <div class="envelope-section" id="zingMorph-envelope" style="display: none;">
+                <div class="envelope-section" id="zingMorph-envelope">
                     <div class="param-row">
-                        <div class="param-label">end value</div>
-                        <div class="param-value" id="zingMorph-end-value">0.50</div>
-                        <input type="range" class="slider" id="zingMorph-end-slider" 
-                               min="0" max="1" step="0.01" value="0.5">
+                        <div class="param-label">end:</div>
+                        <div class="dual-range-slider" data-mode="static" data-param="zingMorph" data-type="end">
+                            <input type="range" class="range-min" id="zingMorph-end-min" 
+                                   min="0" max="1" step="0.01" value="0.5">
+                            <input type="range" class="range-max" id="zingMorph-end-max" 
+                                   min="0" max="1" step="0.01" value="0.5">
+                            <div class="slider-track"></div>
+                            <div class="slider-range"></div>
+                        </div>
+                        <span class="value-display" id="zingMorph-end-display">0.50</span>
                     </div>
                     
                     <div class="envelope-controls">
@@ -837,13 +1007,23 @@
                                    min="0" max="1" step="0.01" value="0.5">
                             <span class="param-value small" id="zingMorph-intensity-value">0.50</span>
                         </div>
+                        
                     </div>
                     
                     <!-- SVG Envelope Preview -->
                     <div class="envelope-preview">
-                        <svg id="zingMorph-envelope-svg" width="60" height="30" viewBox="0 0 60 30">
+                        <svg id="zingMorph-envelope-svg" width="300" height="80" viewBox="0 0 300 80">
+                            <defs>
+                                <linearGradient id="zingMorph-range-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                                    <stop offset="0%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
+                                    <stop offset="100%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
+                                </linearGradient>
+                            </defs>
+                            <polygon id="zingMorph-range-area" fill="url(#zingMorph-range-gradient)" style="display:none"/>
+                            <path id="zingMorph-min-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
+                            <path id="zingMorph-max-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
                             <path id="zingMorph-envelope-path" stroke="#4a7c8a" stroke-width="1" fill="none"/>
-                            <rect width="60" height="30" fill="none" stroke="#333" stroke-width="1"/>
+                            <rect width="300" height="80" fill="none" stroke="#333" stroke-width="1"/>
                         </svg>
                     </div>
                 </div>
@@ -856,23 +1036,33 @@
                         <input type="checkbox" id="symmetry-static" checked>
                         static
                     </label>
-                    <button class="randomizer-btn" id="symmetry-start-randomizer-btn">rand S</button>
-                    <button class="randomizer-btn" id="symmetry-end-randomizer-btn">rand E</button>
                 </div>
-                <div class="param-main">
-                    <div class="param-value" id="symmetry-value">0.50</div>
-                    <input type="range" class="slider" id="symmetry-slider" 
-                           min="0" max="1" step="0.01" value="0.5">
-                    <span class="param-suffix" id="symmetry-suffix"></span>
+                <div class="param-row">
+                    <div class="param-label">start:</div>
+                    <div class="dual-range-slider" data-mode="static" data-param="symmetry" data-type="start">
+                        <input type="range" class="range-min" id="symmetry-start-min" 
+                               min="0" max="1" step="0.01" value="0.5">
+                        <input type="range" class="range-max" id="symmetry-start-max" 
+                               min="0" max="1" step="0.01" value="0.5">
+                        <div class="slider-track"></div>
+                        <div class="slider-range"></div>
+                    </div>
+                    <span class="value-display" id="symmetry-start-display">0.50</span>
                 </div>
                 
                 <!-- Envelope Controls (hidden when static) -->
-                <div class="envelope-section" id="symmetry-envelope" style="display: none;">
+                <div class="envelope-section" id="symmetry-envelope">
                     <div class="param-row">
-                        <div class="param-label">end value</div>
-                        <div class="param-value" id="symmetry-end-value">0.50</div>
-                        <input type="range" class="slider" id="symmetry-end-slider" 
-                               min="0" max="1" step="0.01" value="0.5">
+                        <div class="param-label">end:</div>
+                        <div class="dual-range-slider" data-mode="static" data-param="symmetry" data-type="end">
+                            <input type="range" class="range-min" id="symmetry-end-min" 
+                                   min="0" max="1" step="0.01" value="0.5">
+                            <input type="range" class="range-max" id="symmetry-end-max" 
+                                   min="0" max="1" step="0.01" value="0.5">
+                            <div class="slider-track"></div>
+                            <div class="slider-range"></div>
+                        </div>
+                        <span class="value-display" id="symmetry-end-display">0.50</span>
                     </div>
                     
                     <div class="envelope-controls">
@@ -888,13 +1078,23 @@
                                    min="0" max="1" step="0.01" value="0.5">
                             <span class="param-value small" id="symmetry-intensity-value">0.50</span>
                         </div>
+                        
                     </div>
                     
                     <!-- SVG Envelope Preview -->
                     <div class="envelope-preview">
-                        <svg id="symmetry-envelope-svg" width="60" height="30" viewBox="0 0 60 30">
+                        <svg id="symmetry-envelope-svg" width="300" height="80" viewBox="0 0 300 80">
+                            <defs>
+                                <linearGradient id="symmetry-range-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                                    <stop offset="0%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
+                                    <stop offset="100%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
+                                </linearGradient>
+                            </defs>
+                            <polygon id="symmetry-range-area" fill="url(#symmetry-range-gradient)" style="display:none"/>
+                            <path id="symmetry-min-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
+                            <path id="symmetry-max-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
                             <path id="symmetry-envelope-path" stroke="#4a7c8a" stroke-width="1" fill="none"/>
-                            <rect width="60" height="30" fill="none" stroke="#333" stroke-width="1"/>
+                            <rect width="300" height="80" fill="none" stroke="#333" stroke-width="1"/>
                         </svg>
                     </div>
                 </div>
@@ -907,23 +1107,33 @@
                         <input type="checkbox" id="amplitude-static" checked>
                         static
                     </label>
-                    <button class="randomizer-btn" id="amplitude-start-randomizer-btn">rand S</button>
-                    <button class="randomizer-btn" id="amplitude-end-randomizer-btn">rand E</button>
                 </div>
-                <div class="param-main">
-                    <div class="param-value" id="amplitude-value">1.00</div>
-                    <input type="range" class="slider" id="amplitude-slider" 
-                           min="0" max="1" step="0.01" value="1.0">
-                    <span class="param-suffix" id="amplitude-suffix"></span>
+                <div class="param-row">
+                    <div class="param-label">start:</div>
+                    <div class="dual-range-slider" data-mode="static" data-param="amplitude" data-type="start">
+                        <input type="range" class="range-min" id="amplitude-start-min" 
+                               min="0" max="1" step="0.01" value="1.0">
+                        <input type="range" class="range-max" id="amplitude-start-max" 
+                               min="0" max="1" step="0.01" value="1.0">
+                        <div class="slider-track"></div>
+                        <div class="slider-range"></div>
+                    </div>
+                    <span class="value-display" id="amplitude-start-display">1.00</span>
                 </div>
                 
                 <!-- Envelope Controls (hidden when static) -->
-                <div class="envelope-section" id="amplitude-envelope" style="display: none;">
+                <div class="envelope-section" id="amplitude-envelope">
                     <div class="param-row">
-                        <div class="param-label">end value</div>
-                        <div class="param-value" id="amplitude-end-value">1.00</div>
-                        <input type="range" class="slider" id="amplitude-end-slider" 
-                               min="0" max="1" step="0.01" value="1.0">
+                        <div class="param-label">end:</div>
+                        <div class="dual-range-slider" data-mode="static" data-param="amplitude" data-type="end">
+                            <input type="range" class="range-min" id="amplitude-end-min" 
+                                   min="0" max="1" step="0.01" value="1.0">
+                            <input type="range" class="range-max" id="amplitude-end-max" 
+                                   min="0" max="1" step="0.01" value="1.0">
+                            <div class="slider-track"></div>
+                            <div class="slider-range"></div>
+                        </div>
+                        <span class="value-display" id="amplitude-end-display">1.00</span>
                     </div>
                     
                     <div class="envelope-controls">
@@ -939,13 +1149,23 @@
                                    min="0" max="1" step="0.01" value="0.5">
                             <span class="param-value small" id="amplitude-intensity-value">0.50</span>
                         </div>
+                        
                     </div>
                     
                     <!-- SVG Envelope Preview -->
                     <div class="envelope-preview">
-                        <svg id="amplitude-envelope-svg" width="60" height="30" viewBox="0 0 60 30">
+                        <svg id="amplitude-envelope-svg" width="300" height="80" viewBox="0 0 300 80">
+                            <defs>
+                                <linearGradient id="amplitude-range-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                                    <stop offset="0%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
+                                    <stop offset="100%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
+                                </linearGradient>
+                            </defs>
+                            <polygon id="amplitude-range-area" fill="url(#amplitude-range-gradient)" style="display:none"/>
+                            <path id="amplitude-min-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
+                            <path id="amplitude-max-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
                             <path id="amplitude-envelope-path" stroke="#4a7c8a" stroke-width="1" fill="none"/>
-                            <rect width="60" height="30" fill="none" stroke="#333" stroke-width="1"/>
+                            <rect width="300" height="80" fill="none" stroke="#333" stroke-width="1"/>
                         </svg>
                     </div>
                 </div>

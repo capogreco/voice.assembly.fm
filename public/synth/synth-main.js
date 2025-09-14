@@ -29,6 +29,7 @@ class SynthClient {
     
     // Randomization configuration
     this.randomizationConfig = null;
+    this.randomSeed = this.hashString(this.peerId); // Unique seed per synth
     
     // Phasor synchronization
     this.receivedPhasor = 0.0;
@@ -468,32 +469,74 @@ class SynthClient {
   applyParameterWithEnvelope(paramName, paramValue) {
     if (!this.formantNode) return;
     
+    // Declare variables at function scope to avoid reference errors
+    let startVal = 0;
+    let endVal = 0;
+    let backwardCompatValue = 0;
+    
     // Check if the parameter is a simple value or envelope object
     if (typeof paramValue === 'number') {
       // Legacy format: simple static value
       this.formantNode.parameters.get(`${paramName}_static`).value = 1; // Static mode
       this.formantNode.parameters.get(`${paramName}_startValue`).value = paramValue;
-      this.formantNode.parameters.get(paramName).value = paramValue; // For backward compatibility
+      backwardCompatValue = paramValue;
     } else if (paramValue && typeof paramValue === 'object') {
       // New format: envelope configuration object
       const isStatic = paramValue.static !== undefined ? paramValue.static : true;
       
       if (isStatic) {
-        // Static mode
+        // Static mode - extract single value from potentially complex startValue
+        if (paramValue.value !== undefined) {
+          startVal = paramValue.value;
+        } else if (typeof paramValue.startValue === 'object') {
+          // If startValue is a range object, take the min value for static mode
+          startVal = paramValue.startValue.min || 0;
+        } else {
+          startVal = paramValue.startValue || 0;
+        }
+        
         this.formantNode.parameters.get(`${paramName}_static`).value = 1;
-        this.formantNode.parameters.get(`${paramName}_startValue`).value = paramValue.value || paramValue.startValue || 0;
+        this.formantNode.parameters.get(`${paramName}_startValue`).value = startVal;
+        backwardCompatValue = startVal;
       } else {
         // Envelope mode
         this.formantNode.parameters.get(`${paramName}_static`).value = 0;
-        this.formantNode.parameters.get(`${paramName}_startValue`).value = paramValue.startValue || 0;
-        this.formantNode.parameters.get(`${paramName}_endValue`).value = paramValue.endValue || paramValue.startValue || 0;
+        
+        // Handle startValue (can be single value or range object)
+        if (paramValue.startValue && typeof paramValue.startValue === 'object') {
+          // Range mode: generate random value for this synth
+          startVal = this.generateRandomValueInRange(
+            paramValue.startValue.min, 
+            paramValue.startValue.max, 
+            `${paramName}_start`
+          );
+        } else {
+          startVal = paramValue.startValue || 0;
+        }
+        this.formantNode.parameters.get(`${paramName}_startValue`).value = startVal;
+        
+        // Handle endValue (can be single value or range object)
+        if (paramValue.endValue && typeof paramValue.endValue === 'object') {
+          // Range mode: generate random value for this synth
+          endVal = this.generateRandomValueInRange(
+            paramValue.endValue.min, 
+            paramValue.endValue.max, 
+            `${paramName}_end`
+          );
+        } else {
+          endVal = paramValue.endValue || paramValue.startValue || startVal;
+        }
+        this.formantNode.parameters.get(`${paramName}_endValue`).value = endVal;
+        
         this.formantNode.parameters.get(`${paramName}_envType`).value = paramValue.envType === 'cos' ? 1 : 0;
         this.formantNode.parameters.get(`${paramName}_envIntensity`).value = paramValue.intensity || 0.5;
+        
+        backwardCompatValue = startVal; // Use start value for backward compatibility
       }
-      
-      // Set the main parameter for backward compatibility
-      this.formantNode.parameters.get(paramName).value = paramValue.value || paramValue.startValue || 0;
     }
+    
+    // Set the main parameter for backward compatibility - always use a number
+    this.formantNode.parameters.get(paramName).value = backwardCompatValue;
   }
 
   handleScheduledParameterUpdate(message) {
@@ -1106,6 +1149,25 @@ class SynthClient {
     this.stopWhiteNoise();
     
     console.log('🧹 Synth client cleaned up');
+  }
+
+  // Randomization utility methods
+  hashString(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    return Math.abs(hash);
+  }
+
+  generateRandomValueInRange(min, max, key) {
+    // Generate a deterministic but unique random value for this synth and parameter
+    // Use a stable seed that doesn't change between parameter broadcasts
+    const seed = this.randomSeed ^ this.hashString(key);
+    const random = Math.abs(Math.sin(seed)) % 1;
+    return min + (max - min) * random;
   }
 
 }

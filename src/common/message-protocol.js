@@ -150,11 +150,29 @@ export function validateMessage(message) {
       
       // Validate envelope object structure if frequency is an object
       if (typeof message.frequency === 'object') {
-        if (typeof message.frequency.startValue !== 'number' ||
-            typeof message.frequency.endValue !== 'number' ||
-            typeof message.frequency.intensity !== 'number' ||
+        if (typeof message.frequency.intensity !== 'number' ||
             typeof message.frequency.envType !== 'string') {
           throw new Error('Musical parameters frequency envelope object missing required fields');
+        }
+        
+        // Validate startValue (can be number or range object)
+        if (typeof message.frequency.startValue === 'object') {
+          if (typeof message.frequency.startValue.min !== 'number' ||
+              typeof message.frequency.startValue.max !== 'number') {
+            throw new Error('Musical parameters frequency startValue range missing min/max');
+          }
+        } else if (typeof message.frequency.startValue !== 'number') {
+          throw new Error('Musical parameters frequency startValue must be number or range object');
+        }
+        
+        // Validate endValue (can be number or range object)
+        if (typeof message.frequency.endValue === 'object') {
+          if (typeof message.frequency.endValue.min !== 'number' ||
+              typeof message.frequency.endValue.max !== 'number') {
+            throw new Error('Musical parameters frequency endValue range missing min/max');
+          }
+        } else if (typeof message.frequency.endValue !== 'number') {
+          throw new Error('Musical parameters frequency endValue must be number or range object');
         }
       }
       break;

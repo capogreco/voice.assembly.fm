@@ -182,55 +182,57 @@ class ControlClient {
     // Get elements
     const staticCheckbox = document.getElementById(`${paramName}-static`);
     const envelopeSection = document.getElementById(`${paramName}-envelope`);
-    const paramSuffix = document.getElementById(`${paramName}-suffix`);
     const envelopeControl = staticCheckbox.closest('.envelope-control');
-    const startSlider = document.getElementById(`${paramName}-slider`);
-    const startValue = document.getElementById(`${paramName}-value`);
-    const endSlider = document.getElementById(`${paramName}-end-slider`);
-    const endValue = document.getElementById(`${paramName}-end-value`);
     const intensitySlider = document.getElementById(`${paramName}-intensity`);
     const intensityValue = document.getElementById(`${paramName}-intensity-value`);
     
-    // Static checkbox
+    // Setup dual-handle sliders for both start and end values
+    this.setupDualRangeSlider(paramName, 'start', precision);
+    this.setupDualRangeSlider(paramName, 'end', precision);
+    
+    // Static checkbox - controls mode of both sliders
     staticCheckbox.addEventListener('change', () => {
       const isStatic = staticCheckbox.checked;
       envelopeSection.style.display = isStatic ? 'none' : 'block';
-      paramSuffix.textContent = isStatic ? suffix : '(start)';
+      
+      // Toggle both sliders between static and range mode
+      const startSlider = document.querySelector(`[data-param="${paramName}"][data-type="start"]`);
+      const endSlider = document.querySelector(`[data-param="${paramName}"][data-type="end"]`);
       
       if (isStatic) {
+        startSlider.dataset.mode = 'static';
+        if (endSlider) endSlider.dataset.mode = 'static';
         envelopeControl.classList.remove('envelope-active');
       } else {
+        // Check randomization config to determine if range or static mode
+        const startEnabled = this.randomizationConfig[paramName]?.start?.enabled || false;
+        const endEnabled = this.randomizationConfig[paramName]?.end?.enabled || false;
+        
+        startSlider.dataset.mode = startEnabled ? 'range' : 'static';
+        if (endSlider) endSlider.dataset.mode = endEnabled ? 'range' : 'static';
         envelopeControl.classList.add('envelope-active');
       }
       
-      this.updateParameterEnvelopePreview(paramName);
-      this.markPendingChanges();
-    });
-    
-    // Start value slider
-    startSlider.addEventListener('input', (e) => {
-      const value = parseFloat(e.target.value);
-      startValue.textContent = precision === 0 ? value.toString() : value.toFixed(precision);
-      this.updateParameterEnvelopePreview(paramName);
+      // Update visual displays
+      this.updateDualSliderDisplay(paramName, 'start', precision);
+      this.updateDualSliderDisplay(paramName, 'end', precision);
       
-      if (staticCheckbox.checked) {
-        // Static mode: broadcast immediately
-        this.broadcastMusicalParameters();
-      } else {
-        // Envelope mode: mark as pending for Apply button
-        this.markPendingChanges();
-      }
-    });
-    
-    // End value slider
-    endSlider.addEventListener('input', (e) => {
-      const value = parseFloat(e.target.value);
-      endValue.textContent = precision === 0 ? value.toString() : value.toFixed(precision);
       this.updateParameterEnvelopePreview(paramName);
       this.markPendingChanges();
     });
     
-    // Intensity slider
+    // Initialize visibility based on current checkbox state
+    const isStatic = staticCheckbox.checked;
+    envelopeSection.style.display = isStatic ? 'none' : 'block';
+    if (!isStatic) {
+      envelopeControl.classList.add('envelope-active');
+    }
+    
+    // Initialize sliders
+    this.updateDualSliderDisplay(paramName, 'start', precision);
+    this.updateDualSliderDisplay(paramName, 'end', precision);
+    
+    // Intensity slider (unchanged)
     intensitySlider.addEventListener('input', (e) => {
       const value = parseFloat(e.target.value);
       intensityValue.textContent = value.toFixed(2);
@@ -250,24 +252,253 @@ class ControlClient {
     this.updateParameterEnvelopePreview(paramName);
   }
 
+  setupDualRangeSlider(paramName, valueType, precision) {
+    // valueType is either 'start' or 'end'
+    const container = document.querySelector(`[data-param="${paramName}"][data-type="${valueType}"]`);
+    if (!container) return;
+    
+    const minHandle = container.querySelector('.range-min');
+    const maxHandle = container.querySelector('.range-max');
+    const rangeBar = container.querySelector('.slider-range');
+    const display = document.getElementById(`${paramName}-${valueType}-display`);
+    
+    // Handle min value changes
+    minHandle.addEventListener('input', (e) => {
+      const isStatic = container.dataset.mode === 'static';
+      const minVal = parseFloat(e.target.value);
+      
+      if (isStatic) {
+        // In static mode, sync both handles to the same value
+        maxHandle.value = minVal;
+        this.updateSliderRange(container);
+        this.updateDualSliderDisplay(paramName, valueType, precision);
+        
+        // Only broadcast immediately if the parameter is in true static mode (static checkbox checked)
+        const staticCheckbox = document.getElementById(`${paramName}-static`);
+        if (staticCheckbox && staticCheckbox.checked) {
+          this.broadcastMusicalParameters();
+        }
+      } else {
+        // In range mode, ensure min <= max
+        const maxVal = parseFloat(maxHandle.value);
+        if (minVal > maxVal) {
+          maxHandle.value = minVal;
+        }
+        this.updateSliderRange(container);
+        this.updateDualSliderDisplay(paramName, valueType, precision);
+        
+        // Update randomization config and broadcast
+        this.randomizationConfig[paramName][valueType].min = minVal;
+        this.randomizationConfig[paramName][valueType].max = parseFloat(maxHandle.value);
+        this.broadcastRandomizationConfig();
+      }
+      
+      this.updateParameterEnvelopePreview(paramName);
+      this.markPendingChanges();
+    });
+    
+    // Handle max value changes
+    maxHandle.addEventListener('input', (e) => {
+      const isStatic = container.dataset.mode === 'static';
+      const maxVal = parseFloat(e.target.value);
+      
+      if (isStatic) {
+        // In static mode, sync both handles to the same value
+        minHandle.value = maxVal;
+        this.updateSliderRange(container);
+        this.updateDualSliderDisplay(paramName, valueType, precision);
+        
+        // Only broadcast immediately if the parameter is in true static mode (static checkbox checked)
+        const staticCheckbox = document.getElementById(`${paramName}-static`);
+        if (staticCheckbox && staticCheckbox.checked) {
+          this.broadcastMusicalParameters();
+        }
+      } else {
+        // In range mode, ensure min <= max
+        const minVal = parseFloat(minHandle.value);
+        if (maxVal < minVal) {
+          minHandle.value = maxVal;
+        }
+        this.updateSliderRange(container);
+        this.updateDualSliderDisplay(paramName, valueType, precision);
+        
+        // Update randomization config and broadcast
+        this.randomizationConfig[paramName][valueType].min = parseFloat(minHandle.value);
+        this.randomizationConfig[paramName][valueType].max = maxVal;
+        this.broadcastRandomizationConfig();
+      }
+      
+      this.updateParameterEnvelopePreview(paramName);
+      this.markPendingChanges();
+    });
+    
+    // Double-click to toggle between static and range mode
+    container.addEventListener('dblclick', () => {
+      const staticCheckbox = document.getElementById(`${paramName}-static`);
+      if (!staticCheckbox.checked) { // Only allow toggle in envelope mode
+        this.toggleSliderMode(paramName, valueType, precision);
+      }
+    });
+    
+    // Initialize the slider
+    this.updateSliderRange(container);
+    this.updateDualSliderDisplay(paramName, valueType, precision);
+  }
+
+  updateSliderRange(container) {
+    const minHandle = container.querySelector('.range-min');
+    const maxHandle = container.querySelector('.range-max');
+    const rangeBar = container.querySelector('.slider-range');
+    
+    const min = parseFloat(minHandle.min);
+    const max = parseFloat(minHandle.max);
+    const minVal = parseFloat(minHandle.value);
+    const maxVal = parseFloat(maxHandle.value);
+    
+    // Calculate percentage positions
+    const minPercent = ((minVal - min) / (max - min)) * 100;
+    const maxPercent = ((maxVal - min) / (max - min)) * 100;
+    
+    // Update visual range bar
+    rangeBar.style.left = `${minPercent}%`;
+    rangeBar.style.width = `${maxPercent - minPercent}%`;
+  }
+
+  updateDualSliderDisplay(paramName, valueType, precision) {
+    const container = document.querySelector(`[data-param="${paramName}"][data-type="${valueType}"]`);
+    const display = document.getElementById(`${paramName}-${valueType}-display`);
+    if (!container || !display) return;
+    
+    const minHandle = container.querySelector('.range-min');
+    const maxHandle = container.querySelector('.range-max');
+    const isStatic = container.dataset.mode === 'static';
+    
+    const minVal = parseFloat(minHandle.value);
+    const maxVal = parseFloat(maxHandle.value);
+    
+    if (isStatic || minVal === maxVal) {
+      // Show single value
+      display.textContent = precision === 0 ? minVal.toString() : minVal.toFixed(precision);
+    } else {
+      // Show range
+      const minText = precision === 0 ? minVal.toString() : minVal.toFixed(precision);
+      const maxText = precision === 0 ? maxVal.toString() : maxVal.toFixed(precision);
+      display.textContent = `[${minText}-${maxText}]`;
+    }
+    
+    this.updateSliderRange(container);
+  }
+
+  toggleSliderMode(paramName, valueType, precision) {
+    const container = document.querySelector(`[data-param="${paramName}"][data-type="${valueType}"]`);
+    const currentMode = container.dataset.mode;
+    const newMode = currentMode === 'static' ? 'range' : 'static';
+    
+    container.dataset.mode = newMode;
+    
+    if (newMode === 'static') {
+      // Switch to static: sync handles and disable randomization
+      const minHandle = container.querySelector('.range-min');
+      const maxHandle = container.querySelector('.range-max');
+      const avgValue = (parseFloat(minHandle.value) + parseFloat(maxHandle.value)) / 2;
+      
+      minHandle.value = avgValue;
+      maxHandle.value = avgValue;
+      
+      // Disable randomization
+      this.randomizationConfig[paramName][valueType].enabled = false;
+    } else {
+      // Switch to range: enable randomization with small default range
+      const minHandle = container.querySelector('.range-min');
+      const maxHandle = container.querySelector('.range-max');
+      const currentVal = parseFloat(minHandle.value);
+      const range = 0.1; // Default range width
+      
+      minHandle.value = Math.max(parseFloat(minHandle.min), currentVal - range/2);
+      maxHandle.value = Math.min(parseFloat(minHandle.max), currentVal + range/2);
+      
+      // Enable randomization
+      this.randomizationConfig[paramName][valueType].enabled = true;
+      this.randomizationConfig[paramName][valueType].min = parseFloat(minHandle.value);
+      this.randomizationConfig[paramName][valueType].max = parseFloat(maxHandle.value);
+      this.broadcastRandomizationConfig();
+      
+      // Update range indicator immediately
+      this.updateSliderRange(container);
+    }
+    
+    this.updateDualSliderDisplay(paramName, valueType, precision);
+    this.updateParameterEnvelopePreview(paramName); // Update visualizer for both modes
+    this.log(`${paramName} ${valueType} switched to ${newMode} mode`, 'info');
+  }
+
   updateParameterEnvelopePreview(paramName) {
     const staticCheckbox = document.getElementById(`${paramName}-static`);
     if (staticCheckbox.checked) return; // No preview needed for static mode
     
-    const startValue = parseFloat(document.getElementById(`${paramName}-slider`).value);
-    const endValue = parseFloat(document.getElementById(`${paramName}-end-slider`).value);
+    // Get values from dual-handle sliders
+    const startContainer = document.querySelector(`[data-param="${paramName}"][data-type="start"]`);
+    const endContainer = document.querySelector(`[data-param="${paramName}"][data-type="end"]`);
+    
+    if (!startContainer || !endContainer) return;
+    
+    const startMinHandle = startContainer.querySelector('.range-min');
+    const startMaxHandle = startContainer.querySelector('.range-max');
+    const endMinHandle = endContainer.querySelector('.range-min');
+    const endMaxHandle = endContainer.querySelector('.range-max');
+    
+    const startMin = parseFloat(startMinHandle.value);
+    const startMax = parseFloat(startMaxHandle.value);
+    const endMin = parseFloat(endMinHandle.value);
+    const endMax = parseFloat(endMaxHandle.value);
+    
     const intensity = parseFloat(document.getElementById(`${paramName}-intensity`).value);
     const envType = document.querySelector(`input[name="${paramName}-env-type"]:checked`).value;
     
+    // Check if randomization is enabled (ranges have different min/max values)
+    const startHasRange = startContainer.dataset.mode === 'range';
+    const endHasRange = endContainer.dataset.mode === 'range';
+    const hasAnyRange = startHasRange || endHasRange;
+    
+    // Get SVG elements
     const pathElement = document.getElementById(`${paramName}-envelope-path`);
-    const path = this.generateEnvelopePath(startValue, endValue, intensity, envType);
-    pathElement.setAttribute('d', path);
+    const rangeArea = document.getElementById(`${paramName}-range-area`);
+    const minPath = document.getElementById(`${paramName}-min-path`);
+    const maxPath = document.getElementById(`${paramName}-max-path`);
+    
+    if (hasAnyRange) {
+      // Range visualization mode
+      const paths = this.generateRangeEnvelopePaths(startMin, startMax, endMin, endMax, intensity, envType);
+      
+      // Show range visualization elements
+      rangeArea.style.display = 'block';
+      minPath.style.display = 'block';
+      maxPath.style.display = 'block';
+      
+      // Hide main envelope path (no median line needed)
+      pathElement.style.display = 'none';
+      
+      // Update elements
+      rangeArea.setAttribute('points', paths.polygonPoints);
+      minPath.setAttribute('d', paths.minPath);
+      maxPath.setAttribute('d', paths.maxPath);
+    } else {
+      // Standard single envelope mode
+      const path = this.generateEnvelopePath(startMin, endMin, intensity, envType);
+      pathElement.setAttribute('d', path);
+      pathElement.style.display = 'block';
+      
+      // Hide range visualization elements
+      rangeArea.style.display = 'none';
+      minPath.style.display = 'none';
+      maxPath.style.display = 'none';
+    }
   }
 
   generateEnvelopePath(startValue, endValue, intensity, envType) {
-    const width = 60;
-    const height = 30;
-    const steps = 30; // Number of points along the curve
+    const width = 300;
+    const height = 80;
+    const steps = 150; // Number of points along the curve
     
     let pathData = `M 0,${height * (1 - startValue)}`;
     
@@ -291,19 +522,94 @@ class ControlClient {
     return pathData;
   }
 
+  generateRangeEnvelopePaths(startMin, startMax, endMin, endMax, intensity, envType) {
+    const width = 300;
+    const height = 80;
+    const steps = 150;
+    
+    // Generate min envelope path (startMin -> endMin)
+    let minPathData = `M 0,${height * (1 - startMin)}`;
+    
+    // Generate max envelope path (startMax -> endMax)
+    let maxPathData = `M 0,${height * (1 - startMax)}`;
+    
+    // Arrays to store polygon points for filled area
+    const topPoints = [];
+    const bottomPoints = [];
+    
+    // Calculate all envelope paths
+    for (let i = 1; i <= steps; i++) {
+      const phase = i / steps; // 0 to 1
+      let envelopeValue;
+      
+      if (envType === 'lin') {
+        envelopeValue = this.calculateLinTypeEnvelope(phase, intensity);
+      } else {
+        envelopeValue = this.calculateCosTypeEnvelope(phase, intensity);
+      }
+      
+      const x = (i / steps) * width;
+      
+      // Min envelope (startMin -> endMin)
+      const minInterpolated = startMin + (endMin - startMin) * envelopeValue;
+      const minY = height * (1 - minInterpolated);
+      minPathData += ` L ${x},${minY}`;
+      
+      // Max envelope (startMax -> endMax)
+      const maxInterpolated = startMax + (endMax - startMax) * envelopeValue;
+      const maxY = height * (1 - maxInterpolated);
+      maxPathData += ` L ${x},${maxY}`;
+      
+      // Determine top and bottom for polygon (max envelope could be above or below min)
+      if (maxY <= minY) {
+        topPoints.push(`${x},${maxY}`);
+        bottomPoints.unshift(`${x},${minY}`); // Reverse order for polygon
+      } else {
+        topPoints.push(`${x},${minY}`);
+        bottomPoints.unshift(`${x},${maxY}`); // Reverse order for polygon
+      }
+    }
+    
+    // Add starting points for polygon
+    const startMinY = height * (1 - startMin);
+    const startMaxY = height * (1 - startMax);
+    if (startMaxY <= startMinY) {
+      topPoints.unshift(`0,${startMaxY}`);
+      bottomPoints.push(`0,${startMinY}`);
+    } else {
+      topPoints.unshift(`0,${startMinY}`);
+      bottomPoints.push(`0,${startMaxY}`);
+    }
+    
+    // Create polygon path data for filled area
+    const polygonPoints = [...topPoints, ...bottomPoints].join(' ');
+    
+    return {
+      minPath: minPathData,
+      maxPath: maxPathData,
+      polygonPoints: polygonPoints
+    };
+  }
+
   // Envelope calculation methods (same as in worklet)
   calculateLinTypeEnvelope(phase, intensity) {
     const t = Math.max(0, Math.min(1, phase));
     const p = Math.max(0, Math.min(1, intensity));
     
-    let exponent;
-    const minExponent = 1 / 8;
-    const maxExponent = 8;
+    // More intuitive exponential mapping:
+    // p=0: strong ease-in (slow start, fast end)
+    // p=0.5: linear
+    // p=1: strong ease-out (fast start, slow end)
     
+    if (Math.abs(p - 0.5) < 0.001) return t; // Perfect linear at 0.5
+    
+    let exponent;
     if (p < 0.5) {
-      exponent = 1 + (p - 0.5) * 2 * (1 - minExponent);
+      // Ease-in: higher exponent makes slower start
+      exponent = 1 / (0.1 + p * 1.8); // Range: ~5.6 to 1
     } else {
-      exponent = 1 + (p - 0.5) * 2 * (maxExponent - 1);
+      // Ease-out: lower exponent makes faster start  
+      exponent = 0.1 + (p - 0.5) * 1.8; // Range: 0.1 to 1
     }
     
     if (t === 0) return 0;
@@ -314,17 +620,16 @@ class ControlClient {
     const t = Math.max(0, Math.min(1, phase));
     const p = Math.max(0, Math.min(1, intensity));
     
-    const f_square = t > 0 ? 1 : 0;
-    const f_cosine = 0.5 - Math.cos(t * Math.PI) * 0.5;
-    const f_median = t < 0.5 ? 0 : 1;
+    // Logistic function with variable growth rate for smooth sigmoid-to-square morph
+    // p=0: k=4 (gentle sigmoid)
+    // p=0.5: k=10 (moderate)  
+    // p=1: k=100 (nearly square)
+    const k = 4 + p * p * 96;
     
-    if (p < 0.5) {
-      const mix = p * 2;
-      return f_square * (1 - mix) + f_cosine * mix;
-    } else {
-      const mix = (p - 0.5) * 2;
-      return f_cosine * (1 - mix) + f_median * mix;
-    }
+    // Center around 0.5 and apply logistic function
+    const x = (t - 0.5) * k;
+    
+    return 1 / (1 + Math.exp(-x));
   }
 
   markPendingChanges() {
@@ -368,21 +673,50 @@ class ControlClient {
 
   getParameterValue(paramName, defaultValue) {
     const staticCheckbox = document.getElementById(`${paramName}-static`);
-    const startValue = parseFloat(document.getElementById(`${paramName}-slider`).value);
+    
+    // Get containers for start and end sliders
+    const startContainer = document.querySelector(`[data-param="${paramName}"][data-type="start"]`);
+    if (!startContainer) return defaultValue;
     
     if (staticCheckbox.checked) {
-      // Static mode: return simple number
+      // Static mode: return simple number from start slider
+      const startMinHandle = startContainer.querySelector('.range-min');
+      const startValue = parseFloat(startMinHandle.value);
       return isNaN(startValue) ? defaultValue : startValue;
     } else {
-      // Envelope mode: return envelope object
-      const endValue = parseFloat(document.getElementById(`${paramName}-end-slider`).value);
+      // Envelope mode: return envelope object with proper range handling
+      const endContainer = document.querySelector(`[data-param="${paramName}"][data-type="end"]`);
+      if (!endContainer) return defaultValue;
+      
       const intensity = parseFloat(document.getElementById(`${paramName}-intensity`).value);
       const envType = document.querySelector(`input[name="${paramName}-env-type"]:checked`).value;
       
+      // Check if start slider is in range mode
+      const startIsRange = startContainer.dataset.mode === 'range';
+      let startValue;
+      if (startIsRange) {
+        const startMin = parseFloat(startContainer.querySelector('.range-min').value);
+        const startMax = parseFloat(startContainer.querySelector('.range-max').value);
+        startValue = { min: startMin, max: startMax };
+      } else {
+        startValue = parseFloat(startContainer.querySelector('.range-min').value);
+      }
+      
+      // Check if end slider is in range mode  
+      const endIsRange = endContainer.dataset.mode === 'range';
+      let endValue;
+      if (endIsRange) {
+        const endMin = parseFloat(endContainer.querySelector('.range-min').value);
+        const endMax = parseFloat(endContainer.querySelector('.range-max').value);
+        endValue = { min: endMin, max: endMax };
+      } else {
+        endValue = parseFloat(endContainer.querySelector('.range-min').value);
+      }
+      
       return {
         static: false,
-        startValue: isNaN(startValue) ? defaultValue : startValue,
-        endValue: isNaN(endValue) ? defaultValue : endValue,
+        startValue: startValue,
+        endValue: endValue,
         intensity: isNaN(intensity) ? 0.5 : intensity,
         envType: envType || 'lin'
       };
@@ -401,6 +735,7 @@ class ControlClient {
     // Also send to ES-8 if enabled
     this.sendMusicalParametersToES8();
   }
+
 
   // Phasor Management Methods
   calculateCycleLength() {
@@ -891,152 +1226,75 @@ class ControlClient {
       this.setupParameterRandomizer(paramName, 'end');
     });
     
-    // Set up global click handler to close modals
-    this.setupGlobalClickHandler();
   }
 
   setupParameterRandomizer(paramName, valueType) {
     // valueType is either 'start' or 'end'
-    const randBtn = document.getElementById(`${paramName}-${valueType}-randomizer-btn`);
-    let modal = document.getElementById(`${paramName}-${valueType}-randomizer-modal`);
-    
-    // If modal doesn't exist, create it
-    if (!modal) {
-      this.createRandomizerModal(paramName, valueType);
-      modal = document.getElementById(`${paramName}-${valueType}-randomizer-modal`);
-    }
-    
     const enableCheckbox = document.getElementById(`${paramName}-${valueType}-rand-enable`);
     const minSlider = document.getElementById(`${paramName}-${valueType}-rand-min`);
     const maxSlider = document.getElementById(`${paramName}-${valueType}-rand-max`);
-    const minValue = document.getElementById(`${paramName}-${valueType}-rand-min-value`);
-    const maxValue = document.getElementById(`${paramName}-${valueType}-rand-max-value`);
-    const applyBtn = document.getElementById(`${paramName}-${valueType}-apply-random`);
-    const closeBtn = document.getElementById(`${paramName}-${valueType}-close-random`);
+    
+    if (!enableCheckbox || !minSlider || !maxSlider) {
+      console.warn(`Randomizer controls not found for ${paramName}-${valueType}`);
+      return;
+    }
 
     // Load existing configuration
     const config = this.randomizationConfig[paramName][valueType];
     enableCheckbox.checked = config.enabled;
     minSlider.value = config.min;
     maxSlider.value = config.max;
-    minValue.textContent = config.min.toFixed(2);
-    maxValue.textContent = config.max.toFixed(2);
-
-    // Update button state
-    this.updateRandomizerButtonState(paramName, valueType, config.enabled);
-
-    // Show/hide modal
-    randBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      // Hide all other modals first
-      document.querySelectorAll('.randomizer-modal').forEach(m => m.classList.remove('show'));
-      modal.classList.toggle('show');
-      
-      // Position modal near the button
-      const rect = randBtn.getBoundingClientRect();
-      modal.style.left = `${rect.left}px`;
-      modal.style.top = `${rect.bottom + 4}px`;
-    });
 
     // Enable/disable continuous randomization
     enableCheckbox.addEventListener('change', (e) => {
       const enabled = e.target.checked;
       this.randomizationConfig[paramName][valueType].enabled = enabled;
-      this.updateRandomizerButtonState(paramName, valueType, enabled);
       
-      // Update apply button text
-      applyBtn.textContent = enabled ? 'enable' : 'apply';
+      if (enabled) {
+        this.log(`Enabled continuous randomization for ${paramName} ${valueType} (range: ${minSlider.value}-${maxSlider.value})`, 'info');
+      } else {
+        this.log(`Disabled continuous randomization for ${paramName} ${valueType}`, 'info');
+      }
       
       // Send updated config to synths
       this.broadcastRandomizationConfig();
     });
 
-    // Update value displays and config
+    // Update min value and config
     minSlider.addEventListener('input', (e) => {
       const value = parseFloat(e.target.value);
-      minValue.textContent = value.toFixed(2);
       this.randomizationConfig[paramName][valueType].min = value;
       
-      // Send updated config to synths
-      this.broadcastRandomizationConfig();
+      // Ensure min doesn't exceed max
+      if (value >= parseFloat(maxSlider.value)) {
+        maxSlider.value = (value + 0.01).toFixed(2);
+        this.randomizationConfig[paramName][valueType].max = parseFloat(maxSlider.value);
+      }
+      
+      // Send updated config to synths if enabled
+      if (enableCheckbox.checked) {
+        this.broadcastRandomizationConfig();
+      }
     });
     
+    // Update max value and config
     maxSlider.addEventListener('input', (e) => {
       const value = parseFloat(e.target.value);
-      maxValue.textContent = value.toFixed(2);
       this.randomizationConfig[paramName][valueType].max = value;
       
-      // Send updated config to synths
-      this.broadcastRandomizationConfig();
-    });
-
-    // Apply random values or save configuration
-    applyBtn.addEventListener('click', () => {
-      const min = parseFloat(minSlider.value);
-      const max = parseFloat(maxSlider.value);
-      
-      if (min >= max) {
-        alert('Min value must be less than max value');
-        return;
+      // Ensure max doesn't go below min
+      if (value <= parseFloat(minSlider.value)) {
+        minSlider.value = (value - 0.01).toFixed(2);
+        this.randomizationConfig[paramName][valueType].min = parseFloat(minSlider.value);
       }
       
+      // Send updated config to synths if enabled
       if (enableCheckbox.checked) {
-        // Save configuration and enable continuous randomization
-        this.log(`Enabled continuous randomization for ${paramName} ${valueType} (range: ${min.toFixed(2)}-${max.toFixed(2)})`, 'info');
-      } else {
-        // One-time random application
-        this.applyRandomValueSeparate(paramName, valueType, min, max);
+        this.broadcastRandomizationConfig();
       }
-      
-      modal.classList.remove('show');
-    });
-
-    // Close modal
-    closeBtn.addEventListener('click', () => {
-      modal.classList.remove('show');
     });
   }
 
-  createRandomizerModal(paramName, valueType) {
-    // Create modal dynamically for parameters that don't have one in HTML
-    const paramControl = document.getElementById(`${paramName}-static`).closest('.param-control');
-    const modal = document.createElement('div');
-    modal.className = 'randomizer-modal';
-    modal.id = `${paramName}-${valueType}-randomizer-modal`;
-    
-    // Get parameter range for this specific parameter
-    const slider = document.getElementById(`${paramName}-slider`);
-    const min = slider.min;
-    const max = slider.max;
-    const step = slider.step;
-    
-    const valueTypeDisplay = valueType === 'start' ? 'Start Value' : 'End Value';
-    
-    modal.innerHTML = `
-      <div class="randomizer-enable">
-        <label>
-          <input type="checkbox" id="${paramName}-${valueType}-rand-enable">
-          continuous randomization (${valueTypeDisplay.toLowerCase()})
-        </label>
-      </div>
-      <div class="randomizer-range">
-        <label>min value</label>
-        <input type="range" id="${paramName}-${valueType}-rand-min" min="${min}" max="${max}" step="${step}" value="${min}">
-        <span id="${paramName}-${valueType}-rand-min-value">${parseFloat(min).toFixed(2)}</span>
-      </div>
-      <div class="randomizer-range">
-        <label>max value</label>
-        <input type="range" id="${paramName}-${valueType}-rand-max" min="${min}" max="${max}" step="${step}" value="${max}">
-        <span id="${paramName}-${valueType}-rand-max-value">${parseFloat(max).toFixed(2)}</span>
-      </div>
-      <div class="randomizer-buttons">
-        <button class="button" id="${paramName}-${valueType}-apply-random">apply</button>
-        <button class="button" id="${paramName}-${valueType}-close-random">close</button>
-      </div>
-    `;
-    
-    paramControl.appendChild(modal);
-  }
 
   applyRandomValue(paramName, min, max) {
     const randomValue = min + Math.random() * (max - min);
@@ -1078,15 +1336,6 @@ class ControlClient {
   }
 
   // Close all randomizer modals when clicking outside
-  setupGlobalClickHandler() {
-    document.addEventListener('click', (e) => {
-      if (!e.target.closest('.randomizer-modal') && !e.target.closest('.randomizer-btn')) {
-        document.querySelectorAll('.randomizer-modal').forEach(modal => {
-          modal.classList.remove('show');
-        });
-      }
-    });
-  }
 
   // SIN (Stochastic Integer Notation) Parser
   // Parses notation like "1-3, 5, 7-9" into [1, 2, 3, 5, 7, 8, 9]
@@ -1254,18 +1503,6 @@ class ControlClient {
   }
 
   // Update the visual state of randomizer buttons
-  updateRandomizerButtonState(paramName, valueType, enabled) {
-    const button = document.getElementById(`${paramName}-${valueType}-randomizer-btn`);
-    if (button) {
-      if (enabled) {
-        button.classList.add('active');
-        button.textContent = `rand ${valueType.charAt(0).toUpperCase()}*`;
-      } else {
-        button.classList.remove('active');
-        button.textContent = `rand ${valueType.charAt(0).toUpperCase()}`;
-      }
-    }
-  }
 
   // Send randomization configuration to synths
   broadcastRandomizationConfig() {
