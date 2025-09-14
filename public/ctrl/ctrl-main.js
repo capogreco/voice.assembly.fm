@@ -39,6 +39,22 @@ class ControlClient {
     
     // Randomization configuration - separate start and end for each parameter
     this.randomizationConfig = {
+      frequency: {
+        start: { 
+          enabled: false, 
+          numerators: '1,2,3',
+          numeratorsBehavior: 'static',
+          denominators: '1,2',
+          denominatorsBehavior: 'static'
+        },
+        end: { 
+          enabled: false, 
+          numerators: '1,2,3',
+          numeratorsBehavior: 'static',
+          denominators: '1,2',
+          denominatorsBehavior: 'static'
+        }
+      },
       vowelX: {
         start: { enabled: false, min: 0, max: 1 },
         end: { enabled: false, min: 0, max: 1 }
@@ -107,6 +123,22 @@ class ControlClient {
     
     // Auto-connect on page load
     this.connectToNetwork();
+  }
+
+  // Helper method to check if HRG is enabled for a parameter
+  isHRGEnabled(paramName) {
+    const config = this.randomizationConfig[paramName];
+    if (!config) return false;
+    
+    // Check if either start or end has HRG enabled (frequency only)
+    if (paramName === 'frequency') {
+      return (config.start && config.start.enabled) || 
+             (config.end && config.end.enabled);
+    }
+    
+    // For other parameters, check if they have range mode enabled
+    return (config.start && config.start.mode === 'hrg') || 
+           (config.end && config.end.mode === 'hrg');
   }
 
   setupEventHandlers() {
@@ -274,8 +306,9 @@ class ControlClient {
         this.updateDualSliderDisplay(paramName, valueType, precision);
         
         // Only broadcast immediately if the parameter is in true static mode (static checkbox checked)
+        // and HRG is not enabled for this parameter
         const staticCheckbox = document.getElementById(`${paramName}-static`);
-        if (staticCheckbox && staticCheckbox.checked) {
+        if (staticCheckbox && staticCheckbox.checked && !this.isHRGEnabled(paramName)) {
           this.broadcastMusicalParameters();
         }
       } else {
@@ -309,8 +342,9 @@ class ControlClient {
         this.updateDualSliderDisplay(paramName, valueType, precision);
         
         // Only broadcast immediately if the parameter is in true static mode (static checkbox checked)
+        // and HRG is not enabled for this parameter
         const staticCheckbox = document.getElementById(`${paramName}-static`);
-        if (staticCheckbox && staticCheckbox.checked) {
+        if (staticCheckbox && staticCheckbox.checked && !this.isHRGEnabled(paramName)) {
           this.broadcastMusicalParameters();
         }
       } else {
@@ -738,6 +772,11 @@ class ControlClient {
       const message = MessageBuilder.scheduleParameterUpdate(this.getMusicalParameters());
       const sent = this.star.broadcastToType('synth', message, 'control');
       this.log(`Scheduled parameter update for EOC to ${sent} synths`, 'info');
+      
+      // Also broadcast randomization config (HRG settings) immediately
+      const configMessage = MessageBuilder.randomizationConfig(this.randomizationConfig);
+      const configSent = this.star.broadcastToType('synth', configMessage, 'control');
+      this.log(`Sent randomization config to ${configSent} synths`, 'info');
     }
     
     this.clearPendingChanges();
@@ -1304,7 +1343,11 @@ class ControlClient {
   }
 
   setupRandomizerControls() {
-    // Only normalized parameters get randomizers (not frequency, which gets HRG)
+    // Setup HRG controls for frequency
+    this.setupFrequencyHRGControls('start');
+    this.setupFrequencyHRGControls('end');
+    
+    // Normalized parameters get simple randomizers
     const randomizerParams = ['vowelX', 'vowelY', 'zingAmount', 'zingMorph', 'symmetry', 'amplitude'];
     
     randomizerParams.forEach(paramName => {
@@ -1312,6 +1355,61 @@ class ControlClient {
       this.setupParameterRandomizer(paramName, 'end');
     });
     
+  }
+
+  setupFrequencyHRGControls(valueType) {
+    // valueType is either 'start' or 'end'
+    const paramName = 'frequency';
+    const randomizerBtn = document.getElementById(`${paramName}-${valueType}-randomizer`);
+    const hrgControls = document.getElementById(`${paramName}-${valueType}-hrg-controls`);
+    const numeratorsInput = document.getElementById(`${paramName}-${valueType}-numerators`);
+    const denominatorsInput = document.getElementById(`${paramName}-${valueType}-denominators`);
+    const numeratorsBehaviorSelect = document.getElementById(`${paramName}-${valueType}-numerators-behavior`);
+    const denominatorsBehaviorSelect = document.getElementById(`${paramName}-${valueType}-denominators-behavior`);
+    
+    if (!randomizerBtn) return;
+    
+    // Toggle HRG controls visibility
+    randomizerBtn.addEventListener('click', () => {
+      const isVisible = hrgControls.style.display !== 'none';
+      hrgControls.style.display = isVisible ? 'none' : 'block';
+      randomizerBtn.classList.toggle('active', !isVisible);
+      
+      // Enable/disable randomization
+      this.randomizationConfig[paramName][valueType].enabled = !isVisible;
+      this.markPendingChanges();
+    });
+    
+    
+    // HRG input handlers
+    if (numeratorsInput) {
+      numeratorsInput.addEventListener('input', () => {
+        this.randomizationConfig[paramName][valueType].numerators = numeratorsInput.value;
+        this.markPendingChanges();
+      });
+    }
+    
+    if (denominatorsInput) {
+      denominatorsInput.addEventListener('input', () => {
+        this.randomizationConfig[paramName][valueType].denominators = denominatorsInput.value;
+        this.markPendingChanges();
+      });
+    }
+    
+    // Separate behavior handlers for numerators and denominators
+    if (numeratorsBehaviorSelect) {
+      numeratorsBehaviorSelect.addEventListener('change', () => {
+        this.randomizationConfig[paramName][valueType].numeratorsBehavior = numeratorsBehaviorSelect.value;
+        this.markPendingChanges();
+      });
+    }
+    
+    if (denominatorsBehaviorSelect) {
+      denominatorsBehaviorSelect.addEventListener('change', () => {
+        this.randomizationConfig[paramName][valueType].denominatorsBehavior = denominatorsBehaviorSelect.value;
+        this.markPendingChanges();
+      });
+    }
   }
 
   setupParameterRandomizer(paramName, valueType) {

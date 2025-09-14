@@ -446,6 +446,90 @@
             border-radius: 3px;
             border: 1px solid #333;
         }
+        
+        /* HRG Controls Styling */
+        .hrg-controls {
+            margin: 8px 0;
+            padding: 8px;
+            background-color: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 4px;
+        }
+        
+        .hrg-row {
+            display: flex;
+            align-items: center;
+            margin: 4px 0;
+            gap: 8px;
+        }
+        
+        .hrg-row label {
+            width: 80px;
+            font-size: 12px;
+            color: #888;
+        }
+        
+        .hrg-row input[type="text"] {
+            flex: 1;
+            padding: 2px 4px;
+            background-color: #2a2a2a;
+            border: 1px solid #444;
+            color: #ccc;
+            font-size: 11px;
+            border-radius: 2px;
+        }
+        
+        .hrg-row select {
+            flex: 1;
+            padding: 2px 4px;
+            background-color: #2a2a2a;
+            border: 1px solid #444;
+            color: #ccc;
+            font-size: 11px;
+            border-radius: 2px;
+        }
+
+        /* Compact HRG Styles */
+        .hrg-compact .hrg-mode select {
+            font-size: 10px;
+            padding: 1px 2px;
+            margin-bottom: 2px;
+        }
+        
+        .hrg-compact-line {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 10px;
+            margin: 1px 0;
+        }
+        
+        .hrg-compact-line span {
+            color: #888;
+            font-size: 9px;
+            min-width: 12px;
+        }
+        
+        .hrg-compact-line input[type="text"] {
+            flex: 1;
+            padding: 1px 3px;
+            font-size: 9px;
+            background-color: #2a2a2a;
+            border: 1px solid #444;
+            color: #ccc;
+            border-radius: 2px;
+            min-width: 60px;
+        }
+        
+        .hrg-compact-line select {
+            padding: 1px 2px;
+            font-size: 8px;
+            background-color: #2a2a2a;
+            border: 1px solid #444;
+            color: #ccc;
+            border-radius: 2px;
+            min-width: 25px;
+        }
 
         /* Randomizer Styles */
         .randomizer-toggle {
@@ -705,8 +789,35 @@
                         <div class="slider-range"></div>
                     </div>
                     <span class="value-display" id="frequency-start-display">220</span>
+                    <button class="randomizer-btn" id="frequency-start-randomizer" title="Toggle HRG">[H]</button>
                     <div class="param-value" id="frequency-value" style="display: none;">220</div>
                     <div class="param-suffix" id="frequency-suffix" style="display: none;"> Hz</div>
+                </div>
+                
+                <!-- HRG Controls for frequency start (hidden by default) -->
+                <div class="hrg-controls hrg-compact" id="frequency-start-hrg-controls" style="display: none;">
+                    <div class="hrg-inputs hrg-compact-inputs">
+                        <div class="hrg-compact-line">
+                            <span>n:</span><input type="text" id="frequency-start-numerators" value="1,2,3">
+                            <select id="frequency-start-numerators-behavior">
+                                <option value="static">S</option>
+                                <option value="ascending">A</option>
+                                <option value="descending">D</option>
+                                <option value="shuffle">Sh</option>
+                                <option value="random">R</option>
+                            </select>
+                        </div>
+                        <div class="hrg-compact-line">
+                            <span>d:</span><input type="text" id="frequency-start-denominators" value="1,2">
+                            <select id="frequency-start-denominators-behavior">
+                                <option value="static">S</option>
+                                <option value="ascending">A</option>
+                                <option value="descending">D</option>
+                                <option value="shuffle">Sh</option>
+                                <option value="random">R</option>
+                            </select>
+                        </div>
+                    </div>
                 </div>
                 
                 <!-- Envelope Controls (hidden when static) -->
@@ -722,7 +833,34 @@
                             <div class="slider-range"></div>
                         </div>
                         <span class="value-display" id="frequency-end-display">220</span>
+                        <button class="randomizer-btn" id="frequency-end-randomizer" title="Toggle HRG">[H]</button>
                         <div class="param-value" id="frequency-end-value" style="display: none;">220</div>
+                    </div>
+                    
+                    <!-- HRG Controls for frequency end (hidden by default) -->
+                    <div class="hrg-controls hrg-compact" id="frequency-end-hrg-controls" style="display: none;">
+                        <div class="hrg-inputs hrg-compact-inputs">
+                            <div class="hrg-compact-line">
+                                <span>n:</span><input type="text" id="frequency-end-numerators" value="1,2,3">
+                                <select id="frequency-end-numerators-behavior">
+                                    <option value="static">S</option>
+                                    <option value="ascending">A</option>
+                                    <option value="descending">D</option>
+                                    <option value="shuffle">Sh</option>
+                                    <option value="random">R</option>
+                                </select>
+                            </div>
+                            <div class="hrg-compact-line">
+                                <span>d:</span><input type="text" id="frequency-end-denominators" value="1,2">
+                                <select id="frequency-end-denominators-behavior">
+                                    <option value="static">S</option>
+                                    <option value="ascending">A</option>
+                                    <option value="descending">D</option>
+                                    <option value="shuffle">Sh</option>
+                                    <option value="random">R</option>
+                                </select>
+                            </div>
+                        </div>
                     </div>
                     
                     <div class="envelope-controls">
@@ -1192,11 +1330,6 @@
                     </div>
                 </div>
             </div>
-            
-            <!-- Apply Button -->
-            <div class="control-section">
-                <button class="button" id="apply-params-btn" disabled>apply changes</button>
-            </div>
         </div>
 
         <!-- Row 1: Control Panel (narrow, right) -->
@@ -1205,6 +1338,10 @@
             <div class="control-section">
                 <h3>calibration</h3>
                 <button class="button" id="calibration-btn">enable calibration mode</button>
+            </div>
+            <div class="control-section">
+                <h3>parameters</h3>
+                <button class="button" id="apply-params-btn" disabled>apply changes</button>
             </div>
             <div class="control-section">
                 <h3>synthesis</h3>

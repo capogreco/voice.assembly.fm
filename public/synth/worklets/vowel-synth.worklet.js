@@ -135,6 +135,7 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
         this.synthId = null;
         this.lastRandomValues = {}; // Track previous values to avoid repetition
         this.randomSeed = 0; // Will be initialized from synthId
+        this.hrgState = {}; // Track state for each HRG behavior (index, shuffled arrays, last values)
         
         // Envelope values (calculated at k-rate)
         this.envelopeValues = {
@@ -281,36 +282,72 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
     }
 
     /**
-     * Apply HRG behavior to select value from integer set
+     * Apply HRG behavior to select value from integer set with proper temporal progression
      */
-    applyHRGBehavior(integerSet, behavior, synthIndex = 0) {
+    applyHRGBehavior(integerSet, behavior, stateKey) {
         if (!integerSet || integerSet.length === 0) return 1;
         
+        // Initialize state if needed
+        if (!this.hrgState[stateKey]) {
+            this.hrgState[stateKey] = { 
+                index: null, 
+                shuffled: null,
+                lastValue: null  // For random non-repeat
+            };
+        }
+        const state = this.hrgState[stateKey];
         const setSize = integerSet.length;
         
         switch (behavior) {
             case 'static':
-                // All synths get the same value (first in set)
-                return integerSet[0];
+                // Pick once, keep forever
+                if (state.index === null) {
+                    state.index = Math.floor(this.seededRandom() * setSize);
+                }
+                return integerSet[state.index];
                 
             case 'ascending':
-                // Distribute values in ascending order
-                return integerSet[synthIndex % setSize];
+                // Random start, then increment at each EOC
+                if (state.index === null) {
+                    state.index = Math.floor(this.seededRandom() * setSize);
+                } else {
+                    state.index = (state.index + 1) % setSize;
+                }
+                return integerSet[state.index];
                 
             case 'descending':
-                // Distribute values in descending order
-                const descending = [...integerSet].reverse();
-                return descending[synthIndex % setSize];
+                // Random start, then decrement at each EOC
+                if (state.index === null) {
+                    state.index = Math.floor(this.seededRandom() * setSize);
+                } else {
+                    state.index = (state.index - 1 + setSize) % setSize;
+                }
+                return integerSet[state.index];
                 
             case 'shuffle':
-                // Fixed shuffle based on synthIndex (deterministic)
-                const shuffled = this.deterministicShuffle([...integerSet], synthIndex);
-                return shuffled[synthIndex % setSize];
+                // Fixed shuffle, cycle through
+                if (state.shuffled === null) {
+                    state.shuffled = this.deterministicShuffle([...integerSet], this.randomSeed);
+                    state.index = 0;
+                } else {
+                    state.index = (state.index + 1) % state.shuffled.length;
+                }
+                return state.shuffled[state.index];
                 
             case 'random':
-                // Random selection using seeded random
-                const randomIndex = Math.floor(this.seededRandom() * setSize);
-                return integerSet[randomIndex];
+                // Random, but avoid consecutive repeats
+                if (setSize === 1) {
+                    return integerSet[0];
+                }
+                
+                let newValue;
+                do {
+                    const randomIndex = Math.floor(this.seededRandom() * setSize);
+                    newValue = integerSet[randomIndex];
+                } while (newValue === state.lastValue && setSize > 1);
+                
+                state.lastValue = newValue;
+                return newValue;
                 
             default:
                 return integerSet[0];
@@ -336,20 +373,24 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
     /**
      * Generate HRG frequency value from numerator and denominator sets
      */
-    generateHRGFrequency(frequencyConfig, baseFreq = 220) {
+    generateHRGFrequency(frequencyConfig, baseFreq = 220, paramName = 'frequency', valueType = 'start') {
         if (!frequencyConfig || !frequencyConfig.numerators || !frequencyConfig.denominators) {
             return baseFreq;
         }
         
         const numeratorSet = this.parseSIN(frequencyConfig.numerators);
         const denominatorSet = this.parseSIN(frequencyConfig.denominators);
-        const behavior = frequencyConfig.behavior || 'static';
         
-        // Use synthId hash as synth index for deterministic distribution
-        const synthIndex = this.randomSeed % 1000; // Use part of seed as index
+        // Use separate behaviors for numerators and denominators
+        const numeratorBehavior = frequencyConfig.numeratorsBehavior || 'static';
+        const denominatorBehavior = frequencyConfig.denominatorsBehavior || 'static';
         
-        const numerator = this.applyHRGBehavior(numeratorSet, behavior, synthIndex);
-        const denominator = this.applyHRGBehavior(denominatorSet, behavior, synthIndex);
+        // Create unique state keys for each SIN set
+        const numeratorKey = `${paramName}_${valueType}_numerators`;
+        const denominatorKey = `${paramName}_${valueType}_denominators`;
+        
+        const numerator = this.applyHRGBehavior(numeratorSet, numeratorBehavior, numeratorKey);
+        const denominator = this.applyHRGBehavior(denominatorSet, denominatorBehavior, denominatorKey);
         
         const ratio = numerator / denominator;
         return baseFreq * ratio;
@@ -554,7 +595,7 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
                 if (paramConfig.start && paramConfig.start.enabled) {
                     if (paramConfig.start.numerators && paramConfig.start.denominators) {
                         // HRG mode - generate harmonic ratio
-                        paramData.startValue = this.generateHRGFrequency(paramConfig.start, 220);
+                        paramData.startValue = this.generateHRGFrequency(paramConfig.start, 220, paramName, 'start');
                     } else {
                         // Range mode - generate within min/max
                         paramData.startValue = this.generateRandomValue(
@@ -569,7 +610,7 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
                 if (paramConfig.end && paramConfig.end.enabled) {
                     if (paramConfig.end.numerators && paramConfig.end.denominators) {
                         // HRG mode - generate harmonic ratio
-                        paramData.endValue = this.generateHRGFrequency(paramConfig.end, 220);
+                        paramData.endValue = this.generateHRGFrequency(paramConfig.end, 220, paramName, 'end');
                     } else {
                         // Range mode - generate within min/max
                         paramData.endValue = this.generateRandomValue(
