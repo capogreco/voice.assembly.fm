@@ -120,6 +120,22 @@ HRGs provide stochastic variation of frequency parameters across the distributed
 - Enables visualization and live reassignment
 - Lower bandwidth (specific values vs full HRG sets)
 
+### Implementation Status ✅ COMPLETED for Frequency
+**User Interface**:
+- **[H] Toggle Button**: Compact design replaces dice emoji
+- **Two-line Layout**: Numerators (n:) and denominators (d:) on separate lines
+- **Separate Behaviors**: Independent behavior selection for numerators and denominators
+- **Deferred Application**: Changes require "Apply Changes" button (no Range/HRG mode selector)
+
+**Temporal Behaviors**:
+- **Static (S)**: Random start, constant value
+- **Ascending (A)**: Random start, increments at EOC
+- **Descending (D)**: Random start, decrements at EOC  
+- **Shuffle (Sh)**: Fixed random sequence
+- **Random (R)**: Non-repeating selection
+
+**Integration**: HRG values applied at phasor cycle boundaries (EOC) with envelope system integration.
+
 ## Parameter Envelope System
 
 ### Per-Parameter Configuration
@@ -162,6 +178,7 @@ Each synthesis parameter gets:
 - **Parameter Sections**: Organized by synthesis function
 - **Real-time Feedback**: Connection count, network health
 - **Calibration Toggle**: Enable/disable calibration mode
+- **Apply Changes Button**: Located in control panel for deferred parameter application
 
 ### Monome Grid Integration
 - **Grid Layout** (8 rows available):
@@ -316,10 +333,11 @@ Each synthesis parameter gets:
 - Cycle timing synchronization
 - TR/CV output sequencing
 
-### Phase 4: HRG System
-- Monome Grid integration
-- SIN notation parsing
-- Stochastic parameter resolution
+### Phase 4: HRG System ✅ PARTIALLY COMPLETED
+- ✅ **SIN notation parsing**: Implemented for frequency parameters
+- ✅ **Stochastic parameter resolution**: Working with temporal behaviors
+- ✅ **Compact HRG UI**: [H] toggle with numerator/denominator controls
+- **Monome Grid integration**: Pending implementation
 
 ### Phase 5: Polish & Optimization
 - Performance tuning

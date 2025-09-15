@@ -17,6 +17,8 @@ This initial phase implements the core WebRTC star networking and phasor-based t
 - ✅ **Synth Client**: Join UI with XY oscilloscope, white noise calibration, and zing synthesis
 - ✅ **Musical Control**: Real-time parameter control (frequency, morph, vowel position, harmonic ratio)
 - ✅ **Envelope System**: Phasor-driven parameter modulation with multiple envelope types and randomization
+- ✅ **HRG System**: Harmonic Ratio Generation for frequency parameters with SIN notation and temporal behaviors
+- ✅ **Deferred Parameter Application**: Changes batched and applied via "Apply Changes" button in control panel
 
 ### Quick Start
 
@@ -45,7 +47,13 @@ deno task launch
 4. **Click "Tap to Join the Choir"** on each synth client
 5. **In ctrl client, click "Start Timing"** to begin phasor synchronization
 6. **Test calibration mode** - enables white noise XY oscilloscope on all synth clients
-7. **New synths automatically receive current state** - no need to retoggle modes
+7. **Test HRG system** (optional):
+   - Click [H] button next to frequency parameters to enable HRG
+   - Set numerators and denominators (e.g., "1,2,3" and "1,2")
+   - Choose behaviors from dropdown (S=Static, A=Ascending, D=Descending, Sh=Shuffle, R=Random)
+   - Click "Apply Changes" in control panel to send parameters to synths
+   - HRG values change at phasor cycle boundaries (EOC)
+8. **New synths automatically receive current state** - no need to retoggle modes
 
 ### Architecture Overview
 
@@ -89,8 +97,8 @@ deno task launch
 - ✅ ~~**Test synthesis only**: Simple sine wave oscillator, not voice synthesis~~ → **COMPLETED**: Morphing zing synthesis with formant control
 - ✅ ~~**No musical control**: No pitch, rhythm, or parameter control from ctrl client~~ → **COMPLETED**: Musical control interface with real-time parameter broadcast
 - ✅ ~~**No envelope system**: No parameter modulation over phasor cycles~~ → **COMPLETED**: Full envelope system with linear, cosine, and parabolic envelope types
+- ✅ ~~**No HRG system**: No harmonic ratio generation yet~~ → **COMPLETED**: HRG system for frequency parameters with SIN notation and temporal behaviors
 - **No ES-8 integration**: Timing is software-only
-- **No HRG system**: No harmonic ratio generation yet
 
 ### Next Phase
 
@@ -115,6 +123,30 @@ Phase 2 will implement the audio synthesis engine, replacing the test oscillator
 - **Bilinear interpolation**: Vowel corners (u, ɔ, i, æ) interpolated based on X/Y position
 
 The `harmonicRatio` AudioParam exists in the worklet for internal DSP calculations, but should never be exposed as a direct user control. User controls vowel position; harmonic relationships emerge naturally.
+
+### HRG (Harmonic Ratio Generator) System
+
+**Overview**: The HRG system provides stochastic variation of frequency parameters across the distributed choir using rational number ratios and temporal behaviors.
+
+**SIN (Stochastic Integer Notation)**:
+- **Format**: "1-3,5,7-9" expands to [1,2,3,5,7,8,9]
+- **Usage**: Defines sets of integers for numerators and denominators
+- **Ratios**: Each synth gets a randomly selected numerator/denominator pair
+
+**Behaviors (Temporal Progression)**:
+- **Static (S)**: Random start value, stays constant throughout performance
+- **Ascending (A)**: Random start, increments through set at each EOC (End of Cycle)
+- **Descending (D)**: Random start, decrements through set at each EOC
+- **Shuffle (Sh)**: Fixed random order, cycles through predefined sequence
+- **Random (R)**: Non-repeating random selection (avoids consecutive duplicates)
+
+**User Interface**:
+- **[H] Toggle**: Click to show/hide HRG controls for frequency parameters
+- **Compact Layout**: Two lines: numerators (n:) and denominators (d:)
+- **Separate Behaviors**: Independent behavior selection for numerators and denominators
+- **Deferred Application**: Changes require "Apply Changes" button in control panel
+
+**Musical Effect**: Each synth client receives unique but harmonically-related frequency values, creating rich ensemble textures while maintaining rhythmic synchronization.
 
 ### Envelope System
 
@@ -172,5 +204,6 @@ public/
     ├── index.html            # Minimal join/active UI
     ├── synth-main.js         # Synthesis and networking logic
     └── worklets/
-        └── white-noise-processor.js # AudioWorklet for calibration
+        ├── white-noise-processor.js # AudioWorklet for calibration
+        └── vowel-synth.worklet.js   # AudioWorklet for vocal synthesis with HRG
 ```

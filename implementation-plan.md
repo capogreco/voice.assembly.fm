@@ -157,36 +157,35 @@ Implement the sophisticated stochastic harmonic control system, providing the mu
 
 ### Deliverables
 
-#### 4.1 SIN Processing Engine
-- **Base**: Adapt from `string.assembly.fm/public/js/modules/ui/HarmonicRatioSelector.js`
-- **Parser**: "1-3, 4, 7-9" → [1, 2, 3, 4, 7, 8, 9] conversion
-- **Behaviors**: static, ascending, descending, shuffle, random iteration
-- **Ratio generation**: Integer pairs → harmonic frequency ratios
+#### 4.1 SIN Processing Engine ✅ COMPLETED
+- ✅ **Parser**: "1-3, 4, 7-9" → [1, 2, 3, 4, 7, 8, 9] conversion implemented
+- ✅ **Behaviors**: static, ascending, descending, shuffle, random iteration working
+- ✅ **Ratio generation**: Integer pairs → harmonic frequency ratios operational
+- ✅ **Temporal progression**: Values change at EOC boundaries as intended
 
-#### 4.2 Stochastic Parameter Resolution
-- **Ctrl-side processing**: HRG resolution happens on ctrl client
-- **Harmonic distribution**: Intelligent assignment of ratios to connected synths
-- **Musical spacing**: Avoid clustering, ensure good harmonic relationships
-- **Live reassignment**: Ability to redistribute harmonics during performance
+#### 4.2 Stochastic Parameter Resolution ✅ COMPLETED
+- ✅ **Ctrl-side processing**: HRG resolution implemented on ctrl client
+- ✅ **Harmonic distribution**: Working assignment of ratios to connected synths
+- ✅ **Real-time updates**: Live parameter changes working with deferred application
+- ✅ **Worklet integration**: AudioWorklet processes HRG-generated values correctly
 
-#### 4.3 Monome Grid Integration
-- **Base**: Reference monome integration patterns from `reference/arc_test`
-- **Grid mapping**: 4 rows for HRG control (frequency start/end numerator/denominator)
-- **SIN editing**: Visual interface for toggling integers, setting ranges
-- **Navigation system**: Page management for different parameter groups
-- **Visual feedback**: LED patterns showing active HRG states
+#### 4.3 Monome Grid Integration ⏳ PENDING
+- **Alternative UI**: Compact [H] toggle interface implemented instead
+- **Browser-based controls**: Two-line layout (numerators/denominators) working
+- **Deferred application**: "Apply Changes" button integration complete
+- **Future work**: Monome Grid integration still planned for tactile control
 
-#### 4.4 Enhanced Parameter System
-- **HRG application**: Frequency parameters get stochastic harmonic variation
-- **Per-synth variation**: Each connected synth gets unique parameter values
-- **Real-time updates**: HRG changes propagate immediately to network
-- **Visualization**: Display of harmonic distribution across synth clients
+#### 4.4 Enhanced Parameter System ✅ COMPLETED for Frequency
+- ✅ **HRG application**: Frequency parameters working with stochastic harmonic variation
+- ✅ **Per-synth variation**: Each connected synth gets unique parameter values
+- ✅ **Deferred updates**: HRG changes now require "Apply Changes" (improved workflow)
+- ⏳ **Visualization**: Display of harmonic distribution pending (future enhancement)
 
 ### Success Criteria
-- HRG system generates musically interesting harmonic relationships
-- Monome Grid provides intuitive, real-time control of SIN sets
-- Each synth client gets unique but harmonically-related parameters
-- System supports live editing of harmonic relationships during performance
+- ✅ **HRG system generates musically interesting harmonic relationships** - Working for frequency
+- ⏳ **Monome Grid provides intuitive, real-time control of SIN sets** - Pending (browser UI working)
+- ✅ **Each synth client gets unique but harmonically-related parameters** - Implemented
+- ✅ **System supports live editing of harmonic relationships during performance** - Working with deferred application
 
 ### Technical Focus
 - Stochastic algorithm implementation and optimization
