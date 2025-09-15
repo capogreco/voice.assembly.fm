@@ -435,17 +435,6 @@
             min-width: 25px;
         }
 
-        .envelope-preview {
-            display: flex;
-            justify-content: center;
-            margin: 4px 0;
-        }
-
-        .envelope-preview svg {
-            background: #1a1a1a;
-            border-radius: 3px;
-            border: 1px solid #333;
-        }
         
         /* HRG Controls Styling */
         .hrg-controls {
@@ -878,23 +867,6 @@
                             <span class="param-value small" id="frequency-intensity-value">0.50</span>
                         </div>
                     </div>
-                    
-                    <!-- SVG Envelope Preview -->
-                    <div class="envelope-preview">
-                        <svg id="frequency-envelope-svg" width="300" height="80" viewBox="0 0 300 80">
-                            <defs>
-                                <linearGradient id="frequency-range-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                                    <stop offset="0%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
-                                    <stop offset="100%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
-                                </linearGradient>
-                            </defs>
-                            <polygon id="frequency-range-area" fill="url(#frequency-range-gradient)" style="display:none"/>
-                            <path id="frequency-min-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
-                            <path id="frequency-max-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
-                            <path id="frequency-envelope-path" stroke="#4a7c8a" stroke-width="1" fill="none"/>
-                            <rect width="300" height="80" fill="none" stroke="#333" stroke-width="1"/>
-                        </svg>
-                    </div>
                 </div>
             </div>
 
@@ -949,23 +921,6 @@
                             <span class="param-value small" id="vowelX-intensity-value">0.50</span>
                         </div>
                         
-                    </div>
-                    
-                    <!-- SVG Envelope Preview -->
-                    <div class="envelope-preview">
-                        <svg id="vowelX-envelope-svg" width="300" height="80" viewBox="0 0 300 80">
-                            <defs>
-                                <linearGradient id="vowelX-range-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                                    <stop offset="0%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
-                                    <stop offset="100%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
-                                </linearGradient>
-                            </defs>
-                            <polygon id="vowelX-range-area" fill="url(#vowelX-range-gradient)" style="display:none"/>
-                            <path id="vowelX-min-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
-                            <path id="vowelX-max-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
-                            <path id="vowelX-envelope-path" stroke="#4a7c8a" stroke-width="1" fill="none"/>
-                            <rect width="300" height="80" fill="none" stroke="#333" stroke-width="1"/>
-                        </svg>
                     </div>
                 </div>
                 
@@ -1023,23 +978,6 @@
                         </div>
                         
                     </div>
-                    
-                    <!-- SVG Envelope Preview -->
-                    <div class="envelope-preview">
-                        <svg id="vowelY-envelope-svg" width="300" height="80" viewBox="0 0 300 80">
-                            <defs>
-                                <linearGradient id="vowelY-range-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                                    <stop offset="0%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
-                                    <stop offset="100%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
-                                </linearGradient>
-                            </defs>
-                            <polygon id="vowelY-range-area" fill="url(#vowelY-range-gradient)" style="display:none"/>
-                            <path id="vowelY-min-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
-                            <path id="vowelY-max-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
-                            <path id="vowelY-envelope-path" stroke="#4a7c8a" stroke-width="1" fill="none"/>
-                            <rect width="300" height="80" fill="none" stroke="#333" stroke-width="1"/>
-                        </svg>
-                    </div>
                 </div>
             </div>
 
@@ -1094,23 +1032,6 @@
                             <span class="param-value small" id="zingAmount-intensity-value">0.50</span>
                         </div>
                         
-                    </div>
-                    
-                    <!-- SVG Envelope Preview -->
-                    <div class="envelope-preview">
-                        <svg id="zingAmount-envelope-svg" width="300" height="80" viewBox="0 0 300 80">
-                            <defs>
-                                <linearGradient id="zingAmount-range-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                                    <stop offset="0%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
-                                    <stop offset="100%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
-                                </linearGradient>
-                            </defs>
-                            <polygon id="zingAmount-range-area" fill="url(#zingAmount-range-gradient)" style="display:none"/>
-                            <path id="zingAmount-min-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
-                            <path id="zingAmount-max-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
-                            <path id="zingAmount-envelope-path" stroke="#4a7c8a" stroke-width="1" fill="none"/>
-                            <rect width="300" height="80" fill="none" stroke="#333" stroke-width="1"/>
-                        </svg>
                     </div>
                 </div>
             </div>
@@ -1167,23 +1088,6 @@
                         </div>
                         
                     </div>
-                    
-                    <!-- SVG Envelope Preview -->
-                    <div class="envelope-preview">
-                        <svg id="zingMorph-envelope-svg" width="300" height="80" viewBox="0 0 300 80">
-                            <defs>
-                                <linearGradient id="zingMorph-range-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                                    <stop offset="0%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
-                                    <stop offset="100%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
-                                </linearGradient>
-                            </defs>
-                            <polygon id="zingMorph-range-area" fill="url(#zingMorph-range-gradient)" style="display:none"/>
-                            <path id="zingMorph-min-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
-                            <path id="zingMorph-max-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
-                            <path id="zingMorph-envelope-path" stroke="#4a7c8a" stroke-width="1" fill="none"/>
-                            <rect width="300" height="80" fill="none" stroke="#333" stroke-width="1"/>
-                        </svg>
-                    </div>
                 </div>
             </div>
 
@@ -1239,23 +1143,6 @@
                         </div>
                         
                     </div>
-                    
-                    <!-- SVG Envelope Preview -->
-                    <div class="envelope-preview">
-                        <svg id="symmetry-envelope-svg" width="300" height="80" viewBox="0 0 300 80">
-                            <defs>
-                                <linearGradient id="symmetry-range-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                                    <stop offset="0%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
-                                    <stop offset="100%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
-                                </linearGradient>
-                            </defs>
-                            <polygon id="symmetry-range-area" fill="url(#symmetry-range-gradient)" style="display:none"/>
-                            <path id="symmetry-min-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
-                            <path id="symmetry-max-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
-                            <path id="symmetry-envelope-path" stroke="#4a7c8a" stroke-width="1" fill="none"/>
-                            <rect width="300" height="80" fill="none" stroke="#333" stroke-width="1"/>
-                        </svg>
-                    </div>
                 </div>
             </div>
 
@@ -1310,23 +1197,6 @@
                             <span class="param-value small" id="amplitude-intensity-value">0.50</span>
                         </div>
                         
-                    </div>
-                    
-                    <!-- SVG Envelope Preview -->
-                    <div class="envelope-preview">
-                        <svg id="amplitude-envelope-svg" width="300" height="80" viewBox="0 0 300 80">
-                            <defs>
-                                <linearGradient id="amplitude-range-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                                    <stop offset="0%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
-                                    <stop offset="100%" style="stop-color:#4a7c8a;stop-opacity:0.2"/>
-                                </linearGradient>
-                            </defs>
-                            <polygon id="amplitude-range-area" fill="url(#amplitude-range-gradient)" style="display:none"/>
-                            <path id="amplitude-min-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
-                            <path id="amplitude-max-path" stroke="#4a7c8a" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.4" style="display:none"/>
-                            <path id="amplitude-envelope-path" stroke="#4a7c8a" stroke-width="1" fill="none"/>
-                            <rect width="300" height="80" fill="none" stroke="#333" stroke-width="1"/>
-                        </svg>
                     </div>
                 </div>
             </div>

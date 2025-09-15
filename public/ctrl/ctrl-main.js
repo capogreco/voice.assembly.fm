@@ -295,7 +295,6 @@ class ControlClient {
         };
       }
       
-      this.updateParameterEnvelopePreview(paramName);
       this.markPendingChanges();
     });
     
@@ -320,7 +319,6 @@ class ControlClient {
         this.pendingMusicalState[paramName].intensity = value;
       }
       
-      this.updateParameterEnvelopePreview(paramName);
       this.markPendingChanges();
     });
     
@@ -332,13 +330,10 @@ class ControlClient {
           this.pendingMusicalState[paramName].envType = radio.value;
         }
         
-        this.updateParameterEnvelopePreview(paramName);
-        this.markPendingChanges();
+          this.markPendingChanges();
       });
     });
     
-    // Initialize preview
-    this.updateParameterEnvelopePreview(paramName);
   }
 
   setupDualRangeSlider(paramName, valueType, precision) {
@@ -397,7 +392,6 @@ class ControlClient {
         }
       }
       
-      this.updateParameterEnvelopePreview(paramName);
       this.markPendingChanges();
     });
     
@@ -447,7 +441,6 @@ class ControlClient {
         }
       }
       
-      this.updateParameterEnvelopePreview(paramName);
       this.markPendingChanges();
     });
     
@@ -547,295 +540,15 @@ class ControlClient {
     }
     
     this.updateDualSliderDisplay(paramName, valueType, precision);
-    this.updateParameterEnvelopePreview(paramName); // Update visualizer for both modes
     this.log(`${paramName} ${valueType} switched to ${newMode} mode`, 'info');
   }
 
-  updateParameterEnvelopePreview(paramName) {
-    const staticCheckbox = document.getElementById(`${paramName}-static`);
-    if (staticCheckbox.checked) return; // No preview needed for static mode
-    
-    // Get values from dual-handle sliders
-    const startContainer = document.querySelector(`[data-param="${paramName}"][data-type="start"]`);
-    const endContainer = document.querySelector(`[data-param="${paramName}"][data-type="end"]`);
-    
-    if (!startContainer || !endContainer) return;
-    
-    const startMinHandle = startContainer.querySelector('.range-min');
-    const startMaxHandle = startContainer.querySelector('.range-max');
-    const endMinHandle = endContainer.querySelector('.range-min');
-    const endMaxHandle = endContainer.querySelector('.range-max');
-    
-    const startMin = parseFloat(startMinHandle.value);
-    const startMax = parseFloat(startMaxHandle.value);
-    const endMin = parseFloat(endMinHandle.value);
-    const endMax = parseFloat(endMaxHandle.value);
-    
-    const intensity = parseFloat(document.getElementById(`${paramName}-intensity`).value);
-    const envType = document.querySelector(`input[name="${paramName}-env-type"]:checked`).value;
-    
-    // Check if randomization is enabled (ranges have different min/max values)
-    const startHasRange = startContainer.dataset.mode === 'range';
-    const endHasRange = endContainer.dataset.mode === 'range';
-    const hasAnyRange = startHasRange || endHasRange;
-    
-    // Get SVG elements
-    const pathElement = document.getElementById(`${paramName}-envelope-path`);
-    const rangeArea = document.getElementById(`${paramName}-range-area`);
-    const minPath = document.getElementById(`${paramName}-min-path`);
-    const maxPath = document.getElementById(`${paramName}-max-path`);
-    
-    if (hasAnyRange) {
-      // Range visualization mode
-      const paths = this.generateRangeEnvelopePaths(startMin, startMax, endMin, endMax, intensity, envType, paramName);
-      
-      // Show range visualization elements
-      rangeArea.style.display = 'block';
-      minPath.style.display = 'block';
-      maxPath.style.display = 'block';
-      
-      // Hide main envelope path (no median line needed)
-      pathElement.style.display = 'none';
-      
-      // Update elements
-      rangeArea.setAttribute('points', paths.polygonPoints);
-      minPath.setAttribute('d', paths.minPath);
-      maxPath.setAttribute('d', paths.maxPath);
-    } else {
-      // Standard single envelope mode
-      const path = this.generateEnvelopePath(startMin, endMin, intensity, envType, paramName);
-      pathElement.setAttribute('d', path);
-      pathElement.style.display = 'block';
-      
-      // Hide range visualization elements
-      rangeArea.style.display = 'none';
-      minPath.style.display = 'none';
-      maxPath.style.display = 'none';
-    }
-  }
 
-  // Helper function to normalize parameter values for visualization (0-1 range)
-  normalizeForVisualization(value, paramName) {
-    if (paramName === 'frequency') {
-      // Frequency: 80-800 Hz -> 0-1
-      return (value - 80) / (800 - 80);
-    } else {
-      // Normalized parameters already in 0-1 range
-      return value;
-    }
-  }
 
-  generateEnvelopePath(startValue, endValue, intensity, envType, paramName) {
-    const width = 300;
-    const height = 80;
-    const steps = 150; // Number of points along the curve
-    
-    // Normalize start value for display
-    const normalizedStart = this.normalizeForVisualization(startValue, paramName);
-    let pathData = `M 0,${height * (1 - normalizedStart)}`;
-    
-    for (let i = 1; i <= steps; i++) {
-      const phase = i / steps; // 0 to 1
-      let interpolatedValue;
-      
-      if (envType === 'par') {
-        // Parabolic envelope calculates the value directly
-        interpolatedValue = this.calculateParTypeEnvelope(phase, intensity, startValue, endValue, paramName);
-      } else {
-        // Lin and cos envelopes use the interpolation pattern
-        let envelopeValue;
-        if (envType === 'lin') {
-          envelopeValue = this.calculateLinTypeEnvelope(phase, intensity);
-        } else {
-          envelopeValue = this.calculateCosTypeEnvelope(phase, intensity);
-        }
-        interpolatedValue = startValue + (endValue - startValue) * envelopeValue;
-      }
-      
-      // Normalize interpolated value for display
-      const normalizedValue = this.normalizeForVisualization(interpolatedValue, paramName);
-      const x = (i / steps) * width;
-      const y = height * (1 - normalizedValue); // Flip Y axis
-      
-      pathData += ` L ${x},${y}`;
-    }
-    
-    return pathData;
-  }
 
-  generateRangeEnvelopePaths(startMin, startMax, endMin, endMax, intensity, envType, paramName) {
-    const width = 300;
-    const height = 80;
-    const steps = 150;
-    
-    // Normalize start values for display
-    const normalizedStartMin = this.normalizeForVisualization(startMin, paramName);
-    const normalizedStartMax = this.normalizeForVisualization(startMax, paramName);
-    
-    // Generate min envelope path (startMin -> endMin)
-    let minPathData = `M 0,${height * (1 - normalizedStartMin)}`;
-    
-    // Generate max envelope path (startMax -> endMax)
-    let maxPathData = `M 0,${height * (1 - normalizedStartMax)}`;
-    
-    // Arrays to store polygon points for filled area
-    const topPoints = [];
-    const bottomPoints = [];
-    
-    // Calculate all envelope paths
-    for (let i = 1; i <= steps; i++) {
-      const phase = i / steps; // 0 to 1
-      const x = (i / steps) * width;
-      
-      let minInterpolated, maxInterpolated;
-      
-      if (envType === 'par') {
-        // Parabolic envelopes calculate values directly
-        minInterpolated = this.calculateParTypeEnvelope(phase, intensity, startMin, endMin, paramName);
-        maxInterpolated = this.calculateParTypeEnvelope(phase, intensity, startMax, endMax, paramName);
-      } else {
-        // Lin and cos envelopes use the interpolation pattern
-        let envelopeValue;
-        if (envType === 'lin') {
-          envelopeValue = this.calculateLinTypeEnvelope(phase, intensity);
-        } else {
-          envelopeValue = this.calculateCosTypeEnvelope(phase, intensity);
-        }
-        
-        // Min envelope (startMin -> endMin)
-        minInterpolated = startMin + (endMin - startMin) * envelopeValue;
-        
-        // Max envelope (startMax -> endMax)
-        maxInterpolated = startMax + (endMax - startMax) * envelopeValue;
-      }
-      
-      // Normalize interpolated values for display
-      const normalizedMinValue = this.normalizeForVisualization(minInterpolated, paramName);
-      const normalizedMaxValue = this.normalizeForVisualization(maxInterpolated, paramName);
-      
-      const minY = height * (1 - normalizedMinValue);
-      minPathData += ` L ${x},${minY}`;
-      
-      const maxY = height * (1 - normalizedMaxValue);
-      maxPathData += ` L ${x},${maxY}`;
-      
-      // Determine top and bottom for polygon (max envelope could be above or below min)
-      if (maxY <= minY) {
-        topPoints.push(`${x},${maxY}`);
-        bottomPoints.unshift(`${x},${minY}`); // Reverse order for polygon
-      } else {
-        topPoints.push(`${x},${minY}`);
-        bottomPoints.unshift(`${x},${maxY}`); // Reverse order for polygon
-      }
-    }
-    
-    // Add starting points for polygon (using normalized values)
-    const startMinY = height * (1 - normalizedStartMin);
-    const startMaxY = height * (1 - normalizedStartMax);
-    if (startMaxY <= startMinY) {
-      topPoints.unshift(`0,${startMaxY}`);
-      bottomPoints.push(`0,${startMinY}`);
-    } else {
-      topPoints.unshift(`0,${startMinY}`);
-      bottomPoints.push(`0,${startMaxY}`);
-    }
-    
-    // Create polygon path data for filled area
-    const polygonPoints = [...topPoints, ...bottomPoints].join(' ');
-    
-    return {
-      minPath: minPathData,
-      maxPath: maxPathData,
-      polygonPoints: polygonPoints
-    };
-  }
 
-  // Envelope calculation methods (same as in worklet)
-  calculateLinTypeEnvelope(phase, intensity) {
-    const t = Math.max(0, Math.min(1, phase));
-    const p = Math.max(0, Math.min(1, intensity));
-    
-    // More intuitive exponential mapping:
-    // p=0: strong ease-in (slow start, fast end)
-    // p=0.5: linear
-    // p=1: strong ease-out (fast start, slow end)
-    
-    if (Math.abs(p - 0.5) < 0.001) return t; // Perfect linear at 0.5
-    
-    let exponent;
-    if (p < 0.5) {
-      // Ease-in: higher exponent makes slower start
-      exponent = 1 / (0.1 + p * 1.8); // Range: ~5.6 to 1
-    } else {
-      // Ease-out: lower exponent makes faster start  
-      exponent = 0.1 + (p - 0.5) * 1.8; // Range: 0.1 to 1
-    }
-    
-    if (t === 0) return 0;
-    return Math.pow(t, exponent);
-  }
 
-  calculateCosTypeEnvelope(phase, intensity) {
-    const t = Math.max(0, Math.min(1, phase));
-    const p = Math.max(0, Math.min(1, intensity));
-    
-    // Logistic function with variable growth rate for smooth sigmoid-to-square morph
-    // p=0: k=4 (gentle sigmoid)
-    // p=0.5: k=10 (moderate)  
-    // p=1: k=100 (nearly square)
-    const k = 4 + p * p * 96;
-    
-    // Center around 0.5 and apply logistic function
-    const x = (t - 0.5) * k;
-    
-    return 1 / (1 + Math.exp(-x));
-  }
 
-  calculateParTypeEnvelope(phase, intensity, startValue, endValue, paramName) {
-    const t = Math.max(0, Math.min(1, phase));
-    const p = Math.max(0, Math.min(1, intensity));
-    
-    // Calculate peak value based on parameter type and intensity
-    let peakValue;
-    
-    // Check if this is a frequency parameter by name
-    if (paramName === 'frequency') {
-      // Frequency parameter: intensity controls how far the peak deviates from the midpoint
-      // First, calculate the geometric mean (midpoint in log space) between start and end
-      const logStart = Math.log2(Math.max(1, startValue));
-      const logEnd = Math.log2(Math.max(1, endValue));
-      const logMidpoint = (logStart + logEnd) / 2;
-      const midpointFreq = Math.pow(2, logMidpoint);
-      
-      // intensity controls octave offset from this midpoint
-      // intensity=0 -> -1 octave from midpoint, intensity=0.5 -> midpoint, intensity=1 -> +1 octave from midpoint
-      const octaveOffset = (p - 0.5) * 2.0; // -1 to +1 octave range
-      peakValue = midpointFreq * Math.pow(2, octaveOffset);
-      
-      // Ensure peak stays within reasonable bounds
-      const minFreq = Math.min(startValue, endValue) * 0.5;
-      const maxFreq = Math.max(startValue, endValue) * 2.0;
-      peakValue = Math.max(minFreq, Math.min(maxFreq, peakValue));
-      
-    } else {
-      // Normalized parameter (0-1): intensity controls how far peak deviates from midpoint
-      const midpoint = (startValue + endValue) / 2;
-      const maxRange = Math.min(0.5, Math.abs(endValue - startValue) + 0.2); // Dynamic range based on start/end difference
-      const offset = (p - 0.5) * 2.0 * maxRange; // Scale to ±maxRange
-      peakValue = Math.max(0, Math.min(1, midpoint + offset));
-    }
-    
-    // Create parabola passing through three points:
-    // (0, startValue), (0.5, peakValue), (1, endValue)
-    
-    // Solve for quadratic coefficients: y = at² + bt + c
-    const c = startValue;
-    const a = 2 * (startValue + endValue - 2 * peakValue);
-    const b = 4 * peakValue - endValue - 3 * startValue;
-    
-    // Evaluate parabola at phase t
-    return a * t * t + b * t + c;
-  }
 
   markPendingChanges() {
     this.hasPendingChanges = true;
@@ -1645,8 +1358,6 @@ class ControlClient {
       startValue.textContent = precision === 0 ? randomStart.toString() : randomStart.toFixed(precision);
       endValue.textContent = precision === 0 ? randomEnd.toString() : randomEnd.toFixed(precision);
       
-      // Update envelope preview
-      this.updateParameterEnvelopePreview(paramName);
       this.markPendingChanges();
     }
     
@@ -1792,8 +1503,7 @@ class ControlClient {
         if (staticCheckbox.checked) {
           this.broadcastMusicalParameters();
         } else {
-          this.updateParameterEnvelopePreview(paramName);
-          this.markPendingChanges();
+              this.markPendingChanges();
         }
       }
     } else if (valueType === 'end' && staticCheckbox && !staticCheckbox.checked) {
@@ -1805,8 +1515,7 @@ class ControlClient {
         const precision = paramName === 'frequency' ? 0 : 2;
         endValue.textContent = precision === 0 ? randomValue.toString() : randomValue.toFixed(precision);
         
-        this.updateParameterEnvelopePreview(paramName);
-        this.markPendingChanges();
+          this.markPendingChanges();
       }
     }
     
