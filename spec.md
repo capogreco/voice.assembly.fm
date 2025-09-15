@@ -77,10 +77,10 @@ Based on morphing-zing synthesis from euclidean sequencer reference:
 
 ### Synthesis Parameters
 
-**HRG-Controlled (frequency-based):**
-- `frequency` - Fundamental frequency (gets harmonic ratio generation)
+**HRG-Controlled Parameters (uses HRG System):**
+- `frequency` - Fundamental frequency (uses harmonic ratio generation)
 
-**Normalized Parameters (0-1 range):**
+**Normalized Parameters (uses Range System, 0-1 range):**
 - `morph` - PM to Ring Mod blend (-1 to 1, mapped to 0-1)
 - `modDepth` - Modulation intensity
 - `symmetry` - Phase warping/pulse width  
@@ -91,6 +91,8 @@ Based on morphing-zing synthesis from euclidean sequencer reference:
 - `vowelBlend` - Zing vs formant mode blend
 - `active` - Synthesis enable/disable
 
+*See "Parameter Randomization Systems" section below for details on the two randomization approaches.*
+
 ### Formant Frequency Constraints
 All secondary oscillator ratios (for both formant and zing modes) are constrained to vowel-realistic frequency ranges:
 - **F1 range**: ~240-850 Hz (ratios ~1.1-3.9 relative to fundamental)
@@ -98,6 +100,35 @@ All secondary oscillator ratios (for both formant and zing modes) are constraine
 - **F3 range**: ~2240-3010 Hz (ratios ~10.2-13.7)
 
 This ensures all synthesis modes produce human voice-like spectral content.
+
+## Parameter Randomization Systems
+
+Voice.Assembly.FM uses **two distinct randomization systems** depending on parameter type:
+
+### 1. HRG System (Frequency/Harmonic Parameters)
+- **Purpose**: Generate musical harmonic ratios (e.g., 3/2, 5/4, 7/4)
+- **Parameters**: `frequency` and future harmonic/period parameters
+- **Method**: Numerator/Denominator integer sets with temporal behaviors
+- **Benefits**: 
+  - Ensures harmonic relationships between synths
+  - Musical intervals rather than arbitrary frequencies
+  - Temporal behaviors (shuffle, ascending, etc.) for structured variation
+- **Example**: n="1-6" d="2" with shuffle behavior → frequencies of 220×(1/2), 220×(2/2), 220×(3/2), etc.
+
+### 2. Range System (Normalized Parameters)
+- **Purpose**: Continuous variation within bounded ranges
+- **Parameters**: All normalized (0-1) parameters: `vowelX`, `vowelY`, `morph`, `symmetry`, `amplitude`, etc.
+- **Method**: Min/max ranges for start and end envelope values
+- **Benefits**:
+  - Smooth parameter exploration within safe bounds
+  - Independent randomization per synth
+  - Continuous values rather than discrete ratios
+- **Example**: vowelX start range: 0.2-0.4, end range: 0.6-0.8 → random values within these bounds
+
+### Why Two Systems?
+- **Frequency parameters need harmonic relationships** (musical intervals)
+- **Normalized parameters need continuous exploration** (perceptual smoothness)
+- **Different mathematical domains** (ratios vs. bounded ranges)
 
 ## Harmonic Ratio Generator (HRG) System
 
@@ -140,10 +171,14 @@ HRGs provide stochastic variation of frequency parameters across the distributed
 
 ### Per-Parameter Configuration
 Each synthesis parameter gets:
-- **Start Value** (+ HRG if frequency-based)
-- **End Value** (+ HRG if frequency-based)
+- **Start Value** (+ HRG for frequency parameters, + Range for normalized parameters)
+- **End Value** (+ HRG for frequency parameters, + Range for normalized parameters)
 - **Envelope Type**: "lin" or "cos"  
 - **Envelope Intensity**: 0-1 morphing parameter
+
+**Randomization Integration**:
+- **HRG Parameters**: Use numerator/denominator SIN sets with temporal behaviors
+- **Normalized Parameters**: Use min/max range definitions for stochastic variation
 
 ### Envelope Types
 
