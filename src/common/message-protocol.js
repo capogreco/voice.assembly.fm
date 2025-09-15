@@ -46,24 +46,9 @@ export class MessageBuilder {
   }
 
 
-  static musicalParameters(params) {
+  static createParameterUpdate(type, params) {
     return {
-      type: MessageTypes.MUSICAL_PARAMETERS,
-      frequency: params.frequency,
-      zingMorph: params.zingMorph,
-      zingAmount: params.zingAmount,
-      vowelX: params.vowelX,
-      vowelY: params.vowelY,
-      symmetry: params.symmetry,
-      amplitude: params.amplitude,
-      isManualMode: params.isManualMode,
-      timestamp: performance.now()
-    };
-  }
-
-  static scheduleParameterUpdate(params) {
-    return {
-      type: MessageTypes.SCHEDULE_PARAMETER_UPDATE,
+      type,
       frequency: params.frequency,
       zingMorph: params.zingMorph,
       zingAmount: params.zingAmount,
@@ -142,39 +127,7 @@ export function validateMessage(message) {
       break;
 
     case MessageTypes.MUSICAL_PARAMETERS:
-      // Validate that frequency exists and is either a number (static) or envelope object
-      if (!message.frequency || 
-          (typeof message.frequency !== 'number' && typeof message.frequency !== 'object')) {
-        throw new Error('Musical parameters message missing or invalid frequency');
-      }
-      
-      // Validate envelope object structure if frequency is an object
-      if (typeof message.frequency === 'object') {
-        if (typeof message.frequency.intensity !== 'number' ||
-            typeof message.frequency.envType !== 'string') {
-          throw new Error('Musical parameters frequency envelope object missing required fields');
-        }
-        
-        // Validate startValue (can be number or range object)
-        if (typeof message.frequency.startValue === 'object') {
-          if (typeof message.frequency.startValue.min !== 'number' ||
-              typeof message.frequency.startValue.max !== 'number') {
-            throw new Error('Musical parameters frequency startValue range missing min/max');
-          }
-        } else if (typeof message.frequency.startValue !== 'number') {
-          throw new Error('Musical parameters frequency startValue must be number or range object');
-        }
-        
-        // Validate endValue (can be number or range object)
-        if (typeof message.frequency.endValue === 'object') {
-          if (typeof message.frequency.endValue.min !== 'number' ||
-              typeof message.frequency.endValue.max !== 'number') {
-            throw new Error('Musical parameters frequency endValue range missing min/max');
-          }
-        } else if (typeof message.frequency.endValue !== 'number') {
-          throw new Error('Musical parameters frequency endValue must be number or range object');
-        }
-      }
+      validateMusicalParameters(message);
       break;
 
     case MessageTypes.PHASOR_SYNC:
@@ -194,6 +147,45 @@ export function validateMessage(message) {
   }
 
   return true;
+}
+
+/**
+ * Validate musical parameters message
+ */
+function validateMusicalParameters(message) {
+  // Validate that frequency exists and is either a number (static) or envelope object
+  if (!message.frequency || 
+      (typeof message.frequency !== 'number' && typeof message.frequency !== 'object')) {
+    throw new Error('Musical parameters message missing or invalid frequency');
+  }
+  
+  // Validate envelope object structure if frequency is an object
+  if (typeof message.frequency === 'object') {
+    if (typeof message.frequency.intensity !== 'number' ||
+        typeof message.frequency.envType !== 'string') {
+      throw new Error('Musical parameters frequency envelope object missing required fields');
+    }
+    
+    // Validate startValue (can be number or range object)
+    if (typeof message.frequency.startValue === 'object') {
+      if (typeof message.frequency.startValue.min !== 'number' ||
+          typeof message.frequency.startValue.max !== 'number') {
+        throw new Error('Musical parameters frequency startValue range missing min/max');
+      }
+    } else if (typeof message.frequency.startValue !== 'number') {
+      throw new Error('Musical parameters frequency startValue must be number or range object');
+    }
+    
+    // Validate endValue (can be number or range object)
+    if (typeof message.frequency.endValue === 'object') {
+      if (typeof message.frequency.endValue.min !== 'number' ||
+          typeof message.frequency.endValue.max !== 'number') {
+        throw new Error('Musical parameters frequency endValue range missing min/max');
+      }
+    } else if (typeof message.frequency.endValue !== 'number') {
+      throw new Error('Musical parameters frequency endValue must be number or range object');
+    }
+  }
 }
 
 /**

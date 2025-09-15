@@ -3,19 +3,8 @@
  * Starts all three servers in parallel
  */
 
-// Get local IP addresses
-function getLocalIPs() {
-  const networkInterfaces = Deno.networkInterfaces();
-  const ips = [];
-  
-  for (const iface of networkInterfaces) {
-    if (iface.family === 'IPv4' && !iface.address.startsWith('127.') && iface.address !== '0.0.0.0') {
-      ips.push(iface.address);
-    }
-  }
-  
-  return ips;
-}
+import { config } from "./config.ts";
+import { getLocalIPs } from "./utils.ts";
 
 const localIPs = getLocalIPs();
 
@@ -27,17 +16,17 @@ const servers = [
   {
     name: "Signaling Server",
     cmd: ["deno", "run", "--allow-net", "--allow-read", "--allow-sys", "src/server/signaling-server.ts"],
-    port: 8000
+    port: config.signalingPort
   },
   {
     name: "Ctrl Client Server", 
-    cmd: ["deno", "run", "--allow-net", "--allow-read", "--allow-sys", "src/server/static-server.ts", "--port", "8080", "--root", "public/ctrl"],
-    port: 8080
+    cmd: ["deno", "run", "--allow-net", "--allow-read", "--allow-sys", "src/server/static-server.ts", "--port", config.ctrlClientPort.toString(), "--root", "public/ctrl"],
+    port: config.ctrlClientPort
   },
   {
     name: "Synth Client Server",
-    cmd: ["deno", "run", "--allow-net", "--allow-read", "--allow-sys", "src/server/static-server.ts", "--port", "8081", "--root", "public/synth"], 
-    port: 8081
+    cmd: ["deno", "run", "--allow-net", "--allow-read", "--allow-sys", "src/server/static-server.ts", "--port", config.synthClientPort.toString(), "--root", "public/synth"], 
+    port: config.synthClientPort
   }
 ];
 

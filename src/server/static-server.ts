@@ -5,29 +5,16 @@
 import { serve } from "std/http/server.ts";
 import { serveDir } from "std/http/file_server.ts";
 import { parse } from "std/flags/mod.ts";
+import { getLocalIPs } from "./utils.ts";
 
 const flags = parse(Deno.args, {
-  default: { port: 8080, root: "public" },
+  default: { root: "public" },
   string: ["root"],
   number: ["port"]
 });
 
 const port = flags.port;
 const root = flags.root;
-
-// Get local IP addresses
-function getLocalIPs() {
-  const networkInterfaces = Deno.networkInterfaces();
-  const ips = [];
-  
-  for (const iface of networkInterfaces) {
-    if (iface.family === 'IPv4' && !iface.address.startsWith('127.') && iface.address !== '0.0.0.0') {
-      ips.push(iface.address);
-    }
-  }
-  
-  return ips;
-}
 
 const localIPs = getLocalIPs();
 

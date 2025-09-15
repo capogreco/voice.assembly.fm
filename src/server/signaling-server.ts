@@ -5,6 +5,8 @@
 
 import { serve } from "std/http/server.ts";
 import { STATUS_CODE } from "std/http/status.ts";
+import { config } from "./config.ts";
+import { getLocalIPs } from "./utils.ts";
 
 interface Peer {
   id: string;
@@ -81,8 +83,8 @@ class SignalingServer {
   private handleJoin(socket: WebSocket, message: any): Peer {
     const { peerId, peerType, roomId, forceTakeover } = message;
     
-    if (!peerId || !peerType || !roomId) {
-      this.sendError(socket, 'Missing required fields: peerId, peerType, roomId');
+    // Validate join message
+    if (!this.validateJoinMessage(message, socket)) {
       return null;
     }
 
@@ -91,42 +93,72 @@ class SignalingServer {
       return null;
     }
 
-    // Check if room already has a ctrl client
+    // Handle ctrl takeover if needed
     if (peerType === 'ctrl') {
-      const existingCtrlPeers = this.getPeersByType(roomId, 'ctrl');
-      
-      if (existingCtrlPeers.length > 0) {
-        if (forceTakeover) {
-          // Force takeover: kick existing ctrl client
-          console.log(`⚠️ Force takeover: Kicking existing ctrl ${existingCtrlPeers[0].id} for new ctrl ${peerId}`);
-          
-          // Send kicked message to existing ctrl
-          this.sendMessage(existingCtrlPeers[0].socket, {
-            type: 'kicked',
-            reason: 'Another control client has taken over',
-            timestamp: Date.now()
-          });
-          
-          // Close existing ctrl connection
-          existingCtrlPeers[0].socket.close();
-          
-          // Remove from peers map
-          this.removePeer(existingCtrlPeers[0].id);
-          
-          // Continue with new ctrl joining
-        } else {
-          // Normal mode: reject second ctrl
-          this.sendError(socket, 'Room already has a control client');
-          this.sendMessage(socket, {
-            type: 'join-rejected',
-            reason: 'Room already has a control client. Add ?force=true to URL to take over.',
-            timestamp: Date.now()
-          });
-          return null;
-        }
+      const takeoverResult = this.handleCtrlTakeover(roomId, peerId, forceTakeover, socket);
+      if (!takeoverResult) {
+        return null;
       }
     }
 
+    // Create and register peer
+    const peer = this.registerPeer(peerId, peerType, socket, roomId);
+    
+    // Notify other peers about the new joinee
+    this.notifyPeersOfNewJoinee(peer, roomId, socket);
+
+    return peer;
+  }
+
+  private validateJoinMessage(message: any, socket: WebSocket): boolean {
+    const { peerId, peerType, roomId } = message;
+    
+    if (!peerId || !peerType || !roomId) {
+      this.sendError(socket, 'Missing required fields: peerId, peerType, roomId');
+      return false;
+    }
+    
+    return true;
+  }
+
+  private handleCtrlTakeover(roomId: string, newPeerId: string, forceTakeover: boolean, socket: WebSocket): boolean {
+    const existingCtrlPeers = this.getPeersByType(roomId, 'ctrl');
+    
+    if (existingCtrlPeers.length === 0) {
+      return true; // No existing ctrl, proceed
+    }
+
+    if (forceTakeover) {
+      // Force takeover: kick existing ctrl client
+      console.log(`⚠️ Force takeover: Kicking existing ctrl ${existingCtrlPeers[0].id} for new ctrl ${newPeerId}`);
+      
+      // Send kicked message to existing ctrl
+      this.sendMessage(existingCtrlPeers[0].socket, {
+        type: 'kicked',
+        reason: 'Another control client has taken over',
+        timestamp: Date.now()
+      });
+      
+      // Close existing ctrl connection
+      existingCtrlPeers[0].socket.close();
+      
+      // Remove from peers map
+      this.removePeer(existingCtrlPeers[0].id);
+      
+      return true; // Continue with new ctrl joining
+    } else {
+      // Normal mode: reject second ctrl
+      this.sendError(socket, 'Room already has a control client');
+      this.sendMessage(socket, {
+        type: 'join-rejected',
+        reason: 'Room already has a control client. Add ?force=true to URL to take over.',
+        timestamp: Date.now()
+      });
+      return false;
+    }
+  }
+
+  private registerPeer(peerId: string, peerType: string, socket: WebSocket, roomId: string): Peer {
     const peer: Peer = {
       id: peerId,
       type: peerType as 'ctrl' | 'synth',
@@ -151,18 +183,22 @@ class SignalingServer {
       timestamp: Date.now()
     });
 
+    return peer;
+  }
+
+  private notifyPeersOfNewJoinee(peer: Peer, roomId: string, socket: WebSocket): void {
     // For star topology: notify based on peer type
-    if (peerType === 'ctrl') {
+    if (peer.type === 'ctrl') {
       // Ctrl joining: notify all synths in room
       this.notifyPeersByType(roomId, 'synth', {
         type: 'ctrl-available',
-        ctrlId: peerId
+        ctrlId: peer.id
       });
-    } else if (peerType === 'synth') {
+    } else if (peer.type === 'synth') {
       // Synth joining: only notify ctrl peers
       this.notifyPeersByType(roomId, 'ctrl', {
         type: 'synth-available', 
-        synthId: peerId
+        synthId: peer.id
       });
       
       // Send available ctrl to this synth
@@ -174,8 +210,6 @@ class SignalingServer {
         });
       }
     }
-
-    return peer;
   }
 
   private relaySignalingMessage(message: any, fromPeer: Peer | null) {
@@ -357,22 +391,8 @@ async function handler(req: Request): Promise<Response> {
 
 const signalingServer = new SignalingServer();
 
-// Get local IP addresses
-function getLocalIPs() {
-  const networkInterfaces = Deno.networkInterfaces();
-  const ips = [];
-  
-  for (const iface of networkInterfaces) {
-    if (iface.family === 'IPv4' && !iface.address.startsWith('127.') && iface.address !== '0.0.0.0') {
-      ips.push(iface.address);
-    }
-  }
-  
-  return ips;
-}
-
 const localIPs = getLocalIPs();
-const port = 8000;
+const port = config.signalingPort;
 
 console.log("🌐 Voice.Assembly.FM Signaling Server");
 console.log(`📡 Local:     http://localhost:${port}`);

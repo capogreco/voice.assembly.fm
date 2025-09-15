@@ -463,6 +463,14 @@ export class WebRTCStar extends EventTarget {
    * Handle data channel messages
    */
   handleDataChannelMessage(peerId, channelType, message) {
+    try {
+      // Validate message before processing
+      validateMessage(message);
+    } catch (error) {
+      console.error(`❌ Invalid message from ${peerId}:`, error.message);
+      return; // Discard invalid message
+    }
+
     // Handle ping/pong at network level
     if (message.type === MessageTypes.PING) {
       // Respond to ping automatically

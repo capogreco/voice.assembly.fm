@@ -769,7 +769,7 @@ class ControlClient {
     
     // Schedule parameter application at next cycle boundary (EOC)
     if (this.star) {
-      const message = MessageBuilder.scheduleParameterUpdate(this.getMusicalParameters());
+      const message = MessageBuilder.createParameterUpdate(MessageTypes.SCHEDULE_PARAMETER_UPDATE, this.getMusicalParameters());
       const sent = this.star.broadcastToType('synth', message, 'control');
       this.log(`Scheduled parameter update for EOC to ${sent} synths`, 'info');
       
@@ -852,7 +852,7 @@ class ControlClient {
     if (!this.star) return;
     
     const params = this.getMusicalParameters();
-    const message = MessageBuilder.musicalParameters(params);
+    const message = MessageBuilder.createParameterUpdate(MessageTypes.MUSICAL_PARAMETERS, params);
     
     // Send to all connected synth peers
     const sent = this.star.broadcastToType('synth', message, 'control');
@@ -1218,12 +1218,21 @@ class ControlClient {
     
     // 2. Send current musical parameters (includes test mode state)
     const params = this.getMusicalParameters();
-    const musicalMsg = MessageBuilder.musicalParameters(params);
+    const musicalMsg = MessageBuilder.createParameterUpdate(MessageTypes.MUSICAL_PARAMETERS, params);
     const musicalSuccess = this.star.sendToPeer(synthId, musicalMsg, 'control');
     if (musicalSuccess) {
       this.log(`✅ Sent musical parameters to ${synthId} (test mode: ${params.isManualMode})`, 'debug');
     } else {
       this.log(`❌ Failed to send musical parameters to ${synthId}`, 'error');
+    }
+    
+    // 3. Send randomization config (HRG settings)
+    const configMsg = MessageBuilder.randomizationConfig(this.randomizationConfig);
+    const configSuccess = this.star.sendToPeer(synthId, configMsg, 'control');
+    if (configSuccess) {
+      this.log(`✅ Sent randomization config to ${synthId}`, 'debug');
+    } else {
+      this.log(`❌ Failed to send randomization config to ${synthId}`, 'error');
     }
   }
 
@@ -1600,56 +1609,6 @@ class ControlClient {
     return ranges.join(', ');
   }
 
-  // HRG Behavior implementations
-  applyHRGBehavior(integerSet, behavior, synthIndex, totalSynths) {
-    if (!integerSet || integerSet.length === 0) {
-      return 1; // Default ratio
-    }
-
-    const setSize = integerSet.length;
-
-    switch (behavior) {
-      case 'static':
-        // All synths get the same value (first in set)
-        return integerSet[0];
-
-      case 'ascending':
-        // Distribute values in ascending order
-        return integerSet[synthIndex % setSize];
-
-      case 'descending':
-        // Distribute values in descending order
-        const descending = [...integerSet].reverse();
-        return descending[synthIndex % setSize];
-
-      case 'shuffle':
-        // Fixed shuffle based on synthIndex (deterministic)
-        const shuffled = this.deterministicShuffle([...integerSet], synthIndex);
-        return shuffled[synthIndex % setSize];
-
-      case 'random':
-        // True random selection (non-repeating until all used)
-        if (!this.hrgRandomState) {
-          this.hrgRandomState = {};
-        }
-        if (!this.hrgRandomState[synthIndex]) {
-          this.hrgRandomState[synthIndex] = [...integerSet];
-          this.shuffleArray(this.hrgRandomState[synthIndex]);
-        }
-        
-        const randomSet = this.hrgRandomState[synthIndex];
-        if (randomSet.length === 0) {
-          // Reset when exhausted
-          this.hrgRandomState[synthIndex] = [...integerSet];
-          this.shuffleArray(this.hrgRandomState[synthIndex]);
-        }
-        
-        return randomSet.pop();
-
-      default:
-        return integerSet[0];
-    }
-  }
 
   // Deterministic shuffle based on seed
   deterministicShuffle(array, seed) {
@@ -1679,12 +1638,6 @@ class ControlClient {
     return array;
   }
 
-  // Generate harmonic ratio from numerator and denominator sets
-  generateHarmonicRatio(numeratorSet, denominatorSet, behavior, synthIndex, totalSynths) {
-    const num = this.applyHRGBehavior(numeratorSet, behavior, synthIndex, totalSynths);
-    const den = this.applyHRGBehavior(denominatorSet, behavior, synthIndex, totalSynths);
-    return num / den;
-  }
 
   // Update the visual state of randomizer buttons
 

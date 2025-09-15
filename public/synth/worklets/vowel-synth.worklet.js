@@ -292,11 +292,20 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
             this.hrgState[stateKey] = { 
                 index: null, 
                 shuffled: null,
-                lastValue: null  // For random non-repeat
+                lastValue: null,  // For random non-repeat
+                lastEOCPhasor: -1  // Track last EOC to prevent multiple advances per cycle
             };
         }
         const state = this.hrgState[stateKey];
         const setSize = integerSet.length;
+        
+        // Check if this is a new EOC for behaviors that advance on each cycle
+        const isNewEOC = this.phasorValue !== undefined && this.lastPhasor !== undefined && 
+                         this.phasorValue < this.lastPhasor && state.lastEOCPhasor !== this.lastPhasor;
+        
+        if (isNewEOC) {
+            state.lastEOCPhasor = this.lastPhasor;
+        }
         
         switch (behavior) {
             case 'static':
@@ -310,8 +319,12 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
                 // Random start, then increment at each EOC
                 if (state.index === null) {
                     state.index = Math.floor(this.seededRandom() * setSize);
-                } else {
+                } else if (isNewEOC) {
                     state.index = (state.index + 1) % setSize;
+                }
+                // Safety check
+                if (state.index === null || state.index < 0 || state.index >= setSize) {
+                    state.index = 0;
                 }
                 return integerSet[state.index];
                 
@@ -319,8 +332,12 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
                 // Random start, then decrement at each EOC
                 if (state.index === null) {
                     state.index = Math.floor(this.seededRandom() * setSize);
-                } else {
+                } else if (isNewEOC) {
                     state.index = (state.index - 1 + setSize) % setSize;
+                }
+                // Safety check
+                if (state.index === null || state.index < 0 || state.index >= setSize) {
+                    state.index = 0;
                 }
                 return integerSet[state.index];
                 
@@ -329,9 +346,15 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
                 if (state.shuffled === null) {
                     state.shuffled = this.deterministicShuffle([...integerSet], this.randomSeed);
                     state.index = 0;
-                } else {
+                } else if (isNewEOC && state.index !== null) {
                     state.index = (state.index + 1) % state.shuffled.length;
                 }
+                
+                // Ensure index is initialized (safety check)
+                if (state.index === null) {
+                    state.index = 0;
+                }
+                
                 return state.shuffled[state.index];
                 
             case 'random':
@@ -352,6 +375,21 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
             default:
                 return integerSet[0];
         }
+    }
+    
+    /**
+     * Safe wrapper for applyHRGBehavior that ensures finite results
+     */
+    safeApplyHRGBehavior(integerSet, behavior, stateKey) {
+        const result = this.applyHRGBehavior(integerSet, behavior, stateKey);
+        
+        // Ensure we always return a finite number
+        if (!Number.isFinite(result) || result === null || result === undefined) {
+            console.warn(`Invalid HRG result: ${result}, falling back to first value`);
+            return integerSet && integerSet.length > 0 ? integerSet[0] : 1;
+        }
+        
+        return result;
     }
 
     /**
@@ -389,8 +427,8 @@ class VowelSynthProcessor extends AudioWorkletProcessor {
         const numeratorKey = `${paramName}_${valueType}_numerators`;
         const denominatorKey = `${paramName}_${valueType}_denominators`;
         
-        const numerator = this.applyHRGBehavior(numeratorSet, numeratorBehavior, numeratorKey);
-        const denominator = this.applyHRGBehavior(denominatorSet, denominatorBehavior, denominatorKey);
+        const numerator = this.safeApplyHRGBehavior(numeratorSet, numeratorBehavior, numeratorKey);
+        const denominator = this.safeApplyHRGBehavior(denominatorSet, denominatorBehavior, denominatorKey);
         
         const ratio = numerator / denominator;
         return baseFreq * ratio;
