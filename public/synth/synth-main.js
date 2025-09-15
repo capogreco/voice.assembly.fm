@@ -410,14 +410,22 @@ class SynthClient {
     }
   }
 
+  isReadyToReceiveParameters() {
+    if (!this.formantNode) {
+      console.warn('⚠️ Cannot apply musical parameters: formant synthesis not ready');
+      return false;
+    }
+    
+    if (this.isCalibrationMode) {
+      return false;
+    }
+    
+    return true;
+  }
+
   handleMusicalParameters(message) {
     // Always store the latest parameters for application after audio init
     this.lastMusicalParams = message;
-    
-    if (!this.formantNode) {
-      console.warn('⚠️ Cannot apply musical parameters: formant synthesis not ready');
-      return;
-    }
     
     // Handle manual mode state changes
     const wasManualMode = this.isManualControlMode;
@@ -428,7 +436,14 @@ class SynthClient {
     
     // If exiting manual mode, stop synthesis
     if (wasManualMode && !this.isManualControlMode) {
-      this.formantNode.parameters.get('active').value = 0;
+      if (this.formantNode) {
+        this.formantNode.parameters.get('active').value = 0;
+      }
+      return;
+    }
+    
+    // Check if we're ready to receive parameters
+    if (!this.isReadyToReceiveParameters()) {
       return;
     }
     

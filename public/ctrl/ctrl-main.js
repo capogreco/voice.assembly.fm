@@ -81,6 +81,27 @@ class ControlClient {
       }
     };
     
+    // Centralized State Management
+    // Default state structure for all musical parameters
+    const defaultState = {
+      frequency: 220,          // Static mode - just a number
+      vowelX: 0.5,
+      vowelY: 0.5,
+      zingAmount: 0.0,
+      zingMorph: 0.5,
+      symmetry: 0.5,
+      amplitude: 1.0,
+      isManualMode: false
+    };
+    
+    // Applied state (sent to synths)
+    this.musicalState = JSON.parse(JSON.stringify(defaultState));
+    
+    // Pending state (being edited in UI)
+    this.pendingMusicalState = JSON.parse(JSON.stringify(defaultState));
+    
+    // HRG generation counter for temporal behaviors
+    this.generationCounter = 0;
     
     // UI Elements
     this.elements = {
@@ -249,6 +270,31 @@ class ControlClient {
       this.updateDualSliderDisplay(paramName, 'start', precision);
       this.updateDualSliderDisplay(paramName, 'end', precision);
       
+      // Update pendingMusicalState based on mode
+      if (isStatic) {
+        // Static mode - use current start value as single value
+        const startMinHandle = startSlider.querySelector('.range-min');
+        if (startMinHandle) {
+          this.pendingMusicalState[paramName] = parseFloat(startMinHandle.value);
+        }
+      } else {
+        // Envelope mode - create envelope object
+        const startMinHandle = startSlider.querySelector('.range-min');
+        const endMinHandle = endSlider?.querySelector('.range-min');
+        const intensitySlider = document.getElementById(`${paramName}-intensity`);
+        
+        // Get envelope type from radio buttons
+        const envTypeRadio = document.querySelector(`input[name="${paramName}-env-type"]:checked`);
+        
+        this.pendingMusicalState[paramName] = {
+          static: false,
+          startValue: startMinHandle ? parseFloat(startMinHandle.value) : 0,
+          endValue: endMinHandle ? parseFloat(endMinHandle.value) : 0,
+          envType: envTypeRadio ? envTypeRadio.value : 'lin',
+          intensity: intensitySlider ? parseFloat(intensitySlider.value) : 0.5
+        };
+      }
+      
       this.updateParameterEnvelopePreview(paramName);
       this.markPendingChanges();
     });
@@ -264,17 +310,28 @@ class ControlClient {
     this.updateDualSliderDisplay(paramName, 'start', precision);
     this.updateDualSliderDisplay(paramName, 'end', precision);
     
-    // Intensity slider (unchanged)
+    // Intensity slider - update state
     intensitySlider.addEventListener('input', (e) => {
       const value = parseFloat(e.target.value);
       intensityValue.textContent = value.toFixed(2);
+      
+      // Update pendingMusicalState if in envelope mode
+      if (!staticCheckbox.checked && typeof this.pendingMusicalState[paramName] === 'object') {
+        this.pendingMusicalState[paramName].intensity = value;
+      }
+      
       this.updateParameterEnvelopePreview(paramName);
       this.markPendingChanges();
     });
     
-    // Envelope type radio buttons
+    // Envelope type radio buttons - update state
     document.querySelectorAll(`input[name="${paramName}-env-type"]`).forEach(radio => {
       radio.addEventListener('change', () => {
+        // Update pendingMusicalState if in envelope mode
+        if (!staticCheckbox.checked && typeof this.pendingMusicalState[paramName] === 'object') {
+          this.pendingMusicalState[paramName].envType = radio.value;
+        }
+        
         this.updateParameterEnvelopePreview(paramName);
         this.markPendingChanges();
       });
@@ -305,11 +362,15 @@ class ControlClient {
         this.updateSliderRange(container);
         this.updateDualSliderDisplay(paramName, valueType, precision);
         
-        // Only broadcast immediately if the parameter is in true static mode (static checkbox checked)
-        // and HRG is not enabled for this parameter
+        // Update pendingMusicalState for static mode
         const staticCheckbox = document.getElementById(`${paramName}-static`);
-        if (staticCheckbox && staticCheckbox.checked && !this.isHRGEnabled(paramName)) {
-          this.broadcastMusicalParameters();
+        if (staticCheckbox && staticCheckbox.checked) {
+          this.pendingMusicalState[paramName] = minVal;
+          
+          // Only broadcast immediately if HRG is not enabled for this parameter
+          if (!this.isHRGEnabled(paramName)) {
+            this.broadcastMusicalParameters();
+          }
         }
       } else {
         // In range mode, ensure min <= max
@@ -324,6 +385,16 @@ class ControlClient {
         this.randomizationConfig[paramName][valueType].min = minVal;
         this.randomizationConfig[paramName][valueType].max = parseFloat(maxHandle.value);
         this.broadcastRandomizationConfig();
+        
+        // If this is envelope mode (not static) and slider is in static mode, update envelope values
+        const staticCheckbox = document.getElementById(`${paramName}-static`);
+        if (!staticCheckbox.checked && container.dataset.mode === 'static' && typeof this.pendingMusicalState[paramName] === 'object') {
+          if (valueType === 'start') {
+            this.pendingMusicalState[paramName].startValue = minVal;
+          } else if (valueType === 'end') {
+            this.pendingMusicalState[paramName].endValue = minVal;
+          }
+        }
       }
       
       this.updateParameterEnvelopePreview(paramName);
@@ -341,11 +412,15 @@ class ControlClient {
         this.updateSliderRange(container);
         this.updateDualSliderDisplay(paramName, valueType, precision);
         
-        // Only broadcast immediately if the parameter is in true static mode (static checkbox checked)
-        // and HRG is not enabled for this parameter
+        // Update pendingMusicalState for static mode
         const staticCheckbox = document.getElementById(`${paramName}-static`);
-        if (staticCheckbox && staticCheckbox.checked && !this.isHRGEnabled(paramName)) {
-          this.broadcastMusicalParameters();
+        if (staticCheckbox && staticCheckbox.checked) {
+          this.pendingMusicalState[paramName] = maxVal;
+          
+          // Only broadcast immediately if HRG is not enabled for this parameter
+          if (!this.isHRGEnabled(paramName)) {
+            this.broadcastMusicalParameters();
+          }
         }
       } else {
         // In range mode, ensure min <= max
@@ -360,6 +435,16 @@ class ControlClient {
         this.randomizationConfig[paramName][valueType].min = parseFloat(minHandle.value);
         this.randomizationConfig[paramName][valueType].max = maxVal;
         this.broadcastRandomizationConfig();
+        
+        // If this is envelope mode (not static) and slider is in static mode, update envelope values
+        const staticCheckbox = document.getElementById(`${paramName}-static`);
+        if (!staticCheckbox.checked && container.dataset.mode === 'static' && typeof this.pendingMusicalState[paramName] === 'object') {
+          if (valueType === 'start') {
+            this.pendingMusicalState[paramName].startValue = maxVal;
+          } else if (valueType === 'end') {
+            this.pendingMusicalState[paramName].endValue = maxVal;
+          }
+        }
       }
       
       this.updateParameterEnvelopePreview(paramName);
@@ -764,14 +849,114 @@ class ControlClient {
     this.elements.applyParamsBtn.textContent = 'apply changes';
   }
 
+
+  // Generate HRG-resolved parameters for a specific synth
+  generateParametersForSynth(synthId, baseParameters) {
+    const resolvedParams = JSON.parse(JSON.stringify(baseParameters));
+    
+    // Only apply HRG to frequency parameter
+    if (resolvedParams.frequency && typeof resolvedParams.frequency === 'object' && !resolvedParams.frequency.static) {
+      const config = this.randomizationConfig?.frequency;
+      if (config) {
+        // Apply HRG to start value if enabled
+        if (config.start && config.start.enabled && config.start.numerators && config.start.denominators) {
+          const ratio = this.generateHRGRatio(synthId, 'frequency_start', config.start);
+          resolvedParams.frequency.startValue = resolvedParams.frequency.startValue * ratio;
+        }
+        
+        // Apply HRG to end value if enabled
+        if (config.end && config.end.enabled && config.end.numerators && config.end.denominators) {
+          const ratio = this.generateHRGRatio(synthId, 'frequency_end', config.end);
+          resolvedParams.frequency.endValue = resolvedParams.frequency.endValue * ratio;
+        }
+      }
+    }
+    
+    return resolvedParams;
+  }
+
+  // Generate harmonic ratio for a specific synth and parameter
+  generateHRGRatio(synthId, paramKey, hrgConfig) {
+    const numerators = this.parseSIN(hrgConfig.numerators);
+    const denominators = this.parseSIN(hrgConfig.denominators);
+    
+    // Use deterministic pseudo-randomness based on synth ID and parameter
+    const seed = this.hashString(synthId + paramKey + this.generationCounter);
+    const rng = this.createSeededRNG(seed);
+    
+    // Select random numerator and denominator
+    const num = numerators[Math.floor(rng() * numerators.length)];
+    const den = denominators[Math.floor(rng() * denominators.length)];
+    
+    let ratio = num / den;
+    
+    // Apply safety limits for frequency parameters (0.25x to 4x)
+    ratio = Math.max(0.25, Math.min(4.0, ratio));
+    
+    return ratio;
+  }
+
+  // Helper methods for HRG (adapted from stochastic_distributor.js)
+  parseSIN(sinString) {
+    if (!sinString || sinString.trim() === '') return [1];
+    
+    const trimmed = sinString.trim();
+    
+    // Handle range notation like "2-7"
+    if (trimmed.includes('-')) {
+      const [start, end] = trimmed.split('-').map(s => parseInt(s.trim()));
+      if (!isNaN(start) && !isNaN(end) && start <= end) {
+        const range = [];
+        for (let i = start; i <= end; i++) {
+          range.push(i);
+        }
+        return range;
+      }
+    }
+    
+    // Handle comma-separated list like "1,3,5,7"
+    if (trimmed.includes(',')) {
+      return trimmed.split(',')
+        .map(s => parseInt(s.trim()))
+        .filter(n => !isNaN(n));
+    }
+    
+    // Single number
+    const single = parseInt(trimmed);
+    return isNaN(single) ? [1] : [single];
+  }
+
+  // Hash string to number (for deterministic randomness)
+  hashString(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return Math.abs(hash);
+  }
+
+  // Create seeded random number generator
+  createSeededRNG(seed) {
+    let state = seed;
+    return function() {
+      state = (state * 1664525 + 1013904223) % 4294967296;
+      return state / 4294967296;
+    };
+  }
+
   applyParameterChanges() {
     if (!this.hasPendingChanges) return;
     
-    // Schedule parameter application at next cycle boundary (EOC)
+    // Apply pending changes to musical state
+    this.musicalState = JSON.parse(JSON.stringify(this.pendingMusicalState));
+    
+    // Broadcast the updated state to synths
     if (this.star) {
-      const message = MessageBuilder.createParameterUpdate(MessageTypes.SCHEDULE_PARAMETER_UPDATE, this.getMusicalParameters());
+      const message = MessageBuilder.createParameterUpdate(MessageTypes.SCHEDULE_PARAMETER_UPDATE, this.musicalState);
       const sent = this.star.broadcastToType('synth', message, 'control');
-      this.log(`Scheduled parameter update for EOC to ${sent} synths`, 'info');
+      this.log(`Applied and sent musical state to ${sent} synths`, 'info');
       
       // Also broadcast randomization config (HRG settings) immediately
       const configMessage = MessageBuilder.randomizationConfig(this.randomizationConfig);
@@ -783,79 +968,15 @@ class ControlClient {
   }
   
   
-  getMusicalParameters() {
-    return {
-        frequency: this.getParameterValue('frequency', 220),
-        vowelX: this.getParameterValue('vowelX', 0.5),
-        vowelY: this.getParameterValue('vowelY', 0.5),
-        zingAmount: this.getParameterValue('zingAmount', 0.0),
-        zingMorph: this.getParameterValue('zingMorph', 0.5),
-        symmetry: this.getParameterValue('symmetry', 0.5),
-        amplitude: this.getParameterValue('amplitude', 1.0),
-        isManualMode: this.isManualMode,
-    };
-  }
-
-  getParameterValue(paramName, defaultValue) {
-    const staticCheckbox = document.getElementById(`${paramName}-static`);
-    
-    // Get containers for start and end sliders
-    const startContainer = document.querySelector(`[data-param="${paramName}"][data-type="start"]`);
-    if (!startContainer) return defaultValue;
-    
-    if (staticCheckbox.checked) {
-      // Static mode: return simple number from start slider
-      const startMinHandle = startContainer.querySelector('.range-min');
-      const startValue = parseFloat(startMinHandle.value);
-      return isNaN(startValue) ? defaultValue : startValue;
-    } else {
-      // Envelope mode: return envelope object with proper range handling
-      const endContainer = document.querySelector(`[data-param="${paramName}"][data-type="end"]`);
-      if (!endContainer) return defaultValue;
-      
-      const intensity = parseFloat(document.getElementById(`${paramName}-intensity`).value);
-      const envType = document.querySelector(`input[name="${paramName}-env-type"]:checked`).value;
-      
-      // Check if start slider is in range mode
-      const startIsRange = startContainer.dataset.mode === 'range';
-      let startValue;
-      if (startIsRange) {
-        const startMin = parseFloat(startContainer.querySelector('.range-min').value);
-        const startMax = parseFloat(startContainer.querySelector('.range-max').value);
-        startValue = { min: startMin, max: startMax };
-      } else {
-        startValue = parseFloat(startContainer.querySelector('.range-min').value);
-      }
-      
-      // Check if end slider is in range mode  
-      const endIsRange = endContainer.dataset.mode === 'range';
-      let endValue;
-      if (endIsRange) {
-        const endMin = parseFloat(endContainer.querySelector('.range-min').value);
-        const endMax = parseFloat(endContainer.querySelector('.range-max').value);
-        endValue = { min: endMin, max: endMax };
-      } else {
-        endValue = parseFloat(endContainer.querySelector('.range-min').value);
-      }
-      
-      return {
-        static: false,
-        startValue: startValue,
-        endValue: endValue,
-        intensity: isNaN(intensity) ? 0.5 : intensity,
-        envType: envType || 'lin'
-      };
-    }
-  }
 
   broadcastMusicalParameters() {
     if (!this.star) return;
     
-    const params = this.getMusicalParameters();
-    const message = MessageBuilder.createParameterUpdate(MessageTypes.MUSICAL_PARAMETERS, params);
-    
-    // Send to all connected synth peers
+    // Use the applied musical state directly
+    const message = MessageBuilder.createParameterUpdate(MessageTypes.MUSICAL_PARAMETERS, this.musicalState);
     const sent = this.star.broadcastToType('synth', message, 'control');
+    
+    this.log(`Sent parameters to ${sent} synths`, 'info');
     
     // Also send to ES-8 if enabled
     this.sendMusicalParametersToES8();
@@ -1030,7 +1151,7 @@ class ControlClient {
   sendMusicalParametersToES8() {
     if (!this.es8Enabled || !this.es8Node) return;
     
-    const params = this.getMusicalParameters();
+    const params = this.musicalState;
     this.es8Node.port.postMessage({
       type: 'musical-parameters',
       frequency: params.frequency,
@@ -1183,6 +1304,10 @@ class ControlClient {
   toggleManualMode() {
     this.isManualMode = !this.isManualMode;
     
+    // Update both state objects to keep them synchronized
+    this.musicalState.isManualMode = this.isManualMode;
+    this.pendingMusicalState.isManualMode = this.isManualMode;
+    
     if (this.isManualMode) {
       this.elements.manualModeBtn.textContent = 'Disable Synthesis';
       this.elements.manualModeBtn.classList.add('active');
@@ -1217,7 +1342,7 @@ class ControlClient {
     }
     
     // 2. Send current musical parameters (includes test mode state)
-    const params = this.getMusicalParameters();
+    const params = this.generateParametersForSynth(synthId, this.musicalState);
     const musicalMsg = MessageBuilder.createParameterUpdate(MessageTypes.MUSICAL_PARAMETERS, params);
     const musicalSuccess = this.star.sendToPeer(synthId, musicalMsg, 'control');
     if (musicalSuccess) {
