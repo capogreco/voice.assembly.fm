@@ -12,13 +12,15 @@
         }
 
         body {
-            font-family: Monaco, Menlo, Consolas, "Courier New", monospace;
-            background: #1a1a1a;
-            color: #e0e0e0;
+            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+            background: #0a0a0a;
+            color: #f0f0f0;
             padding: 15px;
             min-height: 100vh;
-            font-size: 13px;
+            font-size: 11px;
             overflow-x: auto;
+            user-select: none;
+            -webkit-user-select: none;
         }
 
         .header {
@@ -27,16 +29,16 @@
         }
 
         .header h1 {
-            font-size: 16px;
+            font-size: 14px;
             font-weight: normal;
             margin-bottom: 4px;
-            color: #e0e0e0;
+            color: #f0f0f0;
             text-transform: lowercase;
         }
 
         .header .subtitle {
-            color: #888;
-            font-size: 11px;
+            color: #444;
+            font-size: 10px;
             text-transform: lowercase;
         }
 
@@ -50,7 +52,8 @@
         }
 
         .panel {
-            background: #2a2a2a;
+            background: #000;
+            border: 1px solid #222;
             padding: 10px;
             overflow-y: auto;
             max-height: 80vh;
@@ -87,20 +90,20 @@
         }
 
         .panel h2 {
-            font-size: 11px;
+            font-size: 10px;
             font-weight: normal;
             margin-bottom: 10px;
-            color: #888;
+            color: #444;
             text-align: center;
             text-transform: lowercase;
-            border-bottom: 1px solid #444;
+            border-bottom: 1px solid #222;
             padding-bottom: 6px;
         }
 
         /* Visual distinction for parameter panel */
         .panel:nth-child(2) h2 {
-            color: #4a7c8a;
-            border-bottom-color: #4a7c8a;
+            color: #666;
+            border-bottom-color: #333;
         }
 
         /* Grid layout helper - visual grouping */
@@ -108,14 +111,14 @@
         .main-grid > .panel:nth-child(2),
         .main-grid > .panel:nth-child(3) {
             /* Top row panels */
-            border-top: 2px solid #444;
+            border-top: 1px solid #222;
         }
 
         .main-grid > .panel:nth-child(4),
         .main-grid > .panel:nth-child(5),
         .main-grid > .panel:nth-child(6) {
             /* Bottom row panels */
-            border-top: 2px solid #333;
+            border-top: 1px solid #111;
         }
 
         .status-grid {
@@ -125,24 +128,24 @@
         }
 
         .status-item {
-            background: #1a1a1a;
-            padding: 8px;
-            border: 1px solid #444;
+            background: #0a0a0a;
+            padding: 6px;
+            border: 1px solid #222;
         }
 
         .status-item.connected {
-            color: #4a7c8a;
+            color: #666;
         }
 
         .status-label {
-            font-size: 10px;
-            color: #888;
+            font-size: 9px;
+            color: #444;
             margin-bottom: 2px;
             text-transform: lowercase;
         }
 
         .status-value {
-            font-size: 12px;
+            font-size: 11px;
             font-weight: normal;
         }
 
@@ -151,32 +154,34 @@
         }
 
         .control-section h3 {
-            font-size: 10px;
-            color: #888;
+            font-size: 9px;
+            color: #444;
             margin-bottom: 6px;
             text-transform: lowercase;
             font-weight: normal;
         }
 
         .button {
-            background: transparent;
-            border: 1px solid #444;
-            color: #e0e0e0;
+            background: #111;
+            border: 1px solid #333;
+            color: #666;
             padding: 6px 12px;
             cursor: pointer;
             font-size: 11px;
             font-family: inherit;
             font-weight: normal;
+            transition: all 0.1s;
         }
 
         .button:hover {
-            background: #3a3a3a;
+            background: #1a1a1a;
+            color: #888;
         }
 
         .button:disabled {
-            background: #1a1a1a;
-            color: #666;
-            border-color: #333;
+            background: #0a0a0a;
+            color: #333;
+            border-color: #222;
             cursor: not-allowed;
         }
 
@@ -185,9 +190,9 @@
         }
 
         .button.manual-mode-btn.active {
-            background: #4a7c8a;
-            border-color: #4a7c8a;
-            color: #e0e0e0;
+            background: #222;
+            border-color: #666;
+            color: #fff;
             position: relative;
         }
 
@@ -195,7 +200,7 @@
             content: "●";
             position: absolute;
             left: 8px;
-            color: #4ade80;
+            color: #fff;
             animation: pulse 2s infinite;
         }
 
@@ -215,38 +220,37 @@
 
         .peer-item {
             padding: 4px 8px;
-            background: #1a1a1a;
-            border: 1px solid #444;
+            background: #0a0a0a;
+            border: 1px solid #222;
             margin-bottom: 2px;
-            font-size: 11px;
+            font-size: 10px;
         }
 
         .peer-id {
-            color: #e0e0e0;
+            color: #f0f0f0;
         }
 
         .peer-type {
-            color: #888;
+            color: #444;
         }
 
         .log {
             height: 100px;
-            background: #1a1a1a;
-            border: 1px solid #444;
+            background: #0a0a0a;
+            border: 1px solid #222;
             padding: 6px;
             font-family: inherit;
-            font-size: 10px;
+            font-size: 9px;
             overflow-y: auto;
             white-space: pre-wrap;
-            color: #888;
+            color: #444;
         }
 
         /* Parameter Control Styles */
         .param-control {
-            background: #1a1a1a;
+            background: #0a0a0a;
             padding: 10px;
-            border: 1px solid #444;
-            border-radius: 3px;
+            border: 1px solid #222;
             margin-bottom: 8px;
         }
 
@@ -276,8 +280,8 @@
         }
 
         .param-label {
-            font-size: 10px;
-            color: #888;
+            font-size: 9px;
+            color: #444;
             margin-bottom: 4px;
             text-align: right;
             text-transform: lowercase;
@@ -286,8 +290,8 @@
         }
 
         .param-value {
-            font-size: 14px;
-            color: #e0e0e0;
+            font-size: 11px;
+            color: #f0f0f0;
             margin-bottom: 6px;
             text-align: center;
             font-weight: normal;
@@ -297,12 +301,12 @@
             width: 100%;
             -webkit-appearance: none;
             height: 4px;
-            background: #333;
+            background: #111;
             outline: none;
         }
 
         .slider:hover {
-            background: #444;
+            background: #222;
         }
 
         .slider::-webkit-slider-thumb {
@@ -310,27 +314,26 @@
             appearance: none;
             width: 12px;
             height: 12px;
-            background: #4a7c8a;
+            background: #666;
             cursor: pointer;
         }
 
         .slider::-moz-range-thumb {
             width: 12px;
             height: 12px;
-            background: #4a7c8a;
+            background: #666;
             cursor: pointer;
             border: none;
         }
 
         /* Envelope Control Styles */
         .envelope-control {
-            border-left: 2px solid transparent;
+            border-left: 1px solid transparent;
             padding-left: 8px;
-            transition: border-color 0.2s;
         }
 
         .envelope-control.envelope-active {
-            border-left-color: #4a7c8a;
+            border-left-color: #666;
         }
 
         .param-header {
@@ -341,8 +344,8 @@
         }
 
         .static-checkbox {
-            font-size: 11px;
-            color: #888;
+            font-size: 10px;
+            color: #444;
             cursor: pointer;
             display: flex;
             align-items: center;
@@ -361,15 +364,15 @@
         }
 
         .param-suffix {
-            font-size: 10px;
-            color: #666;
+            font-size: 9px;
+            color: #333;
             min-width: 40px;
         }
 
         .envelope-section {
             margin-top: 8px;
             padding-top: 8px;
-            border-top: 1px solid #333;
+            border-top: 1px solid #222;
         }
 
         .param-row {
@@ -404,7 +407,7 @@
         }
         
         .envelope-type label {
-            color: #888;
+            color: #444;
             cursor: pointer;
             margin-right: 8px;
         }
@@ -440,9 +443,8 @@
         .hrg-controls {
             margin: 8px 0;
             padding: 8px;
-            background-color: #1a1a1a;
-            border: 1px solid #333;
-            border-radius: 4px;
+            background-color: #0a0a0a;
+            border: 1px solid #222;
         }
         
         .hrg-row {
@@ -454,28 +456,26 @@
         
         .hrg-row label {
             width: 80px;
-            font-size: 12px;
-            color: #888;
+            font-size: 10px;
+            color: #444;
         }
         
         .hrg-row input[type="text"] {
             flex: 1;
             padding: 2px 4px;
-            background-color: #2a2a2a;
-            border: 1px solid #444;
-            color: #ccc;
-            font-size: 11px;
-            border-radius: 2px;
+            background-color: #111;
+            border: 1px solid #333;
+            color: #f0f0f0;
+            font-size: 10px;
         }
         
         .hrg-row select {
             flex: 1;
             padding: 2px 4px;
-            background-color: #2a2a2a;
-            border: 1px solid #444;
-            color: #ccc;
-            font-size: 11px;
-            border-radius: 2px;
+            background-color: #111;
+            border: 1px solid #333;
+            color: #f0f0f0;
+            font-size: 10px;
         }
 
         /* Compact HRG Styles */
@@ -494,7 +494,7 @@
         }
         
         .hrg-compact-line span {
-            color: #888;
+            color: #444;
             font-size: 9px;
             min-width: 12px;
         }
@@ -503,20 +503,18 @@
             flex: 1;
             padding: 1px 3px;
             font-size: 9px;
-            background-color: #2a2a2a;
-            border: 1px solid #444;
-            color: #ccc;
-            border-radius: 2px;
+            background-color: #111;
+            border: 1px solid #333;
+            color: #f0f0f0;
             min-width: 60px;
         }
         
         .hrg-compact-line select {
             padding: 1px 2px;
             font-size: 8px;
-            background-color: #2a2a2a;
-            border: 1px solid #444;
-            color: #ccc;
-            border-radius: 2px;
+            background-color: #111;
+            border: 1px solid #333;
+            color: #f0f0f0;
             min-width: 25px;
         }
 
@@ -526,24 +524,24 @@
             cursor: pointer;
             padding: 2px 4px;
             margin-left: 6px;
-            color: #666;
+            color: #333;
             user-select: none;
-            transition: color 0.2s;
+            transition: color 0.1s;
         }
         
         .randomizer-toggle:hover {
-            color: #4a7c8a;
+            color: #666;
         }
         
         .randomizer-toggle.active {
-            color: #4a7c8a;
+            color: #666;
         }
         
         .randomizer-inline-range {
             display: none;
             font-size: 9px;
             margin-left: 4px;
-            color: #888;
+            color: #444;
         }
         
         .randomizer-inline-range.show {
@@ -553,9 +551,9 @@
         .randomizer-inline-range input {
             width: 30px;
             font-size: 8px;
-            background: #2a2a2a;
-            border: 1px solid #555;
-            color: #ccc;
+            background: #111;
+            border: 1px solid #333;
+            color: #f0f0f0;
             padding: 1px 2px;
             margin: 0 1px;
         }
@@ -587,12 +585,10 @@
             -webkit-appearance: none;
             width: 18px;
             height: 18px;
-            background: #4a7c8a;
-            border-radius: 50%;
+            background: #666;
             cursor: pointer;
             pointer-events: all;
             z-index: 3;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
         }
         
         .dual-range-slider .range-min::-moz-range-thumb,
@@ -778,7 +774,7 @@
                         <div class="slider-range"></div>
                     </div>
                     <span class="value-display" id="frequency-start-display">220</span>
-                    <button class="randomizer-btn" id="frequency-start-randomizer" title="Toggle HRG">[H]</button>
+                    <button class="randomizer-btn" id="frequency-start-randomizer" title="Toggle HRG">[ hrg ]</button>
                     <div class="param-value" id="frequency-value" style="display: none;">220</div>
                     <div class="param-suffix" id="frequency-suffix" style="display: none;"> Hz</div>
                 </div>
@@ -789,21 +785,21 @@
                         <div class="hrg-compact-line">
                             <span>n:</span><input type="text" id="frequency-start-numerators" value="1,2,3">
                             <select id="frequency-start-numerators-behavior">
-                                <option value="static">S</option>
-                                <option value="ascending">A</option>
-                                <option value="descending">D</option>
-                                <option value="shuffle">Sh</option>
-                                <option value="random">R</option>
+                                <option value="static">s</option>
+                                <option value="ascending">a</option>
+                                <option value="descending">d</option>
+                                <option value="shuffle">sh</option>
+                                <option value="random">r</option>
                             </select>
                         </div>
                         <div class="hrg-compact-line">
                             <span>d:</span><input type="text" id="frequency-start-denominators" value="1,2">
                             <select id="frequency-start-denominators-behavior">
-                                <option value="static">S</option>
-                                <option value="ascending">A</option>
-                                <option value="descending">D</option>
-                                <option value="shuffle">Sh</option>
-                                <option value="random">R</option>
+                                <option value="static">s</option>
+                                <option value="ascending">a</option>
+                                <option value="descending">d</option>
+                                <option value="shuffle">sh</option>
+                                <option value="random">r</option>
                             </select>
                         </div>
                     </div>
@@ -822,7 +818,7 @@
                             <div class="slider-range"></div>
                         </div>
                         <span class="value-display" id="frequency-end-display">220</span>
-                        <button class="randomizer-btn" id="frequency-end-randomizer" title="Toggle HRG">[H]</button>
+                        <button class="randomizer-btn" id="frequency-end-randomizer" title="Toggle HRG">[ hrg ]</button>
                         <div class="param-value" id="frequency-end-value" style="display: none;">220</div>
                     </div>
                     
