@@ -70,7 +70,9 @@ class ProgramWorklet extends AudioWorkletProcessor {
             startValue: this.generateValue(paramState.startValueGenerator, paramName),
             endValue: this.generateValue(paramState.endValueGenerator, paramName),
             currentValue: 0,
-            active: false
+            active: false,
+            interpolationType: paramState.interpolationType || 'linear',
+            intensity: paramState.intensity || 0.5
           });
         } else if (paramState.temporalBehavior === 'static') {
           this.currentValues[paramName] = this.generateValue(paramState.startValueGenerator, paramName);
@@ -187,9 +189,28 @@ class ProgramWorklet extends AudioWorkletProcessor {
   updateEnvelopes() {
     for (const [paramName, envelope] of this.envelopes) {
       if (envelope.active) {
-        const progress = this.lastPhase; // Use the phase read from AudioParam
+        const rawProgress = this.lastPhase; // Use the phase read from AudioParam
+        let shapedProgress = rawProgress;
+        
+        // Apply interpolation curve
+        switch (envelope.interpolationType) {
+          case 'linear':
+            shapedProgress = rawProgress;
+            break;
+          case 'cosine':
+            shapedProgress = 0.5 - Math.cos(rawProgress * Math.PI) * 0.5;
+            break;
+          case 'parabolic':
+            // Use intensity to control curve shape
+            const intensity = Math.max(0.1, Math.min(10, envelope.intensity * 10)); // Map 0-1 to 0.1-10
+            shapedProgress = Math.pow(rawProgress, intensity);
+            break;
+          default:
+            shapedProgress = rawProgress;
+        }
+        
         envelope.currentValue = envelope.startValue + 
-          (envelope.endValue - envelope.startValue) * progress;
+          (envelope.endValue - envelope.startValue) * shapedProgress;
         this.currentValues[paramName] = envelope.currentValue;
       }
     }
@@ -206,8 +227,10 @@ class ProgramWorklet extends AudioWorkletProcessor {
         if (envelope) {
           envelope.startValue = this.generateValue(paramState.startValueGenerator, paramName);
           envelope.endValue = this.generateValue(paramState.endValueGenerator, paramName);
+          envelope.interpolationType = paramState.interpolationType || 'linear';
+          envelope.intensity = paramState.intensity || 0.5;
           envelope.active = true;
-          console.log(`🚀 Triggered envelope for ${paramName}: ${envelope.startValue} → ${envelope.endValue}`);
+          console.log(`🚀 Triggered ${envelope.interpolationType} envelope for ${paramName}: ${envelope.startValue} → ${envelope.endValue}`);
         }
       } else if (typeof paramState === 'object' && 
                  paramState.temporalBehavior === 'static') {

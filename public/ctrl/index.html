@@ -825,7 +825,7 @@
             background: #1a1a1a;
         }
 
-        .mode-select, .env-select {
+        .mode-select, .env-select, .interp-select {
             background: #111;
             border: 1px solid #333;
             color: #888;
@@ -835,10 +835,32 @@
             width: 65px;
         }
 
-        .mode-select:focus, .env-select:focus {
+        .interp-select {
+            width: 50px;
+            font-size: 9px;
+        }
+
+        .mode-select:focus, .env-select:focus, .interp-select:focus {
             outline: none;
             border-color: #666;
             color: #f0f0f0;
+        }
+
+        .end-value-input {
+            background: #111;
+            border: 1px solid #333;
+            color: #f0f0f0;
+            font-family: inherit;
+            font-size: 10px;
+            padding: 4px 6px;
+            width: 80px;
+            margin-left: 4px;
+        }
+
+        .end-value-input:focus {
+            outline: none;
+            border-color: #666;
+            background: #1a1a1a;
         }
 
         .inline-env {
@@ -900,6 +922,59 @@
             width: 35px;
         }
 
+        /* Inline HRG and RBG Controls */
+        .hrg-inline, .rbg-inline {
+            display: inline-flex;
+            align-items: center;
+            gap: 2px;
+            font-size: 8px;
+            color: #666;
+            margin-left: 4px;
+        }
+
+        .hrg-input, .rbg-input {
+            background: #111;
+            border: 1px solid #333;
+            color: #888;
+            font-family: inherit;
+            font-size: 8px;
+            padding: 1px 3px;
+            width: 35px;
+        }
+
+        .hrg-behavior {
+            background: #111;
+            border: 1px solid #333;
+            color: #888;
+            font-family: inherit;
+            font-size: 8px;
+            padding: 1px 2px;
+            width: 18px;
+        }
+
+        .hrg-input:focus, .rbg-input:focus, .hrg-behavior:focus {
+            outline: none;
+            border-color: #666;
+            color: #f0f0f0;
+        }
+
+        .intensity-input {
+            background: #111;
+            border: 1px solid #333;
+            color: #888;
+            font-family: inherit;
+            font-size: 9px;
+            padding: 2px 4px;
+            width: 40px;
+            margin-left: 4px;
+        }
+
+        .intensity-input:focus {
+            outline: none;
+            border-color: #666;
+            color: #f0f0f0;
+        }
+
     </style>
 </head>
 <body>
@@ -945,69 +1020,37 @@
                         <option value="direct">direct</option>
                         <option value="program">program</option>
                     </select>
-                    <select class="env-select" id="frequency-env-mode" style="display: none;">
-                        <option value="static">stat</option>
-                        <option value="env">env</option>
+                    <select class="interp-select" id="frequency-interpolation" style="display: none;">
+                        <option value="step">step</option>
+                        <option value="linear">lin</option>
+                        <option value="cosine">cos</option>
+                        <option value="parabolic">par</option>
                     </select>
-                    <button class="randomizer-btn" id="frequency-start-randomizer" title="Toggle Start HRG" tabindex="0">s-hrg</button>
-                    <div class="inline-env" id="frequency-inline-env" style="display: none;">
-                        <button class="randomizer-btn" id="frequency-end-randomizer" title="Toggle End HRG" tabindex="0">e-hrg</button>
-                        <select class="env-type-select" id="frequency-env-type">
-                            <option value="lin">lin</option>
-                            <option value="cos">cos</option>
-                            <option value="par">par</option>
+                    <span class="hrg-inline" id="frequency-start-hrg" style="display: none;">
+                        n:<input type="text" class="hrg-input" id="frequency-start-numerators" value="1" placeholder="1-6">
+                        <select class="hrg-behavior" id="frequency-start-numerators-behavior">
+                            <option value="static">s</option>
+                            <option value="ascending">a</option>
+                            <option value="descending">d</option>
+                            <option value="random">r</option>
+                            <option value="shuffle">sh</option>
                         </select>
-                        <input type="text" class="intensity-input" id="frequency-intensity" value="0.5" placeholder="0.5">
-                    </div>
+                        d:<input type="text" class="hrg-input" id="frequency-start-denominators" value="1">
+                    </span>
+                    <span class="hrg-inline" id="frequency-end-hrg" style="display: none;">
+                        n:<input type="text" class="hrg-input" id="frequency-end-numerators" value="1" placeholder="1-6">
+                        <select class="hrg-behavior" id="frequency-end-numerators-behavior">
+                            <option value="static">s</option>
+                            <option value="ascending">a</option>
+                            <option value="descending">d</option>
+                            <option value="random">r</option>
+                            <option value="shuffle">sh</option>
+                        </select>
+                        d:<input type="text" class="hrg-input" id="frequency-end-denominators" value="1">
+                    </span>
+                    <input type="text" class="intensity-input" id="frequency-intensity" value="0.5" placeholder="0.5" style="display: none;" title="Curve intensity for parabolic">
                 </div>
                 
-                <!-- Start HRG Controls (hidden by default) -->
-                <div class="hrg-controls" id="frequency-start-hrg-controls" style="display: none;">
-                    <div class="hrg-line">
-                        <span>start n:</span><input type="text" id="frequency-start-numerators" value="1">
-                        <select id="frequency-start-numerators-behavior">
-                            <option value="static">s</option>
-                            <option value="ascending">a</option>
-                            <option value="descending">d</option>
-                            <option value="shuffle">sh</option>
-                            <option value="random">r</option>
-                        </select>
-                    </div>
-                    <div class="hrg-line">
-                        <span>start d:</span><input type="text" id="frequency-start-denominators" value="1">
-                        <select id="frequency-start-denominators-behavior">
-                            <option value="static">s</option>
-                            <option value="ascending">a</option>
-                            <option value="descending">d</option>
-                            <option value="shuffle">sh</option>
-                            <option value="random">r</option>
-                        </select>
-                    </div>
-                </div>
-                
-                <!-- End HRG Controls (hidden by default) -->
-                <div class="hrg-controls" id="frequency-end-hrg-controls" style="display: none;">
-                    <div class="hrg-line">
-                        <span>end n:</span><input type="text" id="frequency-end-numerators" value="1">
-                        <select id="frequency-end-numerators-behavior">
-                            <option value="static">s</option>
-                            <option value="ascending">a</option>
-                            <option value="descending">d</option>
-                            <option value="shuffle">sh</option>
-                            <option value="random">r</option>
-                        </select>
-                    </div>
-                    <div class="hrg-line">
-                        <span>end d:</span><input type="text" id="frequency-end-denominators" value="1">
-                        <select id="frequency-end-denominators-behavior">
-                            <option value="static">s</option>
-                            <option value="ascending">a</option>
-                            <option value="descending">d</option>
-                            <option value="shuffle">sh</option>
-                            <option value="random">r</option>
-                        </select>
-                    </div>
-                </div>
             </div>
 
             <div class="param-control compact-control">
@@ -1018,38 +1061,14 @@
                         <option value="direct">direct</option>
                         <option value="program">program</option>
                     </select>
-                    <select class="env-select" id="vowelX-env-mode" style="display: none;">
-                        <option value="static">stat</option>
-                        <option value="env">env</option>
+                    <select class="interp-select" id="vowelX-interpolation" style="display: none;">
+                        <option value="step">step</option>
+                        <option value="linear">lin</option>
+                        <option value="cosine">cos</option>
+                        <option value="parabolic">par</option>
                     </select>
-                    <button class="randomizer-btn" id="vowelX-start-randomizer" title="Toggle Start Range Randomizer" tabindex="0">s-rnd</button>
-                    <div class="inline-env" id="vowelX-inline-env" style="display: none;">
-                        <button class="randomizer-btn" id="vowelX-end-randomizer" title="Toggle End Range Randomizer" tabindex="0">e-rnd</button>
-                        <select class="env-type-select" id="vowelX-env-type">
-                            <option value="lin">lin</option>
-                            <option value="cos">cos</option>
-                            <option value="par">par</option>
-                        </select>
-                        <input type="text" class="intensity-input" id="vowelX-intensity" value="0.5" placeholder="0.5">
-                    </div>
-                </div>
-                
-                <!-- Start Range Randomizer Controls (hidden by default) -->
-                <div class="hrg-controls" id="vowelX-start-rnd-controls" style="display: none;">
-                    <div class="hrg-line">
-                        <input type="checkbox" id="vowelX-start-rand-enable">
-                        <span>start min:</span><input type="text" id="vowelX-start-rand-min" value="0.2">
-                        <span>max:</span><input type="text" id="vowelX-start-rand-max" value="0.8">
-                    </div>
-                </div>
-                
-                <!-- End Range Randomizer Controls (hidden by default) -->
-                <div class="hrg-controls" id="vowelX-end-rnd-controls" style="display: none;">
-                    <div class="hrg-line">
-                        <input type="checkbox" id="vowelX-end-rand-enable">
-                        <span>end min:</span><input type="text" id="vowelX-end-rand-min" value="0.2">
-                        <span>max:</span><input type="text" id="vowelX-end-rand-max" value="0.8">
-                    </div>
+                    <input type="text" class="end-value-input" id="vowelX-end-value" value="0.5" placeholder="0.5 or 0.2-0.8" style="display: none;" title="End value">
+                    <input type="text" class="intensity-input" id="vowelX-intensity" value="0.5" placeholder="0.5" style="display: none;" title="Curve intensity for parabolic">
                 </div>
             </div>
 
@@ -1061,38 +1080,14 @@
                         <option value="direct">direct</option>
                         <option value="program">program</option>
                     </select>
-                    <select class="env-select" id="vowelY-env-mode" style="display: none;">
-                        <option value="static">stat</option>
-                        <option value="env">env</option>
+                    <select class="interp-select" id="vowelY-interpolation" style="display: none;">
+                        <option value="step">step</option>
+                        <option value="linear">lin</option>
+                        <option value="cosine">cos</option>
+                        <option value="parabolic">par</option>
                     </select>
-                    <button class="randomizer-btn" id="vowelY-start-randomizer" title="Toggle Start Range Randomizer" tabindex="0">s-rnd</button>
-                    <div class="inline-env" id="vowelY-inline-env" style="display: none;">
-                        <button class="randomizer-btn" id="vowelY-end-randomizer" title="Toggle End Range Randomizer" tabindex="0">e-rnd</button>
-                        <select class="env-type-select" id="vowelY-env-type">
-                            <option value="lin">lin</option>
-                            <option value="cos">cos</option>
-                            <option value="par">par</option>
-                        </select>
-                        <input type="text" class="intensity-input" id="vowelY-intensity" value="0.5" placeholder="0.5">
-                    </div>
-                </div>
-                
-                <!-- Start Range Randomizer Controls (hidden by default) -->
-                <div class="hrg-controls" id="vowelY-start-rnd-controls" style="display: none;">
-                    <div class="hrg-line">
-                        <input type="checkbox" id="vowelY-start-rand-enable">
-                        <span>start min:</span><input type="text" id="vowelY-start-rand-min" value="0.2">
-                        <span>max:</span><input type="text" id="vowelY-start-rand-max" value="0.8">
-                    </div>
-                </div>
-                
-                <!-- End Range Randomizer Controls (hidden by default) -->
-                <div class="hrg-controls" id="vowelY-end-rnd-controls" style="display: none;">
-                    <div class="hrg-line">
-                        <input type="checkbox" id="vowelY-end-rand-enable">
-                        <span>end min:</span><input type="text" id="vowelY-end-rand-min" value="0.2">
-                        <span>max:</span><input type="text" id="vowelY-end-rand-max" value="0.8">
-                    </div>
+                    <input type="text" class="end-value-input" id="vowelY-end-value" value="0.5" placeholder="0.5 or 0.2-0.8" style="display: none;" title="End value">
+                    <input type="text" class="intensity-input" id="vowelY-intensity" value="0.5" placeholder="0.5" style="display: none;" title="Curve intensity for parabolic">
                 </div>
             </div>
 
@@ -1104,38 +1099,14 @@
                         <option value="direct">direct</option>
                         <option value="program">program</option>
                     </select>
-                    <select class="env-select" id="symmetry-env-mode" style="display: none;">
-                        <option value="static">stat</option>
-                        <option value="env">env</option>
+                    <select class="interp-select" id="symmetry-interpolation" style="display: none;">
+                        <option value="step">step</option>
+                        <option value="linear">lin</option>
+                        <option value="cosine">cos</option>
+                        <option value="parabolic">par</option>
                     </select>
-                    <button class="randomizer-btn" id="symmetry-start-randomizer" title="Toggle Start Range Randomizer" tabindex="0">s-rnd</button>
-                    <div class="inline-env" id="symmetry-inline-env" style="display: none;">
-                        <button class="randomizer-btn" id="symmetry-end-randomizer" title="Toggle End Range Randomizer" tabindex="0">e-rnd</button>
-                        <select class="env-type-select" id="symmetry-env-type">
-                            <option value="lin">lin</option>
-                            <option value="cos">cos</option>
-                            <option value="par">par</option>
-                        </select>
-                        <input type="text" class="intensity-input" id="symmetry-intensity" value="0.5" placeholder="0.5">
-                    </div>
-                </div>
-                
-                <!-- Start Range Randomizer Controls (hidden by default) -->
-                <div class="hrg-controls" id="symmetry-start-rnd-controls" style="display: none;">
-                    <div class="hrg-line">
-                        <input type="checkbox" id="symmetry-start-rand-enable">
-                        <span>start min:</span><input type="text" id="symmetry-start-rand-min" value="0.2">
-                        <span>max:</span><input type="text" id="symmetry-start-rand-max" value="0.8">
-                    </div>
-                </div>
-                
-                <!-- End Range Randomizer Controls (hidden by default) -->
-                <div class="hrg-controls" id="symmetry-end-rnd-controls" style="display: none;">
-                    <div class="hrg-line">
-                        <input type="checkbox" id="symmetry-end-rand-enable">
-                        <span>end min:</span><input type="text" id="symmetry-end-rand-min" value="0.2">
-                        <span>max:</span><input type="text" id="symmetry-end-rand-max" value="0.8">
-                    </div>
+                    <input type="text" class="end-value-input" id="symmetry-end-value" value="0.5" placeholder="0.5 or 0.2-0.8" style="display: none;" title="End value">
+                    <input type="text" class="intensity-input" id="symmetry-intensity" value="0.5" placeholder="0.5" style="display: none;" title="Curve intensity for parabolic">
                 </div>
             </div>
 
@@ -1147,38 +1118,14 @@
                         <option value="direct">direct</option>
                         <option value="program">program</option>
                     </select>
-                    <select class="env-select" id="zingAmount-env-mode" style="display: none;">
-                        <option value="static">stat</option>
-                        <option value="env">env</option>
+                    <select class="interp-select" id="zingAmount-interpolation" style="display: none;">
+                        <option value="step">step</option>
+                        <option value="linear">lin</option>
+                        <option value="cosine">cos</option>
+                        <option value="parabolic">par</option>
                     </select>
-                    <button class="randomizer-btn" id="zingAmount-start-randomizer" title="Toggle Start Range Randomizer" tabindex="0">s-rnd</button>
-                    <div class="inline-env" id="zingAmount-inline-env" style="display: none;">
-                        <button class="randomizer-btn" id="zingAmount-end-randomizer" title="Toggle End Range Randomizer" tabindex="0">e-rnd</button>
-                        <select class="env-type-select" id="zingAmount-env-type">
-                            <option value="lin">lin</option>
-                            <option value="cos">cos</option>
-                            <option value="par">par</option>
-                        </select>
-                        <input type="text" class="intensity-input" id="zingAmount-intensity" value="0.5" placeholder="0.5">
-                    </div>
-                </div>
-                
-                <!-- Start Range Randomizer Controls (hidden by default) -->
-                <div class="hrg-controls" id="zingAmount-start-rnd-controls" style="display: none;">
-                    <div class="hrg-line">
-                        <input type="checkbox" id="zingAmount-start-rand-enable">
-                        <span>start min:</span><input type="text" id="zingAmount-start-rand-min" value="0">
-                        <span>max:</span><input type="text" id="zingAmount-start-rand-max" value="0.5">
-                    </div>
-                </div>
-                
-                <!-- End Range Randomizer Controls (hidden by default) -->
-                <div class="hrg-controls" id="zingAmount-end-rnd-controls" style="display: none;">
-                    <div class="hrg-line">
-                        <input type="checkbox" id="zingAmount-end-rand-enable">
-                        <span>end min:</span><input type="text" id="zingAmount-end-rand-min" value="0">
-                        <span>max:</span><input type="text" id="zingAmount-end-rand-max" value="0.5">
-                    </div>
+                    <input type="text" class="end-value-input" id="zingAmount-end-value" value="0" placeholder="0 or 0-0.5" style="display: none;" title="End value">
+                    <input type="text" class="intensity-input" id="zingAmount-intensity" value="0.5" placeholder="0.5" style="display: none;" title="Curve intensity for parabolic">
                 </div>
             </div>
 
@@ -1190,38 +1137,14 @@
                         <option value="direct">direct</option>
                         <option value="program">program</option>
                     </select>
-                    <select class="env-select" id="zingMorph-env-mode" style="display: none;">
-                        <option value="static">stat</option>
-                        <option value="env">env</option>
+                    <select class="interp-select" id="zingMorph-interpolation" style="display: none;">
+                        <option value="step">step</option>
+                        <option value="linear">lin</option>
+                        <option value="cosine">cos</option>
+                        <option value="parabolic">par</option>
                     </select>
-                    <button class="randomizer-btn" id="zingMorph-start-randomizer" title="Toggle Start Range Randomizer" tabindex="0">s-rnd</button>
-                    <div class="inline-env" id="zingMorph-inline-env" style="display: none;">
-                        <button class="randomizer-btn" id="zingMorph-end-randomizer" title="Toggle End Range Randomizer" tabindex="0">e-rnd</button>
-                        <select class="env-type-select" id="zingMorph-env-type">
-                            <option value="lin">lin</option>
-                            <option value="cos">cos</option>
-                            <option value="par">par</option>
-                        </select>
-                        <input type="text" class="intensity-input" id="zingMorph-intensity" value="0.5" placeholder="0.5">
-                    </div>
-                </div>
-                
-                <!-- Start Range Randomizer Controls (hidden by default) -->
-                <div class="hrg-controls" id="zingMorph-start-rnd-controls" style="display: none;">
-                    <div class="hrg-line">
-                        <input type="checkbox" id="zingMorph-start-rand-enable">
-                        <span>start min:</span><input type="text" id="zingMorph-start-rand-min" value="0.2">
-                        <span>max:</span><input type="text" id="zingMorph-start-rand-max" value="0.8">
-                    </div>
-                </div>
-                
-                <!-- End Range Randomizer Controls (hidden by default) -->
-                <div class="hrg-controls" id="zingMorph-end-rnd-controls" style="display: none;">
-                    <div class="hrg-line">
-                        <input type="checkbox" id="zingMorph-end-rand-enable">
-                        <span>end min:</span><input type="text" id="zingMorph-end-rand-min" value="0.2">
-                        <span>max:</span><input type="text" id="zingMorph-end-rand-max" value="0.8">
-                    </div>
+                    <input type="text" class="end-value-input" id="zingMorph-end-value" value="0.5" placeholder="0.5 or 0.2-0.8" style="display: none;" title="End value">
+                    <input type="text" class="intensity-input" id="zingMorph-intensity" value="0.5" placeholder="0.5" style="display: none;" title="Curve intensity for parabolic">
                 </div>
             </div>
 
@@ -1233,38 +1156,14 @@
                         <option value="direct">direct</option>
                         <option value="program">program</option>
                     </select>
-                    <select class="env-select" id="amplitude-env-mode" style="display: none;">
-                        <option value="static">stat</option>
-                        <option value="env">env</option>
+                    <select class="interp-select" id="amplitude-interpolation" style="display: none;">
+                        <option value="step">step</option>
+                        <option value="linear">lin</option>
+                        <option value="cosine">cos</option>
+                        <option value="parabolic">par</option>
                     </select>
-                    <button class="randomizer-btn" id="amplitude-start-randomizer" title="Toggle Start Range Randomizer" tabindex="0">s-rnd</button>
-                    <div class="inline-env" id="amplitude-inline-env" style="display: none;">
-                        <button class="randomizer-btn" id="amplitude-end-randomizer" title="Toggle End Range Randomizer" tabindex="0">e-rnd</button>
-                        <select class="env-type-select" id="amplitude-env-type">
-                            <option value="lin">lin</option>
-                            <option value="cos">cos</option>
-                            <option value="par">par</option>
-                        </select>
-                        <input type="text" class="intensity-input" id="amplitude-intensity" value="0.5" placeholder="0.5">
-                    </div>
-                </div>
-                
-                <!-- Start Range Randomizer Controls (hidden by default) -->
-                <div class="hrg-controls" id="amplitude-start-rnd-controls" style="display: none;">
-                    <div class="hrg-line">
-                        <input type="checkbox" id="amplitude-start-rand-enable">
-                        <span>start min:</span><input type="text" id="amplitude-start-rand-min" value="0.5">
-                        <span>max:</span><input type="text" id="amplitude-start-rand-max" value="1.0">
-                    </div>
-                </div>
-                
-                <!-- End Range Randomizer Controls (hidden by default) -->
-                <div class="hrg-controls" id="amplitude-end-rnd-controls" style="display: none;">
-                    <div class="hrg-line">
-                        <input type="checkbox" id="amplitude-end-rand-enable">
-                        <span>end min:</span><input type="text" id="amplitude-end-rand-min" value="0.5">
-                        <span>max:</span><input type="text" id="amplitude-end-rand-max" value="1.0">
-                    </div>
+                    <input type="text" class="end-value-input" id="amplitude-end-value" value="1.0" placeholder="1.0 or 0.5-1.0" style="display: none;" title="End value">
+                    <input type="text" class="intensity-input" id="amplitude-intensity" value="0.5" placeholder="0.5" style="display: none;" title="Curve intensity for parabolic">
                 </div>
             </div>
         </div>

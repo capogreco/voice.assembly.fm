@@ -18,12 +18,31 @@ class ControlClient {
   // Typed state management
   musicalState: IMusicalState;
   pendingMusicalState: IMusicalState;
+  star: any; // WebRTC star connection
+  forceTakeover: boolean;
+  peerId: string;
+  isCalibrationMode: boolean;
+  calibrationAmplitude: number;
+  phasor: number;
+  cpm: number;
+  stepsPerCycle: number;
+  cycleLength: number;
+  lastPhasorTime: number;
+  phasorUpdateId: any;
+  lastBroadcastTime: number;
+  phasorBroadcastRate: number;
+  audioContext: any;
+  es8Enabled: boolean;
+  es8Node: any;
+  hasPendingChanges: boolean;
+  elements: any;
 
   private _createDefaultState(): IMusicalState {
     // Helper for a default normalised generator
     const defaultNormalisedGenerator = (): GeneratorConfig => ({
       type: 'normalised',
-      range: 0.5
+      range: 0.5,
+      sequenceBehavior: 'static'
     });
 
     // Helper for a default periodic generator 
@@ -31,7 +50,7 @@ class ControlClient {
       type: 'periodic',
       numerators: '1',
       denominators: '1', 
-      behavior: 'static'
+      sequenceBehavior: 'static'
     });
 
     // Helper for a default direct state
@@ -470,11 +489,14 @@ class ControlClient {
   setupCompactParameterControls(paramName) {
     // Get the new compact control elements
     const modeSelect = document.getElementById(`${paramName}-mode`);
-    const envModeSelect = document.getElementById(`${paramName}-env-mode`);
-    const inlineEnv = document.getElementById(`${paramName}-inline-env`);
+    const interpSelect = document.getElementById(`${paramName}-interpolation`);
     const textInput = document.getElementById(`${paramName}-value`);
-    const startRandomizerBtn = document.getElementById(`${paramName}-start-randomizer`);
-    const endRandomizerBtn = document.getElementById(`${paramName}-end-randomizer`);
+    
+    // Get inline control elements based on parameter type
+    const startHrg = document.getElementById(`${paramName}-start-hrg`);
+    const endHrg = document.getElementById(`${paramName}-end-hrg`);
+    const endValueInput = document.getElementById(`${paramName}-end-value`);
+    const intensityInput = document.getElementById(`${paramName}-intensity`);
     
     if (!modeSelect) return;
     
@@ -491,59 +513,45 @@ class ControlClient {
       
       // Update UI visibility
       if (isDirect) {
-        // Direct mode: hide env-mode dropdown, inline envelope controls, and disable randomizer
-        if (envModeSelect) envModeSelect.style.display = 'none';
-        if (inlineEnv) inlineEnv.style.display = 'none';
-        if (startRandomizerBtn) {
-          startRandomizerBtn.disabled = true;
-          startRandomizerBtn.style.opacity = '0.3';
-          startRandomizerBtn.title = 'Randomizers not available in direct mode';
-        }
-        if (endRandomizerBtn) {
-          endRandomizerBtn.disabled = true;
-          endRandomizerBtn.style.opacity = '0.3';
-          endRandomizerBtn.title = 'Randomizers not available in direct mode';
-        }
+        // Direct mode: hide program controls
+        if (interpSelect) interpSelect.style.display = 'none';
+        if (startHrg) startHrg.style.display = 'none';
+        if (endHrg) endHrg.style.display = 'none';
+        if (endValueInput) endValueInput.style.display = 'none';
+        if (intensityInput) intensityInput.style.display = 'none';
       } else {
-        // Program mode: show env-mode dropdown and enable randomizer
-        if (envModeSelect) {
-          envModeSelect.style.display = 'inline-block';
-          // Trigger change event to update envelope visibility
-          envModeSelect.dispatchEvent(new Event('change'));
-        }
-        if (startRandomizerBtn) {
-          startRandomizerBtn.disabled = false;
-          startRandomizerBtn.style.opacity = '1';
-          startRandomizerBtn.title = paramName === 'frequency' ? 'Toggle Start HRG' : 'Toggle Start Range Randomizer';
-        }
-        if (endRandomizerBtn) {
-          endRandomizerBtn.disabled = false;
-          endRandomizerBtn.style.opacity = '1';
-          endRandomizerBtn.title = paramName === 'frequency' ? 'Toggle End HRG' : 'Toggle End Range Randomizer';
-        }
+        // Program mode: show interpolation select and appropriate controls
+        if (interpSelect) interpSelect.style.display = 'inline';
+        this._updateInterpolationUI(paramName);
       }
+      
+      console.log(`🔧 Set ${paramName} scope to: ${modeSelect.value}`);
     });
     
-    // Handle static/env mode changes (only in program mode)
-    if (envModeSelect) {
-      envModeSelect.addEventListener('change', () => {
-        const isEnv = envModeSelect.value === 'env';
-        const isProgram = modeSelect.value === 'program';
+    // Handle interpolation changes
+    if (interpSelect) {
+      interpSelect.addEventListener('change', () => {
+        const interpolation = interpSelect.value as 'step' | 'linear' | 'cosine' | 'parabolic';
         
-        if (isProgram && isEnv) {
-          // Show inline envelope controls
-          if (inlineEnv) inlineEnv.style.display = 'flex';
-        } else {
-          // Hide inline envelope controls  
-          if (inlineEnv) inlineEnv.style.display = 'none';
-        }
-        
-        // Dispatch temporal behavior change
+        // Dispatch interpolation change
         this._updatePendingState({
-          type: 'SET_TEMPORAL_BEHAVIOR',
+          type: 'SET_INTERPOLATION',
           param: paramName,
-          behavior: isEnv ? 'envelope' : 'static'
+          interpolation: interpolation
         });
+        
+        // Update UI visibility based on interpolation type
+        this._updateInterpolationUI(paramName);
+        
+        console.log(`🎛️ Set ${paramName} interpolation to: ${interpolation}`);
+        this.markPendingChanges();
+      });
+    }
+
+    // Handle end value input changes
+    if (endValueInput) {
+      endValueInput.addEventListener('input', () => {
+        this._handleValueInput(paramName, endValueInput.value, 'end');
         this.markPendingChanges();
       });
     }
@@ -551,40 +559,7 @@ class ControlClient {
     // Handle text input changes
     if (textInput) {
       textInput.addEventListener('input', () => {
-        const inputValue = textInput.value.trim();
-        const currentMode = modeSelect?.value || 'direct';
-        
-        if (currentMode === 'direct') {
-          // Parse direct value from input
-          let directValue;
-          if (inputValue.includes('-')) {
-            // Range format: use average of range
-            const [min, max] = inputValue.split('-').map(v => parseFloat(v.trim()));
-            if (!isNaN(min) && !isNaN(max)) {
-              directValue = (min + max) / 2;
-            }
-          } else {
-            // Single value format
-            const value = parseFloat(inputValue);
-            if (!isNaN(value)) {
-              directValue = value;
-            }
-          }
-          
-          if (directValue !== undefined) {
-            this._updatePendingState({
-              type: 'SET_DIRECT_VALUE',
-              param: paramName,
-              value: directValue
-            });
-          }
-        } else {
-          // Program mode: update generator configuration
-          // TODO: Handle program mode text input
-          // This will involve parsing the input and determining if it's a range
-          // and updating the appropriate generator config
-        }
-        
+        this._handleValueInput(paramName, textInput.value, 'start');
         this.markPendingChanges();
       });
       
@@ -596,103 +571,18 @@ class ControlClient {
         }
       });
     }
-    
-    // Handle envelope type changes
-    const envTypeSelect = document.getElementById(`${paramName}-env-type`);
-    if (envTypeSelect) {
-      envTypeSelect.addEventListener('change', () => {
-        this._updatePendingState({
-          type: 'SET_ENV_TYPE',
-          param: paramName,
-          envType: envTypeSelect.value
-        });
-        this.markPendingChanges();
-      });
-    }
-    
-    // Handle intensity changes
-    const intensityInput = document.getElementById(`${paramName}-intensity`);
+
+    // Handle intensity input changes
     if (intensityInput) {
       intensityInput.addEventListener('input', () => {
+        const intensity = parseFloat(intensityInput.value) || 0.5;
         this._updatePendingState({
           type: 'SET_INTENSITY',
           param: paramName,
-          intensity: parseFloat(intensityInput.value)
+          intensity: intensity
         });
         this.markPendingChanges();
       });
-    }
-    
-    // Handle HRG/randomizer buttons (start and end)
-    const startHrgControls = document.getElementById(`${paramName}-start-hrg-controls`);
-    const startRndControls = document.getElementById(`${paramName}-start-rnd-controls`);
-    const endHrgControls = document.getElementById(`${paramName}-end-hrg-controls`);
-    const endRndControls = document.getElementById(`${paramName}-end-rnd-controls`);
-    
-    if (startRandomizerBtn) {
-      const toggleStartControls = () => {
-        // Choose between HRG controls (frequency) or RND controls (normalized parameters)
-        const controls = startHrgControls || startRndControls;
-        if (controls) {
-          const isHidden = controls.style.display === 'none' || !controls.style.display;
-          controls.style.display = isHidden ? 'block' : 'none';
-          startRandomizerBtn.classList.toggle('active', !isHidden);
-          
-          // Focus first input if opening
-          if (!isHidden && controls.querySelector('input[type="text"]')) {
-            setTimeout(() => controls.querySelector('input[type="text"]').focus(), 10);
-          }
-          
-          // HRG is always active, button just toggles UI visibility
-          this.markPendingChanges();
-        }
-      };
-      
-      startRandomizerBtn.addEventListener('click', toggleStartControls);
-      startRandomizerBtn.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          toggleStartControls();
-        }
-      });
-      
-      // Add keyboard navigation to HRG controls
-      if (startHrgControls || startRndControls) {
-        this.setupHRGKeyboardNavigation(startHrgControls || startRndControls);
-      }
-    }
-    
-    if (endRandomizerBtn) {
-      const toggleEndControls = () => {
-        // Choose between HRG controls (frequency) or RND controls (normalized parameters)
-        const controls = endHrgControls || endRndControls;
-        if (controls) {
-          const isHidden = controls.style.display === 'none' || !controls.style.display;
-          controls.style.display = isHidden ? 'block' : 'none';
-          endRandomizerBtn.classList.toggle('active', !isHidden);
-          
-          // Focus first input if opening
-          if (!isHidden && controls.querySelector('input[type="text"]')) {
-            setTimeout(() => controls.querySelector('input[type="text"]').focus(), 10);
-          }
-          
-          // HRG is always active, button just toggles UI visibility
-          this.markPendingChanges();
-        }
-      };
-      
-      endRandomizerBtn.addEventListener('click', toggleEndControls);
-      endRandomizerBtn.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          toggleEndControls();
-        }
-      });
-      
-      // Add keyboard navigation to HRG controls
-      if (endHrgControls || endRndControls) {
-        this.setupHRGKeyboardNavigation(endHrgControls || endRndControls);
-      }
     }
     
     // Add input handlers for HRG fields (frequency only)
@@ -733,7 +623,7 @@ class ControlClient {
             type: 'SET_GENERATOR_CONFIG',
             param: 'frequency',
             position: 'start',
-            config: { behavior: startNumBehaviorSelect.value }
+            config: { sequenceBehavior: startNumBehaviorSelect.value }
           });
           this.markPendingChanges();
         });
@@ -745,7 +635,7 @@ class ControlClient {
             type: 'SET_GENERATOR_CONFIG',
             param: 'frequency',
             position: 'start',
-            config: { behavior: startDenBehaviorSelect.value }
+            config: { sequenceBehavior: startDenBehaviorSelect.value }
           });
           this.markPendingChanges();
         });
@@ -787,7 +677,7 @@ class ControlClient {
             type: 'SET_GENERATOR_CONFIG',
             param: 'frequency',
             position: 'end',
-            config: { behavior: endNumBehaviorSelect.value }
+            config: { sequenceBehavior: endNumBehaviorSelect.value }
           });
           this.markPendingChanges();
         });
@@ -799,7 +689,7 @@ class ControlClient {
             type: 'SET_GENERATOR_CONFIG',
             param: 'frequency',
             position: 'end',
-            config: { behavior: endDenBehaviorSelect.value }
+            config: { sequenceBehavior: endDenBehaviorSelect.value }
           });
           this.markPendingChanges();
         });
@@ -810,28 +700,127 @@ class ControlClient {
     this._updateUIFromState(paramName);
     const initialMode = modeSelect.value;
     if (initialMode === 'direct') {
-      if (envModeSelect) envModeSelect.style.display = 'none';
-      if (inlineEnv) inlineEnv.style.display = 'none';
-      if (startRandomizerBtn) {
-        startRandomizerBtn.disabled = true;
-        startRandomizerBtn.style.opacity = '0.3';
-        startRandomizerBtn.title = 'Randomizers not available in direct mode';
+      if (interpSelect) interpSelect.style.display = 'none';
+      if (startHrg) startHrg.style.display = 'none';
+      if (endHrg) endHrg.style.display = 'none';
+      if (endValueInput) endValueInput.style.display = 'none';
+      if (intensityInput) intensityInput.style.display = 'none';
+    } else {
+      if (interpSelect) interpSelect.style.display = 'inline';
+      this._updateInterpolationUI(paramName);
+    }
+  }
+
+  /**
+   * Handle value input changes with smart range detection
+   */
+  private _handleValueInput(paramName: string, inputValue: string, position: 'start' | 'end') {
+    const modeSelect = document.getElementById(`${paramName}-mode`) as HTMLSelectElement;
+    const currentMode = modeSelect?.value || 'direct';
+    const trimmedValue = inputValue.trim();
+    
+    // Auto-switch to program mode if range detected
+    if (trimmedValue.includes('-') && currentMode === 'direct') {
+      modeSelect.value = 'program';
+      modeSelect.dispatchEvent(new Event('change'));
+      // The mode change will trigger UI updates
+      return;
+    }
+    
+    if (currentMode === 'direct') {
+      // Parse direct value from input
+      let directValue;
+      if (trimmedValue.includes('-')) {
+        // Range format: use average of range
+        const [min, max] = trimmedValue.split('-').map(v => parseFloat(v.trim()));
+        if (!isNaN(min) && !isNaN(max)) {
+          directValue = (min + max) / 2;
+        }
+      } else {
+        // Single value format
+        const value = parseFloat(trimmedValue);
+        if (!isNaN(value)) {
+          directValue = value;
+        }
       }
-      if (endRandomizerBtn) {
-        endRandomizerBtn.disabled = true;
-        endRandomizerBtn.style.opacity = '0.3';
-        endRandomizerBtn.title = 'Randomizers not available in direct mode';
+      
+      if (directValue !== undefined) {
+        this._updatePendingState({
+          type: 'SET_DIRECT_VALUE',
+          param: paramName,
+          value: directValue
+        });
       }
     } else {
-      if (startRandomizerBtn) {
-        startRandomizerBtn.disabled = false;
-        startRandomizerBtn.style.opacity = '1';
-        startRandomizerBtn.title = paramName === 'frequency' ? 'Toggle Start HRG' : 'Toggle Start Range Randomizer';
+      // Program mode: update generator configuration based on value type
+      this._updateProgramGenerator(paramName, trimmedValue, position);
+    }
+  }
+
+  /**
+   * Update program generator based on input value (single value or range)
+   */
+  private _updateProgramGenerator(paramName: string, inputValue: string, position: 'start' | 'end') {
+    if (inputValue.includes('-')) {
+      // Range format: create RBG generator
+      const [min, max] = inputValue.split('-').map(v => parseFloat(v.trim()));
+      if (!isNaN(min) && !isNaN(max)) {
+        this._updatePendingState({
+          type: 'SET_GENERATOR_CONFIG',
+          param: paramName,
+          position: position,
+          config: {
+            type: 'normalised',
+            range: { min: Math.min(min, max), max: Math.max(min, max) },
+            sequenceBehavior: 'static'
+          }
+        });
       }
-      if (endRandomizerBtn) {
-        endRandomizerBtn.disabled = false;
-        endRandomizerBtn.style.opacity = '1';
-        endRandomizerBtn.title = paramName === 'frequency' ? 'Toggle End HRG' : 'Toggle End Range Randomizer';
+    } else {
+      // Single value: create constant generator
+      const value = parseFloat(inputValue);
+      if (!isNaN(value)) {
+        this._updatePendingState({
+          type: 'SET_GENERATOR_CONFIG', 
+          param: paramName,
+          position: position,
+          config: {
+            type: 'normalised',
+            range: value,
+            sequenceBehavior: 'static'
+          }
+        });
+      }
+    }
+  }
+
+  /**
+   * Update UI visibility based on current interpolation type
+   */
+  private _updateInterpolationUI(paramName: string) {
+    const paramState = this.pendingMusicalState[paramName as keyof IMusicalState];
+    if (paramState.scope !== 'program') return;
+    
+    const startHrg = document.getElementById(`${paramName}-start-hrg`);
+    const endHrg = document.getElementById(`${paramName}-end-hrg`);
+    const endValueInput = document.getElementById(`${paramName}-end-value`);
+    const intensityInput = document.getElementById(`${paramName}-intensity`);
+    
+    if (paramState.interpolation === 'step') {
+      // Step interpolation: only show start controls
+      if (startHrg) startHrg.style.display = 'inline';
+      if (endHrg) endHrg.style.display = 'none';
+      if (endValueInput) endValueInput.style.display = 'none';
+      if (intensityInput) intensityInput.style.display = 'none';
+    } else {
+      // Linear/cosine/parabolic interpolation: show both start and end controls
+      if (startHrg) startHrg.style.display = 'inline';
+      if (endHrg) endHrg.style.display = 'inline';
+      if (endValueInput) endValueInput.style.display = 'inline';
+      
+      // Show intensity input for parabolic interpolation
+      if (intensityInput) {
+        intensityInput.style.display = paramState.interpolation === 'parabolic' ? 'inline' : 'none';
       }
     }
   }
@@ -850,6 +839,12 @@ class ControlClient {
       modeSelect.value = paramState.scope;
     }
     
+    // Update interpolation select
+    const interpSelect = document.getElementById(`${paramName}-interpolation`) as HTMLSelectElement;
+    if (interpSelect && paramState.scope === 'program') {
+      interpSelect.value = paramState.interpolation;
+    }
+    
     // Update UI based on scope
     if (paramState.scope === 'direct') {
       // Update text input with direct value
@@ -859,29 +854,22 @@ class ControlClient {
       }
       
       // Hide program-mode elements
-      const envModeSelect = document.getElementById(`${paramName}-env-mode`) as HTMLSelectElement;
-      const inlineEnv = document.getElementById(`${paramName}-inline-env`);
-      if (envModeSelect) envModeSelect.style.display = 'none';
-      if (inlineEnv) inlineEnv.style.display = 'none';
+      if (interpSelect) interpSelect.style.display = 'none';
+      const startHrg = document.getElementById(`${paramName}-start-hrg`);
+      const endHrg = document.getElementById(`${paramName}-end-hrg`);
+      const startRbg = document.getElementById(`${paramName}-start-rbg`);
+      const endRbg = document.getElementById(`${paramName}-end-rbg`);
+      if (startHrg) startHrg.style.display = 'none';
+      if (endHrg) endHrg.style.display = 'none';
+      if (startRbg) startRbg.style.display = 'none';
+      if (endRbg) endRbg.style.display = 'none';
       
     } else if (paramState.scope === 'program') {
       // Show program-mode elements
-      const envModeSelect = document.getElementById(`${paramName}-env-mode`) as HTMLSelectElement;
-      if (envModeSelect) {
-        envModeSelect.style.display = 'block';
-        envModeSelect.value = paramState.temporalBehavior === 'envelope' ? 'env' : 'static';
-      }
+      if (interpSelect) interpSelect.style.display = 'inline';
       
-      // Update envelope controls if in envelope mode
-      if (paramState.temporalBehavior === 'envelope') {
-        const inlineEnv = document.getElementById(`${paramName}-inline-env`);
-        const envTypeSelect = document.getElementById(`${paramName}-env-type`) as HTMLSelectElement;
-        const intensityInput = document.getElementById(`${paramName}-intensity`) as HTMLInputElement;
-        
-        if (inlineEnv) inlineEnv.style.display = 'flex';
-        if (envTypeSelect && paramState.envType) envTypeSelect.value = paramState.envType;
-        if (intensityInput && paramState.intensity !== undefined) intensityInput.value = paramState.intensity.toString();
-      }
+      // Update interpolation UI visibility
+      this._updateInterpolationUI(paramName);
       
       // Update generator-specific UI
       if (paramState.startValueGenerator.type === 'periodic') {
@@ -896,8 +884,8 @@ class ControlClient {
         if (startDenInput && paramState.startValueGenerator.denominators) {
           startDenInput.value = paramState.startValueGenerator.denominators;
         }
-        if (startNumBehavior && paramState.startValueGenerator.behavior) {
-          startNumBehavior.value = paramState.startValueGenerator.behavior;
+        if (startNumBehavior && paramState.startValueGenerator.sequenceBehavior) {
+          startNumBehavior.value = paramState.startValueGenerator.sequenceBehavior;
         }
         
         // Update end generator if in envelope mode
@@ -912,8 +900,8 @@ class ControlClient {
           if (endDenInput && paramState.endValueGenerator.denominators) {
             endDenInput.value = paramState.endValueGenerator.denominators;
           }
-          if (endNumBehavior && paramState.endValueGenerator.behavior) {
-            endNumBehavior.value = paramState.endValueGenerator.behavior;
+          if (endNumBehavior && paramState.endValueGenerator.sequenceBehavior) {
+            endNumBehavior.value = paramState.endValueGenerator.sequenceBehavior;
           }
         }
       } else if (paramState.startValueGenerator.type === 'normalised') {
