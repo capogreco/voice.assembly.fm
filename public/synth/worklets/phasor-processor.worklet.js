@@ -123,9 +123,17 @@ class PhasorProcessor extends AudioWorkletProcessor {
       // Update phase
       this.phase += phaseIncrement;
       
-      // Wrap around at 1.0
+      // Wrap around at 1.0 and send cycle reset
       if (this.phase >= 1.0) {
         this.phase -= 1.0;
+        
+        // Send cycle reset message immediately
+        this.port.postMessage({
+          type: 'cycle-reset',
+          sampleIndex: i,
+          blockSize: bufferSize,
+          cycleLength: cycleLength
+        });
       }
       
       // Step boundary detection

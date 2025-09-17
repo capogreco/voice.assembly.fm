@@ -314,6 +314,13 @@ class SynthClient {
         outputChannelCount: [7]  // frequency, zingMorph, zingAmount, vowelX, vowelY, symmetry, amplitude
       });
       
+      // Program worklet message handler (EOC feedback disabled - using phasor reset triggers)
+      // this.programNode.port.onmessage = (event) => {
+      //   if (event.data.type === 'EOC_DETECTED') {
+      //     this.handleEOCFeedback(event.data);
+      //   }
+      // };
+      
       // Create voice worklet with 5 channels output (main + duplicate + F1 + F2 + F3)
       this.voiceNode = new AudioWorkletNode(this.audioContext, 'voice-worklet', {
         numberOfInputs: 1,   // Accept control inputs from program worklet
@@ -605,7 +612,7 @@ class SynthClient {
             temporalBehavior: 'static',
             startValueGenerator: paramData.startValueGenerator
           };
-          console.log(`🎯 Step interpolation for ${paramName}`);
+          // console.log(`🎯 Step interpolation for ${paramName}`);
         } else {
           // Linear/cosine/parabolic interpolation - envelope behavior
           programmaticConfigs[paramName] = {
@@ -626,7 +633,7 @@ class SynthClient {
         type: 'SET_PROGRAM',
         config: programmaticConfigs
       });
-      console.log('✅ Forwarded programmatic configs to program worklet:', programmaticConfigs);
+      // console.log('✅ Forwarded programmatic configs to program worklet:', programmaticConfigs);
     }
   }
 
@@ -668,12 +675,8 @@ class SynthClient {
       // Store the new timing config
       this.timingConfig = newTimingConfig;
       
-      // Only restart scheduler if timing changed or not running
-      if (timingChanged || !this.schedulerTimerId) {
-        console.log(`🔄 Timing changed or scheduler not running - restarting`);
-        this._stopScheduler(); // Stop any existing scheduler
-        this._startScheduler(); // Start new one
-      }
+      // Scheduler disabled - using phasor worklet cycle resets instead
+      // console.log(`📡 Timing config updated, relying on phasor worklet cycle resets`);
     }
     
     // Update legacy phasor worklet (if still needed)
@@ -769,6 +772,10 @@ class SynthClient {
             const rhythmDisplay = this.rhythmEnabled ? ' 🥁' : '';
             this.elements.connectionStatus.textContent = `connected (${this.receivedBpm} bpm, ${this.receivedBeatsPerCycle}/cycle, ♪=${this.workletPhasor.toFixed(3)}${errorDisplay}${rhythmDisplay})`;
           }
+        } else if (event.data.type === 'cycle-reset') {
+          // Phasor worklet has reset - trigger new program worklet ramp
+          // console.log('🔄 Phasor reset detected');
+          this.handleCycleReset(event.data);
         } else if (event.data.type === 'step-trigger') {
           this.onStepTrigger(event.data.step, event.data.stepsPerCycle);
         }
@@ -852,7 +859,7 @@ class SynthClient {
     phaseParam.setValueAtTime(0, startTime);
     phaseParam.linearRampToValueAtTime(1.0, endTime);
     
-    console.log(`🎯 Ramp SCHEDULED: ${startTime.toFixed(3)}s → ${endTime.toFixed(3)}s`);
+    // console.log(`🎯 Ramp SCHEDULED: ${startTime.toFixed(3)}s → ${endTime.toFixed(3)}s`);
   }
 
   _startScheduler() {
@@ -861,8 +868,25 @@ class SynthClient {
       clearTimeout(this.schedulerTimerId);
     }
 
-    // Set the first cycle time and start the scheduler
-    this.nextCycleTime = this.audioContext.currentTime + 0.1; // Start 100ms from now
+    // Calculate synchronized start time based on control's phase
+    const now = this.audioContext.currentTime;
+    let syncedStartTime;
+    
+    if (this.timingConfig && this.timingConfig.phasor !== undefined) {
+      // Calculate how much time is left in the current cycle
+      const currentPhase = this.timingConfig.phasor;
+      const timeUntilNextCycle = (1.0 - currentPhase) * this.timingConfig.cycleLength;
+      
+      // Start the next cycle when control's cycle ends, or minimum 100ms ahead
+      syncedStartTime = now + Math.max(timeUntilNextCycle, 0.1);
+      // console.log(`🎯 Syncing to control phase ${currentPhase.toFixed(3)}, next cycle in ${timeUntilNextCycle.toFixed(3)}s`);
+    } else {
+      // Fallback to arbitrary start if no phase info
+      syncedStartTime = now + 0.1;
+      console.log(`⚠️ No phase info available, starting arbitrarily`);
+    }
+
+    this.nextCycleTime = syncedStartTime;
     this._scheduler();
     
     console.log(`🎬 Look-ahead scheduler started, first cycle at ${this.nextCycleTime.toFixed(3)}s`);
@@ -874,6 +898,26 @@ class SynthClient {
       this.schedulerTimerId = null;
       console.log(`🛑 Look-ahead scheduler stopped`);
     }
+  }
+
+  handleCycleReset(resetData) {
+    if (!this.programNode) return;
+    
+    // Calculate when the reset actually occurred
+    const resetTime = this.audioContext.currentTime - 
+      ((resetData.blockSize - resetData.sampleIndex) / this.audioContext.sampleRate);
+    
+    // Schedule new phase ramp immediately
+    const phaseParam = this.programNode.parameters.get('phase');
+    const cycleLength = resetData.cycleLength;
+    const rampEndTime = resetTime + cycleLength;
+    
+    console.log(`🎯 Scheduling ramp: ${resetTime.toFixed(3)}s → ${rampEndTime.toFixed(3)}s`);
+    
+    // Cancel any existing automation and set phase to 0 at reset time
+    phaseParam.cancelScheduledValues(resetTime);
+    phaseParam.setValueAtTime(0, resetTime);
+    phaseParam.linearRampToValueAtTime(1.0, rampEndTime);
   }
 
   sendPhaseCorrection() {

@@ -288,7 +288,7 @@ class ProgramWorklet extends AudioWorkletProcessor {
       if (eoc) {
         // EOC detected - trigger envelope updates
         this.triggerEnvelopes();
-        console.log('🔔 EOC detected - triggering envelopes');
+        console.log('🔔 Program EOC detected');
       }
       
       // Update envelopes using current phase as progress
