@@ -495,6 +495,7 @@ class ControlClient {
     // Get inline control elements based on parameter type
     const startHrg = document.getElementById(`${paramName}-start-hrg`);
     const endHrg = document.getElementById(`${paramName}-end-hrg`);
+    const hrgArrow = document.getElementById(`${paramName}-hrg-arrow`);
     const endValueInput = document.getElementById(`${paramName}-end-value`);
     const intensityInput = document.getElementById(`${paramName}-intensity`);
     
@@ -517,6 +518,7 @@ class ControlClient {
         if (interpSelect) interpSelect.style.display = 'none';
         if (startHrg) startHrg.style.display = 'none';
         if (endHrg) endHrg.style.display = 'none';
+        if (hrgArrow) hrgArrow.style.display = 'none';
         if (endValueInput) endValueInput.style.display = 'none';
         if (intensityInput) intensityInput.style.display = 'none';
       } else {
@@ -623,7 +625,7 @@ class ControlClient {
             type: 'SET_GENERATOR_CONFIG',
             param: 'frequency',
             position: 'start',
-            config: { sequenceBehavior: startNumBehaviorSelect.value }
+            config: { numeratorBehavior: startNumBehaviorSelect.value }
           });
           this.markPendingChanges();
         });
@@ -635,7 +637,7 @@ class ControlClient {
             type: 'SET_GENERATOR_CONFIG',
             param: 'frequency',
             position: 'start',
-            config: { sequenceBehavior: startDenBehaviorSelect.value }
+            config: { denominatorBehavior: startDenBehaviorSelect.value }
           });
           this.markPendingChanges();
         });
@@ -677,7 +679,7 @@ class ControlClient {
             type: 'SET_GENERATOR_CONFIG',
             param: 'frequency',
             position: 'end',
-            config: { sequenceBehavior: endNumBehaviorSelect.value }
+            config: { numeratorBehavior: endNumBehaviorSelect.value }
           });
           this.markPendingChanges();
         });
@@ -689,7 +691,7 @@ class ControlClient {
             type: 'SET_GENERATOR_CONFIG',
             param: 'frequency',
             position: 'end',
-            config: { sequenceBehavior: endDenBehaviorSelect.value }
+            config: { denominatorBehavior: endDenBehaviorSelect.value }
           });
           this.markPendingChanges();
         });
@@ -703,6 +705,7 @@ class ControlClient {
       if (interpSelect) interpSelect.style.display = 'none';
       if (startHrg) startHrg.style.display = 'none';
       if (endHrg) endHrg.style.display = 'none';
+      if (hrgArrow) hrgArrow.style.display = 'none';
       if (endValueInput) endValueInput.style.display = 'none';
       if (intensityInput) intensityInput.style.display = 'none';
     } else {
@@ -803,6 +806,7 @@ class ControlClient {
     
     const startHrg = document.getElementById(`${paramName}-start-hrg`);
     const endHrg = document.getElementById(`${paramName}-end-hrg`);
+    const hrgArrow = document.getElementById(`${paramName}-hrg-arrow`);
     const endValueInput = document.getElementById(`${paramName}-end-value`);
     const intensityInput = document.getElementById(`${paramName}-intensity`);
     
@@ -810,11 +814,13 @@ class ControlClient {
       // Step interpolation: only show start controls
       if (startHrg) startHrg.style.display = 'inline';
       if (endHrg) endHrg.style.display = 'none';
+      if (hrgArrow) hrgArrow.style.display = 'none';
       if (endValueInput) endValueInput.style.display = 'none';
       if (intensityInput) intensityInput.style.display = 'none';
     } else {
       // Linear/cosine/parabolic interpolation: show both start and end controls
       if (startHrg) startHrg.style.display = 'inline';
+      if (hrgArrow) hrgArrow.style.display = 'inline';
       if (endHrg) endHrg.style.display = 'inline';
       if (endValueInput) endValueInput.style.display = 'inline';
       

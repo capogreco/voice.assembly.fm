@@ -119,7 +119,8 @@ class ProgramWorklet extends AudioWorkletProcessor {
         // Parse numerators and denominators
         const numerators = this.parseSIN(generator.numerators || '1');
         const denominators = this.parseSIN(generator.denominators || '1');
-        const behavior = generator.behavior || 'static';
+        const numeratorBehavior = generator.numeratorBehavior || 'static';
+        const denominatorBehavior = generator.denominatorBehavior || 'static';
         const baseValue = generator.baseValue || 440;
         
         // Get or initialize counter for this parameter
@@ -132,7 +133,7 @@ class ProgramWorklet extends AudioWorkletProcessor {
         
         // Select numerator based on behavior
         let selectedNumerator;
-        switch (behavior) {
+        switch (numeratorBehavior) {
           case 'static':
             selectedNumerator = numerators[0];
             break;
@@ -155,8 +156,39 @@ class ProgramWorklet extends AudioWorkletProcessor {
             selectedNumerator = numerators[0];
         }
         
-        const selectedDenominator = denominators[0] || 1; // Usually denominators are static
-        if (selectedDenominator === 0) return baseValue; // Prevent division by zero
+        // Get or initialize counter for denominators
+        const denomCounterKey = `${paramName}_denominator`;
+        if (!this.programCounters.has(denomCounterKey)) {
+          this.programCounters.set(denomCounterKey, 0);
+        }
+        
+        let denomIndex = this.programCounters.get(denomCounterKey);
+        
+        // Select denominator based on behavior
+        let selectedDenominator;
+        switch (denominatorBehavior) {
+          case 'static':
+            selectedDenominator = denominators[0];
+            break;
+          case 'ascending':
+            selectedDenominator = denominators[denomIndex % denominators.length];
+            this.programCounters.set(denomCounterKey, denomIndex + 1);
+            break;
+          case 'descending':
+            selectedDenominator = denominators[(denominators.length - 1 - denomIndex) % denominators.length];
+            this.programCounters.set(denomCounterKey, denomIndex + 1);
+            break;
+          case 'random':
+            selectedDenominator = denominators[Math.floor(Math.random() * denominators.length)];
+            break;
+          case 'shuffle':
+            selectedDenominator = denominators[Math.floor(Math.random() * denominators.length)];
+            break;
+          default:
+            selectedDenominator = denominators[0];
+        }
+        
+        selectedDenominator = selectedDenominator || 1; // Prevent division by zero
         
         const ratio = selectedNumerator / selectedDenominator;
         

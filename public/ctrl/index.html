@@ -922,24 +922,16 @@
             width: 35px;
         }
 
-        /* Inline HRG and RBG Controls */
-        .hrg-inline, .rbg-inline {
+        /* HRG Fraction Controls */
+        .hrg-fraction {
             display: inline-flex;
             align-items: center;
-            gap: 2px;
-            font-size: 8px;
-            color: #666;
+            gap: 4px;
             margin-left: 4px;
         }
 
-        .hrg-input, .rbg-input {
-            background: #111;
-            border: 1px solid #333;
-            color: #888;
-            font-family: inherit;
-            font-size: 8px;
-            padding: 1px 3px;
-            width: 35px;
+        .hrg-fraction .text-input {
+            width: 60px;
         }
 
         .hrg-behavior {
@@ -947,15 +939,28 @@
             border: 1px solid #333;
             color: #888;
             font-family: inherit;
-            font-size: 8px;
-            padding: 1px 2px;
-            width: 18px;
+            font-size: 9px;
+            padding: 2px 4px;
+            width: 30px;
         }
 
-        .hrg-input:focus, .rbg-input:focus, .hrg-behavior:focus {
+        .hrg-behavior:focus {
             outline: none;
             border-color: #666;
             color: #f0f0f0;
+        }
+
+        .hrg-slash {
+            color: #666;
+            font-size: 12px;
+            font-weight: bold;
+            margin: 0 2px;
+        }
+
+        .hrg-arrow {
+            color: #666;
+            font-size: 12px;
+            margin: 0 6px;
         }
 
         .intensity-input {
@@ -1026,8 +1031,8 @@
                         <option value="cosine">cos</option>
                         <option value="parabolic">par</option>
                     </select>
-                    <span class="hrg-inline" id="frequency-start-hrg" style="display: none;">
-                        n:<input type="text" class="hrg-input" id="frequency-start-numerators" value="1" placeholder="1-6">
+                    <span class="hrg-fraction" id="frequency-start-hrg" style="display: none;">
+                        <input type="text" class="text-input" id="frequency-start-numerators" value="1" placeholder="1-6">
                         <select class="hrg-behavior" id="frequency-start-numerators-behavior">
                             <option value="static">s</option>
                             <option value="ascending">a</option>
@@ -1035,10 +1040,19 @@
                             <option value="random">r</option>
                             <option value="shuffle">sh</option>
                         </select>
-                        d:<input type="text" class="hrg-input" id="frequency-start-denominators" value="1">
+                        <span class="hrg-slash">/</span>
+                        <input type="text" class="text-input" id="frequency-start-denominators" value="1" placeholder="1">
+                        <select class="hrg-behavior" id="frequency-start-denominators-behavior">
+                            <option value="static">s</option>
+                            <option value="ascending">a</option>
+                            <option value="descending">d</option>
+                            <option value="random">r</option>
+                            <option value="shuffle">sh</option>
+                        </select>
                     </span>
-                    <span class="hrg-inline" id="frequency-end-hrg" style="display: none;">
-                        n:<input type="text" class="hrg-input" id="frequency-end-numerators" value="1" placeholder="1-6">
+                    <span class="hrg-arrow" id="frequency-hrg-arrow" style="display: none;">→</span>
+                    <span class="hrg-fraction" id="frequency-end-hrg" style="display: none;">
+                        <input type="text" class="text-input" id="frequency-end-numerators" value="1" placeholder="1-6">
                         <select class="hrg-behavior" id="frequency-end-numerators-behavior">
                             <option value="static">s</option>
                             <option value="ascending">a</option>
@@ -1046,7 +1060,15 @@
                             <option value="random">r</option>
                             <option value="shuffle">sh</option>
                         </select>
-                        d:<input type="text" class="hrg-input" id="frequency-end-denominators" value="1">
+                        <span class="hrg-slash">/</span>
+                        <input type="text" class="text-input" id="frequency-end-denominators" value="1" placeholder="1">
+                        <select class="hrg-behavior" id="frequency-end-denominators-behavior">
+                            <option value="static">s</option>
+                            <option value="ascending">a</option>
+                            <option value="descending">d</option>
+                            <option value="random">r</option>
+                            <option value="shuffle">sh</option>
+                        </select>
                     </span>
                     <input type="text" class="intensity-input" id="frequency-intensity" value="0.5" placeholder="0.5" style="display: none;" title="Curve intensity for parabolic">
                 </div>
