@@ -15,20 +15,38 @@ class SynthClient {
     
     // Audio synthesis
     this.masterGain = null;
-    this.formantNode = null;
+    this.formantNode = null; // Legacy - will be replaced by voiceNode
+    this.voiceNode = null;   // New voice worklet for pure DSP
+    this.programNode = null; // New program worklet for timing/control
     this.isCalibrationMode = false;
-    this.isManualControlMode = false; // Track if we're using manual ctrl parameters
+    this.synthesisActive = false; // Track if synthesis is active
     this.noiseNode = null;
+    
+    // Parameter output mapping for routing
+    this.paramOutputMapping = {
+      frequency: 0,
+      zingMorph: 1,
+      zingAmount: 2,
+      vowelX: 3,
+      vowelY: 4,
+      symmetry: 5,
+      amplitude: 6
+    };
+    
+    // Audio graph components for parameter routing
+    this.parameterSwitches = null;
+    this.channelSplitter = null;
+    this.channelMerger = null;
     
     // UI state
     this.currentState = 'join'; // 'join', 'connecting', 'active'
     this.volume = 0.1;
     
     // Store received state for application after audio init
-    this.lastMusicalParams = null;
+    this.lastSynthParams = null;
     
-    // Randomization configuration
-    this.randomizationConfig = null;
+    // Program configuration
+    this.program = null;
     this.randomSeed = this.hashString(this.peerId); // Unique seed per synth
     
     // Phasor synchronization
@@ -55,6 +73,13 @@ class SynthClient {
     // PLL (Phase-Locked Loop) settings
     this.pllCorrectionFactor = 0.1;     // How aggressively to correct phase errors (0.1 = gentle)
     this.pllEnabled = true;             // Enable/disable phase correction
+    
+    // Look-ahead scheduler settings
+    this.timingConfig = null;           // Official timing from controller
+    this.schedulerLookahead = 0.1;      // Schedule ramps 100ms ahead
+    this.schedulerInterval = 25;        // Check every 25ms
+    this.nextCycleTime = null;          // When the next cycle should start
+    this.schedulerTimerId = null;       // setTimeout ID for scheduler
     
     // Rhythm settings
     this.rhythmEnabled = false;         // Enable/disable rhythmic events
@@ -118,6 +143,28 @@ class SynthClient {
     // Auto-connect to network on page load
     this.autoConnect();
   }
+
+  /**
+   * Core routing logic - the "switchboard operator"
+   * Manages whether parameters come from main thread or program worklet
+   */
+  _updateParameterRouting(paramName, mode) {
+    if (!this.voiceNode || !this.programNode || !this.parameterSwitches) return;
+    
+    const gainNode = this.parameterSwitches[paramName];
+    if (!gainNode) return;
+    
+    if (mode === 'direct') {
+      // Turn off program worklet input for this parameter (use AudioParam)
+      gainNode.gain.setTargetAtTime(0, this.audioContext.currentTime, 0.015);
+      console.log(`🔌 Route for '${paramName}': Main Thread -> Voice`);
+    } else { // mode is 'program'
+      // Turn on program worklet input for this parameter
+      gainNode.gain.setTargetAtTime(1, this.audioContext.currentTime, 0.015);
+      console.log(`🔌 Route for '${paramName}': Program -> Voice`);
+    }
+  }
+
 
   setupEventHandlers() {
     // Join button
@@ -243,9 +290,9 @@ class SynthClient {
     // Apply any pending calibration state
     if (this.isCalibrationMode) {
       
-      // Disconnect formant synthesis during calibration
-      if (this.formantNode) {
-        this.formantNode.disconnect();
+      // Disconnect voice synthesis during calibration
+      if (this.voiceNode) {
+        this.voiceNode.disconnect();
       }
       
       this.startWhiteNoise(0.1);
@@ -256,39 +303,53 @@ class SynthClient {
 
   async initializeFormantSynthesis() {
     try {
-      // Load the worklet module
-      await this.audioContext.audioWorklet.addModule('./worklets/vowel-synth.worklet.js');
+      // Load both worklet modules
+      await this.audioContext.audioWorklet.addModule('./worklets/program-worklet.js');
+      await this.audioContext.audioWorklet.addModule('./worklets/voice-worklet.js');
       
-      // Create the worklet node with 5 channels output (main + duplicate + F1 + F2 + F3)
-      this.formantNode = new AudioWorkletNode(this.audioContext, 'vowel-synth', {
+      // Create program worklet with 7 outputs (one per parameter)
+      this.programNode = new AudioWorkletNode(this.audioContext, 'program-worklet', {
         numberOfInputs: 0,
         numberOfOutputs: 1,
-        outputChannelCount: [5]  // Main, duplicate, F1, F2, F3
+        outputChannelCount: [7]  // frequency, zingMorph, zingAmount, vowelX, vowelY, symmetry, amplitude
       });
       
-      // Connect directly to master gain
-      this.formantNode.connect(this.masterGain);
+      // Create voice worklet with 5 channels output (main + duplicate + F1 + F2 + F3)
+      this.voiceNode = new AudioWorkletNode(this.audioContext, 'voice-worklet', {
+        numberOfInputs: 1,   // Accept control inputs from program worklet
+        numberOfOutputs: 1,
+        inputChannelCount: [7],   // 7 control channels from program worklet
+        outputChannelCount: [5]   // Main, duplicate, F1, F2, F3
+      });
       
-      // Set up formant worklet message handler
-      this.formantNode.port.onmessage = (event) => {
-        if (event.data.type === 'apply-scheduled-parameters') {
-          this.applyScheduledParametersFromWorklet(event.data.parameters);
-        } else if (event.data.type === 'randomized-parameters') {
-          this.applyRandomizedParametersFromWorklet(event.data.parameters);
-        }
-      };
+      // Create gain node switches for each parameter channel
+      this.parameterSwitches = {};
+      this.channelSplitter = this.audioContext.createChannelSplitter(7);
+      this.channelMerger = this.audioContext.createChannelMerger(7);
+      
+      // Connect program worklet to channel splitter
+      this.programNode.connect(this.channelSplitter);
+      
+      // Create a gain node switch for each parameter
+      const paramNames = ['frequency', 'zingMorph', 'zingAmount', 'vowelX', 'vowelY', 'symmetry', 'amplitude'];
+      paramNames.forEach((paramName, index) => {
+        const gainNode = this.audioContext.createGain();
+        gainNode.gain.value = 0; // Default to off (direct mode)
+        this.parameterSwitches[paramName] = gainNode;
+        
+        // Connect: splitter → gain switch → merger
+        this.channelSplitter.connect(gainNode, index);
+        gainNode.connect(this.channelMerger, 0, index);
+      });
+      
+      // Connect merger to voice worklet
+      this.channelMerger.connect(this.voiceNode);
+      
+      // Connect voice worklet to master gain
+      this.voiceNode.connect(this.masterGain);
       
       // Apply any stored state that was received before audio was ready
       this.applyStoredState();
-      
-      // Send randomization config if available
-      if (this.randomizationConfig) {
-        this.formantNode.port.postMessage({
-          type: 'randomization-config',
-          config: this.randomizationConfig,
-          synthId: this.peerId
-        });
-      }
       
     } catch (error) {
       console.error('❌ Failed to initialize formant synthesis:', error);
@@ -307,10 +368,10 @@ class SynthClient {
       this.updateConnectionStatus('syncing', 'Calibration mode');
     }
     
-    // Apply musical parameters if they were received before audio was ready
-    if (this.lastMusicalParams) {
-      console.log('🎵 Applying stored musical parameters');
-      this.handleMusicalParameters(this.lastMusicalParams);
+    // Apply synth parameters if they were received before audio was ready
+    if (this.lastSynthParams) {
+      console.log('🎵 Applying stored synth parameters');
+      this.handleSynthParams(this.lastSynthParams);
     }
   }
 
@@ -354,20 +415,24 @@ class SynthClient {
         this.handleCalibrationMode(message);
         break;
         
-      case MessageTypes.MUSICAL_PARAMETERS:
-        this.handleMusicalParameters(message);
+      case MessageTypes.SYNTH_PARAMS:
+        this.handleSynthParams(message);
         break;
 
-      case MessageTypes.SCHEDULE_PARAMETER_UPDATE:
-        this.handleScheduledParameterUpdate(message);
+      case MessageTypes.PROGRAM_UPDATE:
+        this.handleProgramUpdate(message);
+        break;
+      
+      case MessageTypes.DIRECT_PARAM_UPDATE:
+        this.handleDirectParamUpdate(message);
         break;
         
       case MessageTypes.PHASOR_SYNC:
         this.handlePhasorSync(message);
         break;
         
-      case MessageTypes.RANDOMIZATION_CONFIG:
-        this.handleRandomizationConfig(message);
+      case MessageTypes.PROGRAM:
+        this.handleProgramConfig(message);
         break;
         
       default:
@@ -380,9 +445,9 @@ class SynthClient {
     
     if (this.isCalibrationMode) {
       
-      // Disconnect formant synthesis during calibration
-      if (this.formantNode) {
-        this.formantNode.disconnect();
+      // Disconnect voice synthesis during calibration
+      if (this.voiceNode) {
+        this.voiceNode.disconnect();
       }
       
       // Only start white noise if audio context is initialized
@@ -397,12 +462,12 @@ class SynthClient {
     } else {
       this.stopWhiteNoise();
       
-      // Reconnect formant synthesis to master gain
-      if (this.formantNode) {
-        this.formantNode.connect(this.masterGain);
+      // Reconnect voice synthesis to master gain
+      if (this.voiceNode) {
+        this.voiceNode.connect(this.masterGain);
       }
       
-      // Reconnect oscilloscope to formant synthesis
+      // Reconnect oscilloscope to voice synthesis
       this.connectOscilloscopeToFormant();
       
       // Formant synthesis ready for parameter control
@@ -410,9 +475,26 @@ class SynthClient {
     }
   }
 
+  handleDirectParamUpdate(message) {
+    console.log(`🎛️ Direct parameter update: ${message.param} = ${message.value}`);
+    
+    // Handle single direct parameter updates (e.g., from blur events)
+    if (!this.isReadyToReceiveParameters()) {
+      return;
+    }
+
+    this._updateParameterRouting(message.param, 'direct');
+    
+    if (this.voiceNode && this.voiceNode.parameters.has(`${message.param}_in`)) {
+      const audioParam = this.voiceNode.parameters.get(`${message.param}_in`);
+      audioParam.setTargetAtTime(message.value, this.audioContext.currentTime, 0.015);
+      console.log(`🔌 Route for '${message.param}': Main Thread -> Voice`);
+    }
+  }
+
   isReadyToReceiveParameters() {
-    if (!this.formantNode) {
-      console.warn('⚠️ Cannot apply musical parameters: formant synthesis not ready');
+    if (!this.voiceNode || !this.programNode) {
+      console.warn('⚠️ Cannot apply musical parameters: worklets not ready');
       return false;
     }
     
@@ -423,21 +505,21 @@ class SynthClient {
     return true;
   }
 
-  handleMusicalParameters(message) {
+  handleSynthParams(message) {
     // Always store the latest parameters for application after audio init
-    this.lastMusicalParams = message;
+    this.lastSynthParams = message;
     
     // Handle manual mode state changes
-    const wasManualMode = this.isManualControlMode;
-    this.isManualControlMode = message.isManualMode;
+    const wasSynthesisActive = this.synthesisActive;
+    this.synthesisActive = message.synthesisActive;
     
     // Update synthesis status display
-    this.updateSynthesisStatus(this.isManualControlMode);
+    this.updateSynthesisStatus(this.synthesisActive);
     
     // If exiting manual mode, stop synthesis
-    if (wasManualMode && !this.isManualControlMode) {
-      if (this.formantNode) {
-        this.formantNode.parameters.get('active').value = 0;
+    if (wasSynthesisActive && !this.synthesisActive) {
+      if (this.voiceNode) {
+        this.voiceNode.parameters.get('active').value = 0;
       }
       return;
     }
@@ -448,7 +530,7 @@ class SynthClient {
     }
     
     // If not in manual mode, don't apply parameters
-    if (!this.isManualControlMode) {
+    if (!this.synthesisActive) {
       return;
     }
     
@@ -465,156 +547,97 @@ class SynthClient {
       });
     }
     
-    // Apply parameters to AudioWorklet with envelope support
-    this.applyParameterWithEnvelope('frequency', message.frequency);
-    this.applyParameterWithEnvelope('vowelX', message.vowelX);
-    this.applyParameterWithEnvelope('vowelY', message.vowelY);
-    this.applyParameterWithEnvelope('zingAmount', message.zingAmount);
-    this.applyParameterWithEnvelope('zingMorph', message.zingMorph);
-    this.applyParameterWithEnvelope('symmetry', message.symmetry);
-    this.applyParameterWithEnvelope('amplitude', message.amplitude);
-    
-    this.formantNode.parameters.get('active').value = 1;
+    // Legacy handleSynthParams - parameters now handled by PROGRAM_UPDATE
+    console.log('⚠️ handleSynthParams is deprecated - use PROGRAM_UPDATE instead');
     
   }
 
   /**
-   * Apply a parameter value that may be static or have envelope configuration
+   * OBSOLETE - Apply a parameter value that may be static or have envelope configuration
+   * This method is deprecated in the two-worklet architecture
    */
-  applyParameterWithEnvelope(paramName, paramValue) {
-    if (!this.formantNode) return;
-    
-    // Declare variables at function scope to avoid reference errors
-    let startVal = 0;
-    let endVal = 0;
-    let backwardCompatValue = 0;
-    
-    // Check if the parameter is a simple value or envelope object
-    if (typeof paramValue === 'number') {
-      // Legacy format: simple static value
-      this.formantNode.parameters.get(`${paramName}_static`).value = 1; // Static mode
-      this.formantNode.parameters.get(`${paramName}_startValue`).value = paramValue;
-      backwardCompatValue = paramValue;
-    } else if (paramValue && typeof paramValue === 'object') {
-      // New format: envelope configuration object
-      const isStatic = paramValue.static !== undefined ? paramValue.static : true;
-      
-      if (isStatic) {
-        // Static mode - extract single value from potentially complex startValue
-        if (paramValue.value !== undefined) {
-          startVal = paramValue.value;
-        } else if (typeof paramValue.startValue === 'object') {
-          // If startValue is a range object, take the min value for static mode
-          startVal = paramValue.startValue.min || 0;
-        } else {
-          startVal = paramValue.startValue || 0;
-        }
-        
-        this.formantNode.parameters.get(`${paramName}_static`).value = 1;
-        this.formantNode.parameters.get(`${paramName}_startValue`).value = startVal;
-        backwardCompatValue = startVal;
-      } else {
-        // Envelope mode
-        this.formantNode.parameters.get(`${paramName}_static`).value = 0;
-        
-        // Handle startValue (can be single value or range object)
-        if (paramValue.startValue && typeof paramValue.startValue === 'object') {
-          // Range mode: generate random value for this synth
-          startVal = this.generateRandomValueInRange(
-            paramValue.startValue.min, 
-            paramValue.startValue.max, 
-            `${paramName}_start`
-          );
-        } else {
-          startVal = paramValue.startValue || 0;
-        }
-        this.formantNode.parameters.get(`${paramName}_startValue`).value = startVal;
-        
-        // Handle endValue (can be single value or range object)
-        if (paramValue.endValue && typeof paramValue.endValue === 'object') {
-          // Range mode: generate random value for this synth
-          endVal = this.generateRandomValueInRange(
-            paramValue.endValue.min, 
-            paramValue.endValue.max, 
-            `${paramName}_end`
-          );
-        } else {
-          endVal = paramValue.endValue || paramValue.startValue || startVal;
-        }
-        this.formantNode.parameters.get(`${paramName}_endValue`).value = endVal;
-        
-        // Map envelope types to numeric values for worklet
-        let envTypeValue = 0; // default 'lin'
-        if (paramValue.envType === 'cos') {
-          envTypeValue = 0.5;
-        } else if (paramValue.envType === 'par') {
-          envTypeValue = 1;
-        }
-        this.formantNode.parameters.get(`${paramName}_envType`).value = envTypeValue;
-        this.formantNode.parameters.get(`${paramName}_envIntensity`).value = 
-            paramValue.intensity !== undefined ? paramValue.intensity : 0.5;
-        
-        backwardCompatValue = startVal; // Use start value for backward compatibility
-      }
-    }
-    
-    // Set the main parameter for backward compatibility - always use a number
-    this.formantNode.parameters.get(paramName).value = backwardCompatValue;
-  }
+  // applyParameterWithEnvelope(paramName, paramValue) {
+  //   // Method removed - parameters now handled by direct routing or program worklet
+  // }
 
-  handleScheduledParameterUpdate(message) {
-    // Store the scheduled parameters to apply at next EOC
-    this.scheduledParams = message;
-    
-    if (!this.formantNode) {
-      console.warn('⚠️ Cannot schedule parameter update: formant synthesis not ready');
+  handleProgramUpdate(message) {
+    console.log('📨 PROGRAM_UPDATE received:', message);
+    if (!this.voiceNode || !this.programNode) {
+      console.warn('⚠️ Cannot handle program update: worklets not ready');
       return;
     }
-    
-    // Send scheduled parameters to worklet for EOC application
-    this.formantNode.port.postMessage({
-      type: 'schedule-parameter-update',
-      parameters: {
-        frequency: message.frequency,
-        vowelX: message.vowelX,
-        vowelY: message.vowelY,
-        zingAmount: message.zingAmount,
-        zingMorph: message.zingMorph,
-        symmetry: message.symmetry,
-        amplitude: message.amplitude
-      }
-    });
-  }
 
-  applyScheduledParametersFromWorklet(parameters) {
-    if (!this.formantNode || !parameters) return;
-    
-    // Apply each parameter by setting the corresponding AudioParam
-    for (const [paramName, paramValue] of Object.entries(parameters)) {
-      this.applyParameterWithEnvelope(paramName, paramValue);
+    const program = message;
+    const programmaticConfigs = {};
+
+    // Handle synthesis active state
+    if (message.synthesisActive !== undefined) {
+      if (this.voiceNode && this.voiceNode.parameters.has('active')) {
+        const activeParam = this.voiceNode.parameters.get('active');
+        activeParam.value = message.synthesisActive ? 1 : 0;
+        console.log(`🎵 Synthesis ${message.synthesisActive ? 'enabled' : 'disabled'}`);
+      }
     }
-  }
 
-  applyRandomizedParametersFromWorklet(parameters) {
-    if (!this.formantNode || !parameters) return;
-    
-    // Apply randomized values by updating envelope start/end values
-    for (const [paramName, paramData] of Object.entries(parameters)) {
-      if (paramData.startValue !== undefined) {
-        const startParam = this.formantNode.parameters.get(`${paramName}_startValue`);
-        if (startParam) {
-          startParam.value = paramData.startValue;
-        }
-      }
+    for (const paramName in program) {
+      // Skip non-parameter fields
+      if (['type', 'timestamp', 'synthesisActive', 'isManualMode'].includes(paramName)) continue;
       
-      if (paramData.endValue !== undefined) {
-        const endParam = this.formantNode.parameters.get(`${paramName}_endValue`);
-        if (endParam) {
-          endParam.value = paramData.endValue;
+      const paramData = program[paramName];
+      
+      // Handle discriminated union format based on scope
+      if (paramData.scope === 'direct') {
+        this._updateParameterRouting(paramName, 'direct');
+        
+        if (this.voiceNode.parameters.has(`${paramName}_in`)) {
+          const audioParam = this.voiceNode.parameters.get(`${paramName}_in`);
+          audioParam.setTargetAtTime(paramData.directValue, this.audioContext.currentTime, 0.015);
+          console.log(`🎚️ Applied direct parameter: ${paramName} = ${paramData.directValue}`);
+        }
+        
+      } else if (paramData.scope === 'program') {
+        this._updateParameterRouting(paramName, 'program');
+        
+        // Convert discriminated union to program worklet format
+        if (paramData.interpolation === 'step') {
+          // Step interpolation - constant values between EOCs
+          programmaticConfigs[paramName] = {
+            temporalBehavior: 'static',
+            startValueGenerator: paramData.startValueGenerator
+          };
+          console.log(`🎯 Step interpolation for ${paramName}`);
+        } else {
+          // Linear/cosine/parabolic interpolation - envelope behavior
+          programmaticConfigs[paramName] = {
+            temporalBehavior: 'envelope',
+            startValueGenerator: paramData.startValueGenerator,
+            endValueGenerator: paramData.endValueGenerator,
+            interpolationType: paramData.interpolation,
+            intensity: paramData.intensity
+          };
+          console.log(`📈 ${paramData.interpolation} interpolation for ${paramName}`);
         }
       }
     }
+
+    // Send programmatic configs to program worklet
+    if (Object.keys(programmaticConfigs).length > 0) {
+      this.programNode.port.postMessage({
+        type: 'SET_PROGRAM',
+        config: programmaticConfigs
+      });
+      console.log('✅ Forwarded programmatic configs to program worklet:', programmaticConfigs);
+    }
   }
+
+  // OBSOLETE - These methods were used by the old monolithic worklet
+  // applyProgramUpdateFromWorklet(parameters) {
+  //   // Method removed - worklet communication now handled differently
+  // }
+
+  // applyRandomizedParametersFromWorklet(parameters) {
+  //   // Method removed - randomization now handled in program worklet
+  // }
 
   handlePhasorSync(message) {
     this.receivedPhasor = message.phasor;
@@ -626,7 +649,34 @@ class SynthClient {
     // Calculate phasor rate
     this.phasorRate = 1.0 / this.receivedCycleLength;
     
-    // Update worklet with new cycle length
+    // Store official timing and start look-ahead scheduler if needed
+    if (this.programNode) {
+      console.log(`⏰ Received phasor sync: ${message.cpm} CPM`);
+      
+      // Check if timing has changed significantly
+      const newTimingConfig = {
+        cpm: message.cpm,
+        stepsPerCycle: message.stepsPerCycle,
+        cycleLength: message.cycleLength,
+        phasor: message.phasor
+      };
+      
+      const timingChanged = !this.timingConfig || 
+        this.timingConfig.cpm !== newTimingConfig.cpm ||
+        this.timingConfig.cycleLength !== newTimingConfig.cycleLength;
+      
+      // Store the new timing config
+      this.timingConfig = newTimingConfig;
+      
+      // Only restart scheduler if timing changed or not running
+      if (timingChanged || !this.schedulerTimerId) {
+        console.log(`🔄 Timing changed or scheduler not running - restarting`);
+        this._stopScheduler(); // Stop any existing scheduler
+        this._startScheduler(); // Start new one
+      }
+    }
+    
+    // Update legacy phasor worklet (if still needed)
     this.updatePhasorWorklet();
     
     // Send phase correction to worklet (PLL behavior)
@@ -638,14 +688,14 @@ class SynthClient {
     }
   }
 
-  handleRandomizationConfig(message) {
-    this.randomizationConfig = message.config;
+  handleProgramConfig(message) {
+    this.program = message.config;
     
-    // If formant worklet is available, send config
-    if (this.formantNode && this.randomizationConfig) {
-      this.formantNode.port.postMessage({
-        type: 'randomization-config',
-        config: this.randomizationConfig,
+    // Send config to program worklet for randomization handling
+    if (this.programNode && this.program) {
+      this.programNode.port.postMessage({
+        type: 'SET_PROGRAM',
+        config: this.program,
         synthId: this.peerId
       });
     }
@@ -699,10 +749,10 @@ class SynthClient {
         if (event.data.type === 'phasor-update') {
           this.workletPhasor = event.data.phase;
           
-          // Forward phasor to formant worklet for envelope calculations
-          if (this.formantNode) {
-            this.formantNode.port.postMessage({
-              type: 'phasor-update',
+          // Forward phasor to program worklet for envelope calculations
+          if (this.programNode) {
+            this.programNode.port.postMessage({
+              type: 'PHASOR_UPDATE',
               phase: event.data.phase
             });
           }
@@ -740,6 +790,17 @@ class SynthClient {
       this.phasorWorklet.parameters.get('cycleLength').value = this.receivedCycleLength;
       this.phasorWorklet.parameters.get('stepsPerCycle').value = this.receivedStepsPerCycle;
     }
+    
+    // Also update program worklet with phasor timing
+    if (this.programNode) {
+      this.programNode.port.postMessage({
+        type: 'SET_PHASOR',
+        cpm: this.receivedCpm,
+        stepsPerCycle: this.receivedStepsPerCycle,
+        cycleLength: this.receivedCycleLength,
+        phase: this.receivedPhasor
+      });
+    }
   }
 
   calculatePhaseError(targetPhase, currentPhase) {
@@ -754,6 +815,65 @@ class SynthClient {
     }
     
     return phaseError;
+  }
+
+
+
+  _scheduler() {
+    if (!this.timingConfig || !this.nextCycleTime) {
+      return; // No timing config yet
+    }
+
+    const now = this.audioContext.currentTime;
+    const timeUntilNextCycle = this.nextCycleTime - now;
+
+    // If the next cycle is within our lookahead window, schedule it
+    if (timeUntilNextCycle <= this.schedulerLookahead) {
+      this._schedulePhaseRampAtTime(this.nextCycleTime);
+      
+      // Calculate the time for the cycle after that
+      this.nextCycleTime += this.timingConfig.cycleLength;
+      
+      console.log(`⏰ Ramp PRE-SCHEDULED for ${this.nextCycleTime.toFixed(3)}s (${timeUntilNextCycle.toFixed(3)}s ahead)`);
+    }
+
+    // Schedule the next scheduler check
+    this.schedulerTimerId = setTimeout(() => this._scheduler(), this.schedulerInterval);
+  }
+
+  _schedulePhaseRampAtTime(startTime) {
+    if (!this.programNode || !this.timingConfig) return;
+
+    const phaseParam = this.programNode.parameters.get('phase');
+    const cycleDuration = this.timingConfig.cycleLength;
+    const endTime = startTime + cycleDuration;
+
+    // Schedule the ramp at the precise time
+    phaseParam.setValueAtTime(0, startTime);
+    phaseParam.linearRampToValueAtTime(1.0, endTime);
+    
+    console.log(`🎯 Ramp SCHEDULED: ${startTime.toFixed(3)}s → ${endTime.toFixed(3)}s`);
+  }
+
+  _startScheduler() {
+    // Stop any existing scheduler
+    if (this.schedulerTimerId) {
+      clearTimeout(this.schedulerTimerId);
+    }
+
+    // Set the first cycle time and start the scheduler
+    this.nextCycleTime = this.audioContext.currentTime + 0.1; // Start 100ms from now
+    this._scheduler();
+    
+    console.log(`🎬 Look-ahead scheduler started, first cycle at ${this.nextCycleTime.toFixed(3)}s`);
+  }
+
+  _stopScheduler() {
+    if (this.schedulerTimerId) {
+      clearTimeout(this.schedulerTimerId);
+      this.schedulerTimerId = null;
+      console.log(`🛑 Look-ahead scheduler stopped`);
+    }
   }
 
   sendPhaseCorrection() {
@@ -853,9 +973,9 @@ class SynthClient {
       this.noiseGain.connect(this.masterGain);
       
       
-      // Disconnect formant synthesis during calibration
-      if (this.formantNode) {
-        this.formantNode.disconnect();
+      // Disconnect voice synthesis during calibration
+      if (this.voiceNode) {
+        this.voiceNode.disconnect();
       }
       
     } catch (error) {
@@ -888,7 +1008,7 @@ class SynthClient {
     // Connect to appropriate source based on current mode
     if (this.isCalibrationMode && this.whiteNoiseWorklet) {
       this.connectOscilloscopeToWhiteNoise();
-    } else if (this.formantNode) {
+    } else if (this.voiceNode) {
       this.connectOscilloscopeToFormant();
     }
     
@@ -933,7 +1053,7 @@ class SynthClient {
   }
 
   connectOscilloscopeToFormant() {
-    if (!this.oscilloscope || !this.formantNode) return;
+    if (!this.oscilloscope || !this.voiceNode) return;
     
     
     // Disconnect current oscilloscope connections
@@ -942,12 +1062,12 @@ class SynthClient {
     // Set normal amplification for formant visualization
     this.oscilloscope.calibrationMode = false;
     
-    // Create channel splitter for 5-channel formant output
+    // Create channel splitter for 5-channel voice output
     if (this.formantSplitter) {
       this.formantSplitter.disconnect();
     }
     this.formantSplitter = this.audioContext.createChannelSplitter(5);
-    this.formantNode.connect(this.formantSplitter);
+    this.voiceNode.connect(this.formantSplitter);
     
     // Connect F1 (channel 2) to left, F2 (channel 3) to right for XY scope
     this.formantSplitter.connect(this.oscilloscope.leftAnalyser, 2);  // F1 -> X axis
@@ -1165,8 +1285,12 @@ class SynthClient {
       this.phasorWorklet.disconnect();
     }
     
-    if (this.formantNode) {
-      this.formantNode.disconnect();
+    if (this.voiceNode) {
+      this.voiceNode.disconnect();
+    }
+    
+    if (this.programNode) {
+      this.programNode.disconnect();
     }
     
     this.stopWhiteNoise();

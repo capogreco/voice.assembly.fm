@@ -461,6 +461,46 @@ async function handleRequest(request: Request): Promise<Response> {
     }
   }
 
+  // Intercept requests for TypeScript module files
+  const tsModulePaths = [
+    "/ctrl/ctrl-main.js"
+    // Note: synth-main.js is still a .js file, so it doesn't need TypeScript handling
+  ];
+  
+  if (tsModulePaths.includes(url.pathname)) {
+    const tsPath = url.pathname.replace(".js", ".ts");
+    const filePath = `./public${tsPath}`;
+    
+    try {
+      // Use 'deno bundle' command to transpile the TS file
+      const command = new Deno.Command(Deno.execPath(), {
+        args: ["bundle", filePath],
+        stdout: "piped",
+        stderr: "piped",
+      });
+      
+      const { code, stdout, stderr } = await command.output();
+      
+      if (code !== 0) {
+        const error = new TextDecoder().decode(stderr);
+        console.error(`Error bundling ${filePath}:\n${error}`);
+        return new Response(`Error bundling file: ${error}`, { status: 500 });
+      }
+
+      const compiledJs = new TextDecoder().decode(stdout);
+      
+      return new Response(compiledJs, {
+        headers: {
+          "Content-Type": "application/javascript; charset=utf-8",
+          "Access-Control-Allow-Origin": "*",
+        }
+      });
+    } catch (e) {
+      console.error(`Failed to serve ${url.pathname}:`, e);
+      return new Response("Internal Server Error", { status: 500 });
+    }
+  }
+
   // Use serveDir with urlRoot mapping to handle different directories
   let response;
   

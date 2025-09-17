@@ -15,8 +15,9 @@ export const MessageTypes = {
   PONG: 'pong',
   
   // Parameter Control
-  MUSICAL_PARAMETERS: 'musical-parameters',
-  SCHEDULE_PARAMETER_UPDATE: 'schedule-parameter-update',
+  SYNTH_PARAMS: 'synth-params',
+  PROGRAM_UPDATE: 'program-update',
+  DIRECT_PARAM_UPDATE: 'direct-param-update',
   
   // Timing Control
   PHASOR_SYNC: 'phasor-sync',
@@ -24,7 +25,7 @@ export const MessageTypes = {
   // System Control
   CALIBRATION_MODE: 'calibration-mode',
   SYNTH_READY: 'synth-ready',
-  RANDOMIZATION_CONFIG: 'randomization-config'
+  PROGRAM: 'program'
 };
 
 export class MessageBuilder {
@@ -56,7 +57,7 @@ export class MessageBuilder {
       vowelY: params.vowelY,
       symmetry: params.symmetry,
       amplitude: params.amplitude,
-      isManualMode: params.isManualMode,
+      synthesisActive: params.synthesisActive,
       timestamp: performance.now()
     };
   }
@@ -88,10 +89,19 @@ export class MessageBuilder {
     };
   }
 
-  static randomizationConfig(config) {
+  static program(config) {
     return {
-      type: MessageTypes.RANDOMIZATION_CONFIG,
+      type: MessageTypes.PROGRAM,
       config,
+      timestamp: performance.now()
+    };
+  }
+
+  static directParamUpdate(paramName, value) {
+    return {
+      type: MessageTypes.DIRECT_PARAM_UPDATE,
+      param: paramName,
+      value: value,
       timestamp: performance.now()
     };
   }
@@ -126,8 +136,12 @@ export function validateMessage(message) {
       }
       break;
 
-    case MessageTypes.MUSICAL_PARAMETERS:
-      validateMusicalParameters(message);
+    case MessageTypes.SYNTH_PARAMS:
+      validateSynthParameters(message);
+      break;
+
+    case MessageTypes.PROGRAM_UPDATE:
+      // Program updates can have any parameter structure
       break;
 
     case MessageTypes.PHASOR_SYNC:
@@ -139,9 +153,9 @@ export function validateMessage(message) {
       }
       break;
 
-    case MessageTypes.RANDOMIZATION_CONFIG:
+    case MessageTypes.PROGRAM:
       if (!message.config || typeof message.config !== 'object') {
-        throw new Error('Randomization config message must have config object');
+        throw new Error('Program message must have config object');
       }
       break;
   }
@@ -150,42 +164,52 @@ export function validateMessage(message) {
 }
 
 /**
- * Validate musical parameters message
+ * Validates a synth parameters message against the new, canonical format.
+ * No backward compatibility.
  */
-function validateMusicalParameters(message) {
-  // Validate that frequency exists and is either a number (static) or envelope object
-  if (!message.frequency || 
-      (typeof message.frequency !== 'number' && typeof message.frequency !== 'object')) {
-    throw new Error('Musical parameters message missing or invalid frequency');
+function validateSynthParameters(message) {
+  // --- START NEW, STRICT VALIDATION LOGIC ---
+
+  // A synth parameters message must have a frequency property.
+  if (message.frequency === undefined) {
+    throw new Error('Synth parameters message must have a frequency property.');
   }
-  
-  // Validate envelope object structure if frequency is an object
-  if (typeof message.frequency === 'object') {
-    if (typeof message.frequency.intensity !== 'number' ||
-        typeof message.frequency.envType !== 'string') {
-      throw new Error('Musical parameters frequency envelope object missing required fields');
-    }
+
+  // Iterate over all own properties of the message that are parameters.
+  for (const paramName of Object.keys(message)) {
+    // Skip non-parameter properties.
+    if (['type', 'timestamp', 'synthesisActive', 'isManualMode'].includes(paramName)) continue;
+
+    const paramState = message[paramName];
     
-    // Validate startValue (can be number or range object)
-    if (typeof message.frequency.startValue === 'object') {
-      if (typeof message.frequency.startValue.min !== 'number' ||
-          typeof message.frequency.startValue.max !== 'number') {
-        throw new Error('Musical parameters frequency startValue range missing min/max');
-      }
-    } else if (typeof message.frequency.startValue !== 'number') {
-      throw new Error('Musical parameters frequency startValue must be number or range object');
+    // Every parameter must be a number (direct) or an object (program).
+    if (typeof paramState !== 'number' && typeof paramState !== 'object') {
+      throw new Error(`Parameter '${paramName}' has invalid type. Must be number or object.`);
     }
-    
-    // Validate endValue (can be number or range object)
-    if (typeof message.frequency.endValue === 'object') {
-      if (typeof message.frequency.endValue.min !== 'number' ||
-          typeof message.frequency.endValue.max !== 'number') {
-        throw new Error('Musical parameters frequency endValue range missing min/max');
+
+    if (typeof paramState === 'object' && paramState !== null) {
+      // If it's an object, it MUST be a programmatic parameter.
+      if (!paramState.isProgrammatic) {
+        throw new Error(`Parameter '${paramName}' is an object but is missing 'isProgrammatic' flag.`);
       }
-    } else if (typeof message.frequency.endValue !== 'number') {
-      throw new Error('Musical parameters frequency endValue must be number or range object');
+
+      // It must have a valid temporal behavior.
+      if (paramState.temporalBehavior !== 'static' && paramState.temporalBehavior !== 'envelope') {
+        throw new Error(`Programmatic parameter '${paramName}' has invalid temporalBehavior.`);
+      }
+
+      // It must have a start generator.
+      if (typeof paramState.startValueGenerator !== 'object') {
+        throw new Error(`Programmatic parameter '${paramName}' is missing a valid startValueGenerator.`);
+      }
+
+      // If it's an envelope, it must have an end generator.
+      if (paramState.temporalBehavior === 'envelope' && typeof paramState.endValueGenerator !== 'object') {
+        throw new Error(`Envelope parameter '${paramName}' is missing an endValueGenerator.`);
+      }
     }
   }
+  // --- END NEW, STRICT VALIDATION LOGIC ---
 }
 
 /**

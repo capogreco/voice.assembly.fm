@@ -12,7 +12,7 @@
         }
 
         body {
-            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+            font-family: Monaco, 'Courier New', monospace;
             background: #0a0a0a;
             color: #f0f0f0;
             padding: 15px;
@@ -518,6 +518,75 @@
             min-width: 25px;
         }
 
+        /* Range Randomizer Controls */
+        .range-randomizer-controls {
+            margin: 4px 0;
+            padding: 4px;
+            background-color: #0a0a0a;
+            border: 1px solid #222;
+        }
+        
+        .range-randomizer-line {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 9px;
+        }
+        
+        .range-randomizer-line span {
+            color: #444;
+            font-size: 9px;
+            min-width: 30px;
+        }
+        
+        .range-randomizer-line input[type="number"] {
+            width: 60px;
+            padding: 1px 3px;
+            font-size: 9px;
+            background-color: #111;
+            border: 1px solid #333;
+            color: #f0f0f0;
+        }
+        
+        .range-apply-btn {
+            background: #111;
+            border: 1px solid #333;
+            color: #666;
+            padding: 2px 6px;
+            cursor: pointer;
+            font-size: 10px;
+            min-width: 20px;
+            height: 20px;
+        }
+        
+        .range-apply-btn:hover {
+            background: #1a1a1a;
+            color: #888;
+        }
+
+        /* Randomizer Button Styling */
+        .randomizer-btn {
+            background: #111;
+            border: 1px solid #333;
+            color: #444;
+            padding: 2px 4px;
+            cursor: pointer;
+            font-size: 8px;
+            font-family: inherit;
+            font-weight: normal;
+            transition: all 0.1s;
+            min-width: 42px;
+            max-width: 42px;
+            height: 16px;
+            white-space: nowrap;
+            overflow: hidden;
+        }
+
+        .randomizer-btn:hover {
+            background: #1a1a1a;
+            color: #666;
+        }
+
         /* Randomizer Styles */
         .randomizer-toggle {
             font-size: 14px;
@@ -683,9 +752,9 @@
         }
 
         .randomizer-btn.active {
-            background: #4a7c8a;
-            border-color: #4a7c8a;
-            color: #e0e0e0;
+            background: #222;
+            border-color: #666;
+            color: #fff;
             animation: pulse-randomizer 2s infinite;
         }
 
@@ -716,6 +785,119 @@
             text-align: center;
             font-weight: normal;
             font-family: Monaco, monospace;
+        }
+
+        /* Compact Control Layout */
+        .compact-control {
+            background: #000;
+            border: 1px solid #222;
+            margin-bottom: 6px;
+            padding: 8px;
+        }
+
+        .param-line {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .param-line .param-label {
+            color: #666;
+            font-size: 10px;
+            min-width: 60px;
+            text-transform: lowercase;
+        }
+
+        .text-input {
+            background: #111;
+            border: 1px solid #333;
+            color: #f0f0f0;
+            font-family: inherit;
+            font-size: 10px;
+            padding: 4px 6px;
+            width: 80px;
+        }
+
+        .text-input:focus {
+            outline: none;
+            border-color: #666;
+            background: #1a1a1a;
+        }
+
+        .mode-select, .env-select {
+            background: #111;
+            border: 1px solid #333;
+            color: #888;
+            font-family: inherit;
+            font-size: 10px;
+            padding: 3px 4px;
+            width: 65px;
+        }
+
+        .mode-select:focus, .env-select:focus {
+            outline: none;
+            border-color: #666;
+            color: #f0f0f0;
+        }
+
+        .inline-env {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .env-type-select {
+            background: #111;
+            border: 1px solid #333;
+            color: #888;
+            font-family: inherit;
+            font-size: 9px;
+            padding: 2px 3px;
+            width: 40px;
+        }
+
+        .intensity-input {
+            background: #111;
+            border: 1px solid #333;
+            color: #888;
+            font-family: inherit;
+            font-size: 9px;
+            padding: 2px 4px;
+            width: 40px;
+        }
+
+        .hrg-line {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            margin: 2px 0;
+            font-size: 9px;
+        }
+
+        .hrg-line span {
+            color: #666;
+            min-width: 12px;
+        }
+
+        .hrg-line input {
+            background: #111;
+            border: 1px solid #333;
+            color: #888;
+            font-family: inherit;
+            font-size: 9px;
+            padding: 2px 4px;
+            width: 80px;
+        }
+
+        .hrg-line select {
+            background: #111;
+            border: 1px solid #333;
+            color: #888;
+            font-family: inherit;
+            font-size: 9px;
+            padding: 1px 2px;
+            width: 35px;
         }
 
     </style>
@@ -755,444 +937,333 @@
         <div class="panel">
             <h2>parameters</h2>
             
-            <div class="param-control envelope-control">
-                <div class="param-header">
-                    <div class="param-label">frequency</div>
-                    <label class="static-checkbox">
-                        <input type="checkbox" id="frequency-static" checked>
-                        static
-                    </label>
-                </div>
-                <div class="param-row">
-                    <div class="param-label">start:</div>
-                    <div class="dual-range-slider" data-mode="static" data-param="frequency" data-type="start">
-                        <input type="range" class="range-min" id="frequency-start-min" 
-                               min="80" max="800" step="1" value="220">
-                        <input type="range" class="range-max" id="frequency-start-max" 
-                               min="80" max="800" step="1" value="220">
-                        <div class="slider-track"></div>
-                        <div class="slider-range"></div>
-                    </div>
-                    <span class="value-display" id="frequency-start-display">220</span>
-                    <button class="randomizer-btn" id="frequency-start-randomizer" title="Toggle HRG">[ hrg ]</button>
-                    <div class="param-value" id="frequency-value" style="display: none;">220</div>
-                    <div class="param-suffix" id="frequency-suffix" style="display: none;"> Hz</div>
-                </div>
-                
-                <!-- HRG Controls for frequency start (hidden by default) -->
-                <div class="hrg-controls hrg-compact" id="frequency-start-hrg-controls" style="display: none;">
-                    <div class="hrg-inputs hrg-compact-inputs">
-                        <div class="hrg-compact-line">
-                            <span>n:</span><input type="text" id="frequency-start-numerators" value="1,2,3">
-                            <select id="frequency-start-numerators-behavior">
-                                <option value="static">s</option>
-                                <option value="ascending">a</option>
-                                <option value="descending">d</option>
-                                <option value="shuffle">sh</option>
-                                <option value="random">r</option>
-                            </select>
-                        </div>
-                        <div class="hrg-compact-line">
-                            <span>d:</span><input type="text" id="frequency-start-denominators" value="1,2">
-                            <select id="frequency-start-denominators-behavior">
-                                <option value="static">s</option>
-                                <option value="ascending">a</option>
-                                <option value="descending">d</option>
-                                <option value="shuffle">sh</option>
-                                <option value="random">r</option>
-                            </select>
-                        </div>
+            <div class="param-control compact-control">
+                <div class="param-line">
+                    <span class="param-label">freq</span>
+                    <input type="text" class="text-input" id="frequency-value" value="220" placeholder="220 or 200-240">
+                    <select class="mode-select" id="frequency-mode">
+                        <option value="direct">direct</option>
+                        <option value="program">program</option>
+                    </select>
+                    <select class="env-select" id="frequency-env-mode" style="display: none;">
+                        <option value="static">stat</option>
+                        <option value="env">env</option>
+                    </select>
+                    <button class="randomizer-btn" id="frequency-start-randomizer" title="Toggle Start HRG" tabindex="0">s-hrg</button>
+                    <div class="inline-env" id="frequency-inline-env" style="display: none;">
+                        <button class="randomizer-btn" id="frequency-end-randomizer" title="Toggle End HRG" tabindex="0">e-hrg</button>
+                        <select class="env-type-select" id="frequency-env-type">
+                            <option value="lin">lin</option>
+                            <option value="cos">cos</option>
+                            <option value="par">par</option>
+                        </select>
+                        <input type="text" class="intensity-input" id="frequency-intensity" value="0.5" placeholder="0.5">
                     </div>
                 </div>
                 
-                <!-- Envelope Controls (hidden when static) -->
-                <div class="envelope-section" id="frequency-envelope">
-                    <div class="param-row">
-                        <div class="param-label">end:</div>
-                        <div class="dual-range-slider" data-mode="static" data-param="frequency" data-type="end">
-                            <input type="range" class="range-min" id="frequency-end-min" 
-                                   min="80" max="800" step="1" value="220">
-                            <input type="range" class="range-max" id="frequency-end-max" 
-                                   min="80" max="800" step="1" value="220">
-                            <div class="slider-track"></div>
-                            <div class="slider-range"></div>
-                        </div>
-                        <span class="value-display" id="frequency-end-display">220</span>
-                        <button class="randomizer-btn" id="frequency-end-randomizer" title="Toggle HRG">[ hrg ]</button>
-                        <div class="param-value" id="frequency-end-value" style="display: none;">220</div>
+                <!-- Start HRG Controls (hidden by default) -->
+                <div class="hrg-controls" id="frequency-start-hrg-controls" style="display: none;">
+                    <div class="hrg-line">
+                        <span>start n:</span><input type="text" id="frequency-start-numerators" value="1">
+                        <select id="frequency-start-numerators-behavior">
+                            <option value="static">s</option>
+                            <option value="ascending">a</option>
+                            <option value="descending">d</option>
+                            <option value="shuffle">sh</option>
+                            <option value="random">r</option>
+                        </select>
                     </div>
-                    
-                    <!-- HRG Controls for frequency end (hidden by default) -->
-                    <div class="hrg-controls hrg-compact" id="frequency-end-hrg-controls" style="display: none;">
-                        <div class="hrg-inputs hrg-compact-inputs">
-                            <div class="hrg-compact-line">
-                                <span>n:</span><input type="text" id="frequency-end-numerators" value="1,2,3">
-                                <select id="frequency-end-numerators-behavior">
-                                    <option value="static">S</option>
-                                    <option value="ascending">A</option>
-                                    <option value="descending">D</option>
-                                    <option value="shuffle">Sh</option>
-                                    <option value="random">R</option>
-                                </select>
-                            </div>
-                            <div class="hrg-compact-line">
-                                <span>d:</span><input type="text" id="frequency-end-denominators" value="1,2">
-                                <select id="frequency-end-denominators-behavior">
-                                    <option value="static">S</option>
-                                    <option value="ascending">A</option>
-                                    <option value="descending">D</option>
-                                    <option value="shuffle">Sh</option>
-                                    <option value="random">R</option>
-                                </select>
-                            </div>
-                        </div>
+                    <div class="hrg-line">
+                        <span>start d:</span><input type="text" id="frequency-start-denominators" value="1">
+                        <select id="frequency-start-denominators-behavior">
+                            <option value="static">s</option>
+                            <option value="ascending">a</option>
+                            <option value="descending">d</option>
+                            <option value="shuffle">sh</option>
+                            <option value="random">r</option>
+                        </select>
                     </div>
-                    
-                    <div class="envelope-controls">
-                        <div class="envelope-type">
-                            <label>type:</label>
-                            <label><input type="radio" name="frequency-env-type" value="lin" checked> lin</label>
-                            <label><input type="radio" name="frequency-env-type" value="cos"> cos</label>
-                            <label><input type="radio" name="frequency-env-type" value="par"> par</label>
-                        </div>
-                        
-                        <div class="envelope-intensity">
-                            <label>intensity:</label>
-                            <input type="range" class="slider small-slider" id="frequency-intensity" 
-                                   min="0" max="1" step="0.01" value="0.5">
-                            <span class="param-value small" id="frequency-intensity-value">0.50</span>
-                        </div>
+                </div>
+                
+                <!-- End HRG Controls (hidden by default) -->
+                <div class="hrg-controls" id="frequency-end-hrg-controls" style="display: none;">
+                    <div class="hrg-line">
+                        <span>end n:</span><input type="text" id="frequency-end-numerators" value="1">
+                        <select id="frequency-end-numerators-behavior">
+                            <option value="static">s</option>
+                            <option value="ascending">a</option>
+                            <option value="descending">d</option>
+                            <option value="shuffle">sh</option>
+                            <option value="random">r</option>
+                        </select>
+                    </div>
+                    <div class="hrg-line">
+                        <span>end d:</span><input type="text" id="frequency-end-denominators" value="1">
+                        <select id="frequency-end-denominators-behavior">
+                            <option value="static">s</option>
+                            <option value="ascending">a</option>
+                            <option value="descending">d</option>
+                            <option value="shuffle">sh</option>
+                            <option value="random">r</option>
+                        </select>
                     </div>
                 </div>
             </div>
 
-            <div class="param-control envelope-control">
-                <div class="param-header">
-                    <div class="param-label">vowel x</div>
-                    <label class="static-checkbox">
-                        <input type="checkbox" id="vowelX-static" checked>
-                        static
-                    </label>
-                </div>
-                <div class="param-row">
-                    <div class="param-label">start:</div>
-                    <div class="dual-range-slider" data-mode="static" data-param="vowelX" data-type="start">
-                        <input type="range" class="range-min" id="vowelX-start-min" 
-                               min="0" max="1" step="0.01" value="0.5">
-                        <input type="range" class="range-max" id="vowelX-start-max" 
-                               min="0" max="1" step="0.01" value="0.5">
-                        <div class="slider-track"></div>
-                        <div class="slider-range"></div>
-                    </div>
-                    <span class="value-display" id="vowelX-start-display">0.50</span>
-                </div>
-                
-                <!-- Envelope Controls (hidden when static) -->
-                <div class="envelope-section" id="vowelX-envelope">
-                    <div class="param-row">
-                        <div class="param-label">end:</div>
-                        <div class="dual-range-slider" data-mode="static" data-param="vowelX" data-type="end">
-                            <input type="range" class="range-min" id="vowelX-end-min" 
-                                   min="0" max="1" step="0.01" value="0.5">
-                            <input type="range" class="range-max" id="vowelX-end-max" 
-                                   min="0" max="1" step="0.01" value="0.5">
-                            <div class="slider-track"></div>
-                            <div class="slider-range"></div>
-                        </div>
-                        <span class="value-display" id="vowelX-end-display">0.50</span>
-                    </div>
-                    
-                    <div class="envelope-controls">
-                        <div class="envelope-type">
-                            <label>type:</label>
-                            <label><input type="radio" name="vowelX-env-type" value="lin" checked> lin</label>
-                            <label><input type="radio" name="vowelX-env-type" value="cos"> cos</label>
-                            <label><input type="radio" name="vowelX-env-type" value="par"> par</label>
-                        </div>
-                        
-                        <div class="envelope-intensity">
-                            <label>intensity:</label>
-                            <input type="range" class="slider small-slider" id="vowelX-intensity" 
-                                   min="0" max="1" step="0.01" value="0.5">
-                            <span class="param-value small" id="vowelX-intensity-value">0.50</span>
-                        </div>
-                        
+            <div class="param-control compact-control">
+                <div class="param-line">
+                    <span class="param-label">vowel x</span>
+                    <input type="text" class="text-input" id="vowelX-value" value="0.5" placeholder="0.5 or 0.2-0.8">
+                    <select class="mode-select" id="vowelX-mode">
+                        <option value="direct">direct</option>
+                        <option value="program">program</option>
+                    </select>
+                    <select class="env-select" id="vowelX-env-mode" style="display: none;">
+                        <option value="static">stat</option>
+                        <option value="env">env</option>
+                    </select>
+                    <button class="randomizer-btn" id="vowelX-start-randomizer" title="Toggle Start Range Randomizer" tabindex="0">s-rnd</button>
+                    <div class="inline-env" id="vowelX-inline-env" style="display: none;">
+                        <button class="randomizer-btn" id="vowelX-end-randomizer" title="Toggle End Range Randomizer" tabindex="0">e-rnd</button>
+                        <select class="env-type-select" id="vowelX-env-type">
+                            <option value="lin">lin</option>
+                            <option value="cos">cos</option>
+                            <option value="par">par</option>
+                        </select>
+                        <input type="text" class="intensity-input" id="vowelX-intensity" value="0.5" placeholder="0.5">
                     </div>
                 </div>
                 
-            </div>
-
-            <div class="param-control envelope-control">
-                <div class="param-header">
-                    <div class="param-label">vowel y</div>
-                    <label class="static-checkbox">
-                        <input type="checkbox" id="vowelY-static" checked>
-                        static
-                    </label>
-                </div>
-                <div class="param-row">
-                    <div class="param-label">start:</div>
-                    <div class="dual-range-slider" data-mode="static" data-param="vowelY" data-type="start">
-                        <input type="range" class="range-min" id="vowelY-start-min" 
-                               min="0" max="1" step="0.01" value="0.5">
-                        <input type="range" class="range-max" id="vowelY-start-max" 
-                               min="0" max="1" step="0.01" value="0.5">
-                        <div class="slider-track"></div>
-                        <div class="slider-range"></div>
+                <!-- Start Range Randomizer Controls (hidden by default) -->
+                <div class="hrg-controls" id="vowelX-start-rnd-controls" style="display: none;">
+                    <div class="hrg-line">
+                        <input type="checkbox" id="vowelX-start-rand-enable">
+                        <span>start min:</span><input type="text" id="vowelX-start-rand-min" value="0.2">
+                        <span>max:</span><input type="text" id="vowelX-start-rand-max" value="0.8">
                     </div>
-                    <span class="value-display" id="vowelY-start-display">0.50</span>
                 </div>
                 
-                <!-- Envelope Controls (hidden when static) -->
-                <div class="envelope-section" id="vowelY-envelope">
-                    <div class="param-row">
-                        <div class="param-label">end:</div>
-                        <div class="dual-range-slider" data-mode="static" data-param="vowelY" data-type="end">
-                            <input type="range" class="range-min" id="vowelY-end-min" 
-                                   min="0" max="1" step="0.01" value="0.5">
-                            <input type="range" class="range-max" id="vowelY-end-max" 
-                                   min="0" max="1" step="0.01" value="0.5">
-                            <div class="slider-track"></div>
-                            <div class="slider-range"></div>
-                        </div>
-                        <span class="value-display" id="vowelY-end-display">0.50</span>
-                    </div>
-                    
-                    <div class="envelope-controls">
-                        <div class="envelope-type">
-                            <label>type:</label>
-                            <label><input type="radio" name="vowelY-env-type" value="lin" checked> lin</label>
-                            <label><input type="radio" name="vowelY-env-type" value="cos"> cos</label>
-                            <label><input type="radio" name="vowelY-env-type" value="par"> par</label>
-                        </div>
-                        
-                        <div class="envelope-intensity">
-                            <label>intensity:</label>
-                            <input type="range" class="slider small-slider" id="vowelY-intensity" 
-                                   min="0" max="1" step="0.01" value="0.5">
-                            <span class="param-value small" id="vowelY-intensity-value">0.50</span>
-                        </div>
-                        
+                <!-- End Range Randomizer Controls (hidden by default) -->
+                <div class="hrg-controls" id="vowelX-end-rnd-controls" style="display: none;">
+                    <div class="hrg-line">
+                        <input type="checkbox" id="vowelX-end-rand-enable">
+                        <span>end min:</span><input type="text" id="vowelX-end-rand-min" value="0.2">
+                        <span>max:</span><input type="text" id="vowelX-end-rand-max" value="0.8">
                     </div>
                 </div>
             </div>
 
-            <div class="param-control envelope-control">
-                <div class="param-header">
-                    <div class="param-label">zing amount</div>
-                    <label class="static-checkbox">
-                        <input type="checkbox" id="zingAmount-static" checked>
-                        static
-                    </label>
-                </div>
-                <div class="param-row">
-                    <div class="param-label">start:</div>
-                    <div class="dual-range-slider" data-mode="static" data-param="zingAmount" data-type="start">
-                        <input type="range" class="range-min" id="zingAmount-start-min" 
-                               min="0" max="1" step="0.01" value="0">
-                        <input type="range" class="range-max" id="zingAmount-start-max" 
-                               min="0" max="1" step="0.01" value="0">
-                        <div class="slider-track"></div>
-                        <div class="slider-range"></div>
+            <div class="param-control compact-control">
+                <div class="param-line">
+                    <span class="param-label">vowel y</span>
+                    <input type="text" class="text-input" id="vowelY-value" value="0.5" placeholder="0.5 or 0.2-0.8">
+                    <select class="mode-select" id="vowelY-mode">
+                        <option value="direct">direct</option>
+                        <option value="program">program</option>
+                    </select>
+                    <select class="env-select" id="vowelY-env-mode" style="display: none;">
+                        <option value="static">stat</option>
+                        <option value="env">env</option>
+                    </select>
+                    <button class="randomizer-btn" id="vowelY-start-randomizer" title="Toggle Start Range Randomizer" tabindex="0">s-rnd</button>
+                    <div class="inline-env" id="vowelY-inline-env" style="display: none;">
+                        <button class="randomizer-btn" id="vowelY-end-randomizer" title="Toggle End Range Randomizer" tabindex="0">e-rnd</button>
+                        <select class="env-type-select" id="vowelY-env-type">
+                            <option value="lin">lin</option>
+                            <option value="cos">cos</option>
+                            <option value="par">par</option>
+                        </select>
+                        <input type="text" class="intensity-input" id="vowelY-intensity" value="0.5" placeholder="0.5">
                     </div>
-                    <span class="value-display" id="zingAmount-start-display">0.00</span>
                 </div>
                 
-                <!-- Envelope Controls (hidden when static) -->
-                <div class="envelope-section" id="zingAmount-envelope">
-                    <div class="param-row">
-                        <div class="param-label">end:</div>
-                        <div class="dual-range-slider" data-mode="static" data-param="zingAmount" data-type="end">
-                            <input type="range" class="range-min" id="zingAmount-end-min" 
-                                   min="0" max="1" step="0.01" value="0">
-                            <input type="range" class="range-max" id="zingAmount-end-max" 
-                                   min="0" max="1" step="0.01" value="0">
-                            <div class="slider-track"></div>
-                            <div class="slider-range"></div>
-                        </div>
-                        <span class="value-display" id="zingAmount-end-display">0.00</span>
+                <!-- Start Range Randomizer Controls (hidden by default) -->
+                <div class="hrg-controls" id="vowelY-start-rnd-controls" style="display: none;">
+                    <div class="hrg-line">
+                        <input type="checkbox" id="vowelY-start-rand-enable">
+                        <span>start min:</span><input type="text" id="vowelY-start-rand-min" value="0.2">
+                        <span>max:</span><input type="text" id="vowelY-start-rand-max" value="0.8">
                     </div>
-                    
-                    <div class="envelope-controls">
-                        <div class="envelope-type">
-                            <label>type:</label>
-                            <label><input type="radio" name="zingAmount-env-type" value="lin" checked> lin</label>
-                            <label><input type="radio" name="zingAmount-env-type" value="cos"> cos</label>
-                            <label><input type="radio" name="zingAmount-env-type" value="par"> par</label>
-                        </div>
-                        
-                        <div class="envelope-intensity">
-                            <label>intensity:</label>
-                            <input type="range" class="slider small-slider" id="zingAmount-intensity" 
-                                   min="0" max="1" step="0.01" value="0.5">
-                            <span class="param-value small" id="zingAmount-intensity-value">0.50</span>
-                        </div>
-                        
+                </div>
+                
+                <!-- End Range Randomizer Controls (hidden by default) -->
+                <div class="hrg-controls" id="vowelY-end-rnd-controls" style="display: none;">
+                    <div class="hrg-line">
+                        <input type="checkbox" id="vowelY-end-rand-enable">
+                        <span>end min:</span><input type="text" id="vowelY-end-rand-min" value="0.2">
+                        <span>max:</span><input type="text" id="vowelY-end-rand-max" value="0.8">
                     </div>
                 </div>
             </div>
 
-            <div class="param-control envelope-control">
-                <div class="param-header">
-                    <div class="param-label">zing morph</div>
-                    <label class="static-checkbox">
-                        <input type="checkbox" id="zingMorph-static" checked>
-                        static
-                    </label>
-                </div>
-                <div class="param-row">
-                    <div class="param-label">start:</div>
-                    <div class="dual-range-slider" data-mode="static" data-param="zingMorph" data-type="start">
-                        <input type="range" class="range-min" id="zingMorph-start-min" 
-                               min="0" max="1" step="0.01" value="0.5">
-                        <input type="range" class="range-max" id="zingMorph-start-max" 
-                               min="0" max="1" step="0.01" value="0.5">
-                        <div class="slider-track"></div>
-                        <div class="slider-range"></div>
+            <div class="param-control compact-control">
+                <div class="param-line">
+                    <span class="param-label">symmetry</span>
+                    <input type="text" class="text-input" id="symmetry-value" value="0.5" placeholder="0.5 or 0.2-0.8">
+                    <select class="mode-select" id="symmetry-mode">
+                        <option value="direct">direct</option>
+                        <option value="program">program</option>
+                    </select>
+                    <select class="env-select" id="symmetry-env-mode" style="display: none;">
+                        <option value="static">stat</option>
+                        <option value="env">env</option>
+                    </select>
+                    <button class="randomizer-btn" id="symmetry-start-randomizer" title="Toggle Start Range Randomizer" tabindex="0">s-rnd</button>
+                    <div class="inline-env" id="symmetry-inline-env" style="display: none;">
+                        <button class="randomizer-btn" id="symmetry-end-randomizer" title="Toggle End Range Randomizer" tabindex="0">e-rnd</button>
+                        <select class="env-type-select" id="symmetry-env-type">
+                            <option value="lin">lin</option>
+                            <option value="cos">cos</option>
+                            <option value="par">par</option>
+                        </select>
+                        <input type="text" class="intensity-input" id="symmetry-intensity" value="0.5" placeholder="0.5">
                     </div>
-                    <span class="value-display" id="zingMorph-start-display">0.50</span>
                 </div>
                 
-                <!-- Envelope Controls (hidden when static) -->
-                <div class="envelope-section" id="zingMorph-envelope">
-                    <div class="param-row">
-                        <div class="param-label">end:</div>
-                        <div class="dual-range-slider" data-mode="static" data-param="zingMorph" data-type="end">
-                            <input type="range" class="range-min" id="zingMorph-end-min" 
-                                   min="0" max="1" step="0.01" value="0.5">
-                            <input type="range" class="range-max" id="zingMorph-end-max" 
-                                   min="0" max="1" step="0.01" value="0.5">
-                            <div class="slider-track"></div>
-                            <div class="slider-range"></div>
-                        </div>
-                        <span class="value-display" id="zingMorph-end-display">0.50</span>
+                <!-- Start Range Randomizer Controls (hidden by default) -->
+                <div class="hrg-controls" id="symmetry-start-rnd-controls" style="display: none;">
+                    <div class="hrg-line">
+                        <input type="checkbox" id="symmetry-start-rand-enable">
+                        <span>start min:</span><input type="text" id="symmetry-start-rand-min" value="0.2">
+                        <span>max:</span><input type="text" id="symmetry-start-rand-max" value="0.8">
                     </div>
-                    
-                    <div class="envelope-controls">
-                        <div class="envelope-type">
-                            <label>type:</label>
-                            <label><input type="radio" name="zingMorph-env-type" value="lin" checked> lin</label>
-                            <label><input type="radio" name="zingMorph-env-type" value="cos"> cos</label>
-                            <label><input type="radio" name="zingMorph-env-type" value="par"> par</label>
-                        </div>
-                        
-                        <div class="envelope-intensity">
-                            <label>intensity:</label>
-                            <input type="range" class="slider small-slider" id="zingMorph-intensity" 
-                                   min="0" max="1" step="0.01" value="0.5">
-                            <span class="param-value small" id="zingMorph-intensity-value">0.50</span>
-                        </div>
-                        
+                </div>
+                
+                <!-- End Range Randomizer Controls (hidden by default) -->
+                <div class="hrg-controls" id="symmetry-end-rnd-controls" style="display: none;">
+                    <div class="hrg-line">
+                        <input type="checkbox" id="symmetry-end-rand-enable">
+                        <span>end min:</span><input type="text" id="symmetry-end-rand-min" value="0.2">
+                        <span>max:</span><input type="text" id="symmetry-end-rand-max" value="0.8">
                     </div>
                 </div>
             </div>
 
-            <div class="param-control envelope-control">
-                <div class="param-header">
-                    <div class="param-label">symmetry</div>
-                    <label class="static-checkbox">
-                        <input type="checkbox" id="symmetry-static" checked>
-                        static
-                    </label>
-                </div>
-                <div class="param-row">
-                    <div class="param-label">start:</div>
-                    <div class="dual-range-slider" data-mode="static" data-param="symmetry" data-type="start">
-                        <input type="range" class="range-min" id="symmetry-start-min" 
-                               min="0" max="1" step="0.01" value="0.5">
-                        <input type="range" class="range-max" id="symmetry-start-max" 
-                               min="0" max="1" step="0.01" value="0.5">
-                        <div class="slider-track"></div>
-                        <div class="slider-range"></div>
+            <div class="param-control compact-control">
+                <div class="param-line">
+                    <span class="param-label">z amount</span>
+                    <input type="text" class="text-input" id="zingAmount-value" value="0" placeholder="0 or 0-0.5">
+                    <select class="mode-select" id="zingAmount-mode">
+                        <option value="direct">direct</option>
+                        <option value="program">program</option>
+                    </select>
+                    <select class="env-select" id="zingAmount-env-mode" style="display: none;">
+                        <option value="static">stat</option>
+                        <option value="env">env</option>
+                    </select>
+                    <button class="randomizer-btn" id="zingAmount-start-randomizer" title="Toggle Start Range Randomizer" tabindex="0">s-rnd</button>
+                    <div class="inline-env" id="zingAmount-inline-env" style="display: none;">
+                        <button class="randomizer-btn" id="zingAmount-end-randomizer" title="Toggle End Range Randomizer" tabindex="0">e-rnd</button>
+                        <select class="env-type-select" id="zingAmount-env-type">
+                            <option value="lin">lin</option>
+                            <option value="cos">cos</option>
+                            <option value="par">par</option>
+                        </select>
+                        <input type="text" class="intensity-input" id="zingAmount-intensity" value="0.5" placeholder="0.5">
                     </div>
-                    <span class="value-display" id="symmetry-start-display">0.50</span>
                 </div>
                 
-                <!-- Envelope Controls (hidden when static) -->
-                <div class="envelope-section" id="symmetry-envelope">
-                    <div class="param-row">
-                        <div class="param-label">end:</div>
-                        <div class="dual-range-slider" data-mode="static" data-param="symmetry" data-type="end">
-                            <input type="range" class="range-min" id="symmetry-end-min" 
-                                   min="0" max="1" step="0.01" value="0.5">
-                            <input type="range" class="range-max" id="symmetry-end-max" 
-                                   min="0" max="1" step="0.01" value="0.5">
-                            <div class="slider-track"></div>
-                            <div class="slider-range"></div>
-                        </div>
-                        <span class="value-display" id="symmetry-end-display">0.50</span>
+                <!-- Start Range Randomizer Controls (hidden by default) -->
+                <div class="hrg-controls" id="zingAmount-start-rnd-controls" style="display: none;">
+                    <div class="hrg-line">
+                        <input type="checkbox" id="zingAmount-start-rand-enable">
+                        <span>start min:</span><input type="text" id="zingAmount-start-rand-min" value="0">
+                        <span>max:</span><input type="text" id="zingAmount-start-rand-max" value="0.5">
                     </div>
-                    
-                    <div class="envelope-controls">
-                        <div class="envelope-type">
-                            <label>type:</label>
-                            <label><input type="radio" name="symmetry-env-type" value="lin" checked> lin</label>
-                            <label><input type="radio" name="symmetry-env-type" value="cos"> cos</label>
-                            <label><input type="radio" name="symmetry-env-type" value="par"> par</label>
-                        </div>
-                        
-                        <div class="envelope-intensity">
-                            <label>intensity:</label>
-                            <input type="range" class="slider small-slider" id="symmetry-intensity" 
-                                   min="0" max="1" step="0.01" value="0.5">
-                            <span class="param-value small" id="symmetry-intensity-value">0.50</span>
-                        </div>
-                        
+                </div>
+                
+                <!-- End Range Randomizer Controls (hidden by default) -->
+                <div class="hrg-controls" id="zingAmount-end-rnd-controls" style="display: none;">
+                    <div class="hrg-line">
+                        <input type="checkbox" id="zingAmount-end-rand-enable">
+                        <span>end min:</span><input type="text" id="zingAmount-end-rand-min" value="0">
+                        <span>max:</span><input type="text" id="zingAmount-end-rand-max" value="0.5">
                     </div>
                 </div>
             </div>
 
-            <div class="param-control envelope-control">
-                <div class="param-header">
-                    <div class="param-label">amplitude</div>
-                    <label class="static-checkbox">
-                        <input type="checkbox" id="amplitude-static" checked>
-                        static
-                    </label>
-                </div>
-                <div class="param-row">
-                    <div class="param-label">start:</div>
-                    <div class="dual-range-slider" data-mode="static" data-param="amplitude" data-type="start">
-                        <input type="range" class="range-min" id="amplitude-start-min" 
-                               min="0" max="1" step="0.01" value="1.0">
-                        <input type="range" class="range-max" id="amplitude-start-max" 
-                               min="0" max="1" step="0.01" value="1.0">
-                        <div class="slider-track"></div>
-                        <div class="slider-range"></div>
+            <div class="param-control compact-control">
+                <div class="param-line">
+                    <span class="param-label">z morph</span>
+                    <input type="text" class="text-input" id="zingMorph-value" value="0.5" placeholder="0.5 or 0.2-0.8">
+                    <select class="mode-select" id="zingMorph-mode">
+                        <option value="direct">direct</option>
+                        <option value="program">program</option>
+                    </select>
+                    <select class="env-select" id="zingMorph-env-mode" style="display: none;">
+                        <option value="static">stat</option>
+                        <option value="env">env</option>
+                    </select>
+                    <button class="randomizer-btn" id="zingMorph-start-randomizer" title="Toggle Start Range Randomizer" tabindex="0">s-rnd</button>
+                    <div class="inline-env" id="zingMorph-inline-env" style="display: none;">
+                        <button class="randomizer-btn" id="zingMorph-end-randomizer" title="Toggle End Range Randomizer" tabindex="0">e-rnd</button>
+                        <select class="env-type-select" id="zingMorph-env-type">
+                            <option value="lin">lin</option>
+                            <option value="cos">cos</option>
+                            <option value="par">par</option>
+                        </select>
+                        <input type="text" class="intensity-input" id="zingMorph-intensity" value="0.5" placeholder="0.5">
                     </div>
-                    <span class="value-display" id="amplitude-start-display">1.00</span>
                 </div>
                 
-                <!-- Envelope Controls (hidden when static) -->
-                <div class="envelope-section" id="amplitude-envelope">
-                    <div class="param-row">
-                        <div class="param-label">end:</div>
-                        <div class="dual-range-slider" data-mode="static" data-param="amplitude" data-type="end">
-                            <input type="range" class="range-min" id="amplitude-end-min" 
-                                   min="0" max="1" step="0.01" value="1.0">
-                            <input type="range" class="range-max" id="amplitude-end-max" 
-                                   min="0" max="1" step="0.01" value="1.0">
-                            <div class="slider-track"></div>
-                            <div class="slider-range"></div>
-                        </div>
-                        <span class="value-display" id="amplitude-end-display">1.00</span>
+                <!-- Start Range Randomizer Controls (hidden by default) -->
+                <div class="hrg-controls" id="zingMorph-start-rnd-controls" style="display: none;">
+                    <div class="hrg-line">
+                        <input type="checkbox" id="zingMorph-start-rand-enable">
+                        <span>start min:</span><input type="text" id="zingMorph-start-rand-min" value="0.2">
+                        <span>max:</span><input type="text" id="zingMorph-start-rand-max" value="0.8">
                     </div>
-                    
-                    <div class="envelope-controls">
-                        <div class="envelope-type">
-                            <label>type:</label>
-                            <label><input type="radio" name="amplitude-env-type" value="lin" checked> lin</label>
-                            <label><input type="radio" name="amplitude-env-type" value="cos"> cos</label>
-                            <label><input type="radio" name="amplitude-env-type" value="par"> par</label>
-                        </div>
-                        
-                        <div class="envelope-intensity">
-                            <label>intensity:</label>
-                            <input type="range" class="slider small-slider" id="amplitude-intensity" 
-                                   min="0" max="1" step="0.01" value="0.5">
-                            <span class="param-value small" id="amplitude-intensity-value">0.50</span>
-                        </div>
-                        
+                </div>
+                
+                <!-- End Range Randomizer Controls (hidden by default) -->
+                <div class="hrg-controls" id="zingMorph-end-rnd-controls" style="display: none;">
+                    <div class="hrg-line">
+                        <input type="checkbox" id="zingMorph-end-rand-enable">
+                        <span>end min:</span><input type="text" id="zingMorph-end-rand-min" value="0.2">
+                        <span>max:</span><input type="text" id="zingMorph-end-rand-max" value="0.8">
+                    </div>
+                </div>
+            </div>
+
+            <div class="param-control compact-control">
+                <div class="param-line">
+                    <span class="param-label">amp</span>
+                    <input type="text" class="text-input" id="amplitude-value" value="1.0" placeholder="1.0 or 0.5-1.0">
+                    <select class="mode-select" id="amplitude-mode">
+                        <option value="direct">direct</option>
+                        <option value="program">program</option>
+                    </select>
+                    <select class="env-select" id="amplitude-env-mode" style="display: none;">
+                        <option value="static">stat</option>
+                        <option value="env">env</option>
+                    </select>
+                    <button class="randomizer-btn" id="amplitude-start-randomizer" title="Toggle Start Range Randomizer" tabindex="0">s-rnd</button>
+                    <div class="inline-env" id="amplitude-inline-env" style="display: none;">
+                        <button class="randomizer-btn" id="amplitude-end-randomizer" title="Toggle End Range Randomizer" tabindex="0">e-rnd</button>
+                        <select class="env-type-select" id="amplitude-env-type">
+                            <option value="lin">lin</option>
+                            <option value="cos">cos</option>
+                            <option value="par">par</option>
+                        </select>
+                        <input type="text" class="intensity-input" id="amplitude-intensity" value="0.5" placeholder="0.5">
+                    </div>
+                </div>
+                
+                <!-- Start Range Randomizer Controls (hidden by default) -->
+                <div class="hrg-controls" id="amplitude-start-rnd-controls" style="display: none;">
+                    <div class="hrg-line">
+                        <input type="checkbox" id="amplitude-start-rand-enable">
+                        <span>start min:</span><input type="text" id="amplitude-start-rand-min" value="0.5">
+                        <span>max:</span><input type="text" id="amplitude-start-rand-max" value="1.0">
+                    </div>
+                </div>
+                
+                <!-- End Range Randomizer Controls (hidden by default) -->
+                <div class="hrg-controls" id="amplitude-end-rnd-controls" style="display: none;">
+                    <div class="hrg-line">
+                        <input type="checkbox" id="amplitude-end-rand-enable">
+                        <span>end min:</span><input type="text" id="amplitude-end-rand-min" value="0.5">
+                        <span>max:</span><input type="text" id="amplitude-end-rand-max" value="1.0">
                     </div>
                 </div>
             </div>
@@ -1207,7 +1278,7 @@
             </div>
             <div class="control-section">
                 <h3>parameters</h3>
-                <button class="button" id="apply-params-btn" disabled>apply changes</button>
+                <button class="button" id="apply-params-btn" disabled>send program</button>
             </div>
             <div class="control-section">
                 <h3>synthesis</h3>

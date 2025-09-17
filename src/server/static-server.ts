@@ -31,7 +31,10 @@ if (localIPs.length > 0) {
 }
 
 await serve(async (req) => {
-  // Handle CORS preflight
+  const url = new URL(req.url);
+  const pathname = url.pathname;
+
+  // Handle CORS preflight first
   if (req.method === "OPTIONS") {
     return new Response(null, {
       status: 204,
@@ -42,29 +45,56 @@ await serve(async (req) => {
       }
     });
   }
-
-  // Custom file serving logic
-  const url = new URL(req.url);
-  let response;
   
-  // Check if requesting /src/common/ files
-  if (url.pathname.startsWith('/src/common/')) {
-    // Serve from project root (src/common/ -> ./src/common/)
+  // Intercept requests for TypeScript module files
+  const tsModulePaths = [
+    "/ctrl/ctrl-main.js",
+    "/synth/synth-main.js"
+  ];
+  
+  if (tsModulePaths.includes(pathname)) {
+    const tsPath = `${root}${pathname.replace('.js', '.ts')}`;
+    
+    try {
+      // Use 'deno bundle' command to transpile the TS file
+      const command = new Deno.Command(Deno.execPath(), {
+        args: ["bundle", tsPath],
+        stdout: "piped",
+        stderr: "piped",
+      });
+      
+      const { code, stdout, stderr } = await command.output();
+      
+      if (code !== 0) {
+        const error = new TextDecoder().decode(stderr);
+        console.error(`Error bundling ${tsPath}:\n${error}`);
+        return new Response(`Error bundling file: ${error}`, { status: 500 });
+      }
+
+      const compiledJs = new TextDecoder().decode(stdout);
+      
+      return new Response(compiledJs, {
+        headers: {
+          "Content-Type": "application/javascript; charset=utf-8",
+          "Access-Control-Allow-Origin": "*",
+        }
+      });
+    } catch (e) {
+      console.error(`Failed to serve ${pathname}:`, e);
+      return new Response("Internal Server Error", { status: 500 });
+    }
+  }
+
+  // Fallback to serveDir for all other static assets
+  let response;
+  if (pathname.startsWith('/src/common/')) {
     response = await serveDir(req, { fsRoot: "." });
   } else {
-    // Serve from public directory
     response = await serveDir(req, { fsRoot: root });
   }
-  
-  // Add CORS headers to all responses
+
+  // Add general CORS headers
   response.headers.set("Access-Control-Allow-Origin", "*");
-  response.headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  response.headers.set("Access-Control-Allow-Headers", "Content-Type");
-  
-  // Fix MIME type for JavaScript modules
-  if (url.pathname.endsWith('.js')) {
-    response.headers.set("Content-Type", "application/javascript");
-  }
-  
+
   return response;
 }, { port, hostname: "0.0.0.0" });
