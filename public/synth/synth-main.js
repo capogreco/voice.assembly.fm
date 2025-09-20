@@ -44,16 +44,21 @@ class SynthClient {
     
     // Store received state for application after audio init
     this.lastSynthParams = null;
+    this.lastProgramUpdate = null; // Cache PROGRAM_UPDATE until audio/worklets are ready
     
     // Program configuration
     this.program = null;
     this.randomSeed = this.hashString(this.peerId); // Unique seed per synth
+    this.lastProgramUpdate = null;   // cache last full program update for scenes
+    this.pendingSceneState = null;   // apply at next cycle reset to avoid clicks
     
     // Phasor synchronization
     this.receivedPhasor = 0.0;
     this.receivedBpm = 120;
     this.receivedBeatsPerCycle = 4;
     this.receivedCycleLength = 2.0;
+    this.receivedStepsPerCycle = 16;   // Default until first PHASOR_SYNC
+    this.receivedCpm = 30;             // Default cycles per minute
     this.lastPhasorMessage = 0;
     this.phasorRate = 0.5;              // Phasor increment per second (1.0 / cycleLength)
     this.interpolatedPhasor = 0.0;      // Current interpolated phasor value
@@ -137,6 +142,10 @@ class SynthClient {
     this.setupEventHandlers();
     this.setupKeyboardShortcuts();
     
+    // Scene Memory: Track resolved parameter state
+    this.currentResolvedState = {};
+    this.stableSynthId = this.getStableSynthId(); // Persistent ID for scene storage
+    
     // Display synth ID (but it won't be visible until after joinChoir)
     this.updateSynthIdDisplay();
     
@@ -193,7 +202,7 @@ class SynthClient {
       if (document.activeElement.tagName === 'INPUT') return;
       
       switch (event.key.toLowerCase()) {
-        case 'r':
+        case 'm':
           if (this.audioContext) {
             this.toggleRhythm();
             event.preventDefault();
@@ -410,12 +419,23 @@ class SynthClient {
   applyStoredState() {
     console.log('🔄 Applying stored state after audio initialization');
     
-    
+    // Prefer applying the most recent PROGRAM_UPDATE (full state)
+    if (this.lastProgramUpdate) {
+      if (this.verbose) console.log('🎼 Applying cached PROGRAM_UPDATE after init');
+      const cached = this.lastProgramUpdate;
+      // Clear before applying in case apply triggers another cache
+      this.lastProgramUpdate = null;
+      this.handleProgramUpdate(cached);
+    }
+
     // Apply synth parameters if they were received before audio was ready
     if (this.lastSynthParams) {
-      console.log('🎵 Applying stored synth parameters');
+      if (this.verbose) console.log('🎵 Applying stored synth parameters');
       this.handleSynthParams(this.lastSynthParams);
     }
+
+    // Ensure phasor/timing config reaches worklets now that they exist
+    this.updatePhasorWorklet();
   }
 
   async connectToNetwork() {
@@ -473,6 +493,22 @@ class SynthClient {
         
       case MessageTypes.PROGRAM:
         this.handleProgramConfig(message);
+        break;
+      
+      case MessageTypes.RESEED_RANDOMIZATION:
+        if (this.programNode) {
+          // Ask program worklet to re-resolve stochastic values at next EOC
+          this.programNode.port.postMessage({ type: 'RESEED_RANDOMIZATION' });
+          console.log('🔀 Received reseed request; forwarded to program worklet');
+        }
+        break;
+        
+      case MessageTypes.SAVE_SCENE:
+        this.handleSaveScene(message);
+        break;
+        
+      case MessageTypes.LOAD_SCENE:
+        this.handleLoadScene(message);
         break;
         
       default:
@@ -557,7 +593,7 @@ class SynthClient {
     }
     
     // Legacy handleSynthParams - parameters now handled by PROGRAM_UPDATE
-    console.log('⚠️ handleSynthParams is deprecated - use PROGRAM_UPDATE instead');
+    if (this.verbose) console.log('⚠️ handleSynthParams is deprecated - use PROGRAM_UPDATE instead');
     
   }
 
@@ -570,9 +606,12 @@ class SynthClient {
   // }
 
   handleProgramUpdate(message) {
-    console.log('📨 PROGRAM_UPDATE received:', message);
+    if (this.verbose) console.log('📨 PROGRAM_UPDATE received:', message);
+    // Keep last full program for scene snapshots
+    this.lastProgramUpdate = message;
     if (!this.voiceNode || !this.programNode) {
-      console.warn('⚠️ Cannot handle program update: worklets not ready');
+      // Cache and apply after audio/worklets are initialized
+      console.warn('⚠️ Worklets not ready; caching PROGRAM_UPDATE for later');
       return;
     }
 
@@ -585,7 +624,7 @@ class SynthClient {
       if (this.voiceNode && this.voiceNode.parameters.has('active')) {
         const activeParam = this.voiceNode.parameters.get('active');
         activeParam.value = message.synthesisActive ? 1 : 0;
-        console.log(`🎵 Synthesis ${message.synthesisActive ? 'enabled' : 'disabled'}`);
+        if (this.verbose) console.log(`🎵 Synthesis ${message.synthesisActive ? 'enabled' : 'disabled'}`);
       }
     }
 
@@ -597,7 +636,7 @@ class SynthClient {
       
       // Debug: Check if white noise is in the program update
       if (paramName === 'whiteNoise') {
-        console.log(`🔍 WHITE NOISE found in program update: scope=${paramData.scope}, interpolation=${paramData.interpolation}`);
+        if (this.verbose) console.log(`🔍 WHITE NOISE found in program update: scope=${paramData.scope}, interpolation=${paramData.interpolation}`);
       }
       
       // Handle discriminated union format based on scope
@@ -626,7 +665,7 @@ class SynthClient {
             interpolationType: 'step',
             startValueGenerator: paramData.startValueGenerator
           };
-          console.log(`🎯 Step interpolation for ${paramName}`);
+          if (this.verbose) console.log(`🎯 Step interpolation for ${paramName}`);
         } else {
           // Linear/cosine/parabolic interpolation - envelope behavior
           programmaticConfigs[paramName] = {
@@ -636,9 +675,9 @@ class SynthClient {
             intensity: paramData.intensity
           };
           if (paramName === 'whiteNoise') {
-            console.log(`🎵 WHITE NOISE ${paramData.interpolation} interpolation for ${paramName}`);
+            if (this.verbose) console.log(`🎵 WHITE NOISE ${paramData.interpolation} interpolation for ${paramName}`);
           } else {
-            console.log(`📈 ${paramData.interpolation} interpolation for ${paramName}`);
+            if (this.verbose) console.log(`📈 ${paramData.interpolation} interpolation for ${paramName}`);
           }
         }
       }
@@ -648,9 +687,10 @@ class SynthClient {
     if (Object.keys(programmaticConfigs).length > 0) {
       this.programNode.port.postMessage({
         type: 'SET_PROGRAM',
-        config: programmaticConfigs
+        config: programmaticConfigs,
+        synthId: this.peerId
       });
-      console.log('✅ Forwarded programmatic configs to program worklet:', programmaticConfigs);
+      if (this.verbose) console.log('✅ Forwarded programmatic configs to program worklet:', programmaticConfigs);
     }
   }
 
@@ -702,8 +742,8 @@ class SynthClient {
     // Send phase correction to worklet (PLL behavior)
     this.sendPhaseCorrection();
     
-    // Start interpolation if not already running (for fallback display)
-    if (!this.phasorUpdateId) {
+    // Start interpolation if not already running (optional debug display)
+    if (this.verbose && !this.phasorUpdateId) {
       this.startPhasorInterpolation();
     }
   }
@@ -742,7 +782,7 @@ class SynthClient {
     }
     
     // Update connection status display
-    if (this.elements.connectionStatus) {
+    if (this.elements.connectionStatus && this.verbose) {
       this.elements.connectionStatus.textContent = `connected (${this.receivedBpm} bpm, ${this.receivedBeatsPerCycle}/cycle, φ=${this.interpolatedPhasor.toFixed(3)})`;
     }
   }
@@ -784,7 +824,7 @@ class SynthClient {
           const phaseError = this.calculatePhaseError(expectedCtrlPhasor, this.workletPhasor);
           
           // Update display to show worklet phasor with error info
-          if (this.elements.connectionStatus) {
+          if (this.elements.connectionStatus && this.verbose) {
             const errorDisplay = Math.abs(phaseError) > 0.001 ? ` Δ${(phaseError * 1000).toFixed(0)}ms` : '';
             const rhythmDisplay = this.rhythmEnabled ? ' 🥁' : '';
             this.elements.connectionStatus.textContent = `connected (${this.receivedBpm} bpm, ${this.receivedBeatsPerCycle}/cycle, ♪=${this.workletPhasor.toFixed(3)}${errorDisplay}${rhythmDisplay})`;
@@ -801,7 +841,7 @@ class SynthClient {
       // Start the worklet phasor
       this.phasorWorklet.port.postMessage({ type: 'start' });
       
-      console.log('✅ Phasor worklet initialized');
+      if (this.verbose) console.log('✅ Phasor worklet initialized');
       
     } catch (error) {
       console.error('❌ Failed to initialize phasor worklet:', error);
@@ -811,18 +851,20 @@ class SynthClient {
   updatePhasorWorklet() {
     if (this.phasorWorklet) {
       // Update cycle length and steps per cycle in worklet
-      this.phasorWorklet.parameters.get('cycleLength').value = this.receivedCycleLength;
-      this.phasorWorklet.parameters.get('stepsPerCycle').value = this.receivedStepsPerCycle;
+      const cl = Number.isFinite(this.receivedCycleLength) ? this.receivedCycleLength : 2.0;
+      const spc = Number.isFinite(this.receivedStepsPerCycle) ? this.receivedStepsPerCycle : 16;
+      this.phasorWorklet.parameters.get('cycleLength').value = cl;
+      this.phasorWorklet.parameters.get('stepsPerCycle').value = spc;
     }
     
     // Also update program worklet with phasor timing
     if (this.programNode) {
       this.programNode.port.postMessage({
         type: 'SET_PHASOR',
-        cpm: this.receivedCpm,
-        stepsPerCycle: this.receivedStepsPerCycle,
-        cycleLength: this.receivedCycleLength,
-        phase: this.receivedPhasor
+        cpm: Number.isFinite(this.receivedCpm) ? this.receivedCpm : 30,
+        stepsPerCycle: Number.isFinite(this.receivedStepsPerCycle) ? this.receivedStepsPerCycle : 16,
+        cycleLength: Number.isFinite(this.receivedCycleLength) ? this.receivedCycleLength : 2.0,
+        phase: Number.isFinite(this.receivedPhasor) ? this.receivedPhasor : 0.0
       });
     }
   }
@@ -929,12 +971,19 @@ class SynthClient {
     const cycleLength = resetData.cycleLength;
     const rampEndTime = resetTime + cycleLength;
     
-    console.log(`🎯 Scheduling ramp: ${resetTime.toFixed(3)}s → ${rampEndTime.toFixed(3)}s`);
+    if (this.verbose) console.log(`🎯 Scheduling ramp: ${resetTime.toFixed(3)}s → ${rampEndTime.toFixed(3)}s`);
     
     // Cancel any existing automation and set phase to 0 at reset time
     phaseParam.cancelScheduledValues(resetTime);
     phaseParam.setValueAtTime(0, resetTime);
     phaseParam.linearRampToValueAtTime(1.0, rampEndTime);
+
+    // If we have a pending scene snapshot, apply it exactly at cycle start
+    if (this.pendingSceneState) {
+      const snapshot = this.pendingSceneState;
+      this.pendingSceneState = null;
+      this.applyResolvedState(snapshot);
+    }
   }
 
   sendPhaseCorrection() {
@@ -1282,6 +1331,199 @@ class SynthClient {
     const seed = this.randomSeed ^ this.hashString(key);
     const random = Math.abs(Math.sin(seed)) % 1;
     return min + (max - min) * random;
+  }
+
+  // Scene Memory Methods
+  getStableSynthId() {
+    let synthId = localStorage.getItem('synth_unique_id');
+    if (!synthId) {
+      synthId = `synth_${Date.now()}_${Math.random().toString(36).substring(2)}`;
+      localStorage.setItem('synth_unique_id', synthId);
+    }
+    return synthId;
+  }
+
+  handleSaveScene(payload) {
+    const { memoryLocation } = payload;
+    console.log(`💾 Received command to save scene to location ${memoryLocation}`);
+    
+    const key = `scene_${memoryLocation}_synth_${this.stableSynthId}`;
+    const hasSnapshot = this.currentResolvedState && Object.keys(this.currentResolvedState).length > 0;
+    const snapshot = hasSnapshot
+      ? this.currentResolvedState
+      : (this.lastProgramUpdate ? this._resolveProgram(this.lastProgramUpdate) : {});
+    this.currentResolvedState = snapshot;
+    const stateToSave = JSON.stringify(snapshot);
+    
+    localStorage.setItem(key, stateToSave);
+    console.log(`✅ Saved local state for scene ${memoryLocation}.`);
+  }
+
+  handleLoadScene(payload) {
+    const { memoryLocation, program } = payload;
+    console.log(`📂 Received command to load scene from location ${memoryLocation}`);
+    
+    const key = `scene_${memoryLocation}_synth_${this.stableSynthId}`;
+    const localData = localStorage.getItem(key);
+    
+    if (localData) {
+      // This synth has a saved state for this scene. Load it.
+      console.log('Found local state. Loading...');
+      let resolvedState = {};
+      try {
+        resolvedState = JSON.parse(localData) || {};
+      } catch {}
+      if (!resolvedState || Object.keys(resolvedState).length === 0) {
+        if (program) {
+          console.log('Saved snapshot empty; resolving from provided program...');
+          resolvedState = this._resolveProgram(program);
+          localStorage.setItem(key, JSON.stringify(resolvedState));
+        } else if (this.lastProgramUpdate) {
+          console.log('Saved snapshot empty; resolving from last PROGRAM_UPDATE...');
+          resolvedState = this._resolveProgram(this.lastProgramUpdate);
+          localStorage.setItem(key, JSON.stringify(resolvedState));
+        }
+      }
+      // Defer apply to next cycle reset to minimize glitches
+      this.pendingSceneState = resolvedState;
+      this.currentResolvedState = resolvedState;
+    } else {
+      // This is a new synth. Resolve the program, apply it, and save the result.
+      console.log('No local state found. Resolving new state from program...');
+      const newResolvedState = this._resolveProgram(program);
+      this.pendingSceneState = newResolvedState;
+      this.currentResolvedState = newResolvedState;
+      
+      // Immediately save this newly generated state for future loads.
+      localStorage.setItem(key, JSON.stringify(newResolvedState));
+      console.log(`✅ Resolved and saved new local state for scene ${memoryLocation}.`);
+    }
+  }
+
+  applyResolvedState(resolvedState) {
+    // Apply resolved parameter values to the audio engine
+    if (this.verbose) console.log('🧩 Applying resolved scene state:', resolvedState);
+    for (const [paramName, value] of Object.entries(resolvedState)) {
+      const v = Number.isFinite(value) ? value : 0;
+      const wasProgram = this.lastProgramUpdate && this.lastProgramUpdate[paramName] && this.lastProgramUpdate[paramName].scope === 'program';
+      
+      if (paramName === 'whiteNoise') {
+        if (this.whiteNoiseGain) {
+          if (wasProgram && this.programNode) {
+            // Keep program routing and set immediate value via program worklet
+            this._updateParameterRouting('whiteNoise', 'program');
+            this.programNode.port.postMessage({ type: 'SET_DIRECT_VALUE', param: 'whiteNoise', value: v });
+          } else {
+            // Route direct and set gain
+            this._updateParameterRouting('whiteNoise', 'direct');
+            this.whiteNoiseGain.gain.setTargetAtTime(v, this.audioContext.currentTime, 0.015);
+          }
+          if (this.verbose) console.log(`🎚️ Scene apply: whiteNoise -> ${v}`);
+        }
+      } else if (this.voiceNode) {
+        if (wasProgram && this.programNode) {
+          // Keep program routing and push immediate value into program worklet
+          this._updateParameterRouting(paramName, 'program');
+          this.programNode.port.postMessage({ type: 'SET_DIRECT_VALUE', param: paramName, value: v });
+        } else {
+          // Route direct and set AudioParam via main thread
+          this._updateParameterRouting(paramName, 'direct');
+          const paramKey = `${paramName}_in`;
+          if (this.voiceNode.parameters.has(paramKey)) {
+            const audioParam = this.voiceNode.parameters.get(paramKey);
+            audioParam.setTargetAtTime(v, this.audioContext.currentTime, 0.015);
+            if (this.verbose) console.log(`🎚️ Scene apply: ${paramKey} -> ${v}`);
+          } else if (this.verbose) {
+            console.warn(`⚠️ Scene apply: voice param missing '${paramKey}'`);
+          }
+        }
+      }
+    }
+
+    // Ensure synthesis is active if desired
+    if (this.voiceNode && this.voiceNode.parameters.has('active')) {
+      const activeParam = this.voiceNode.parameters.get('active');
+      activeParam.value = this.synthesisActive ? 1 : 0;
+      if (this.verbose) console.log(`🔈 Voice active = ${this.synthesisActive ? 1 : 0}`);
+    }
+  }
+
+  _resolveProgram(program) {
+    // Resolve a program config to concrete parameter values
+    const resolvedState = {};
+    
+    for (const [paramName, paramConfig] of Object.entries(program)) {
+      if (paramConfig.scope === 'direct') {
+        // Direct value - use as-is
+        resolvedState[paramName] = paramConfig.directValue;
+      } else if (paramConfig.scope === 'program') {
+        // Program mode - resolve the generator to a concrete value
+        if (paramConfig.interpolation === 'step') {
+          // For step interpolation, resolve the start generator
+          resolvedState[paramName] = this._resolveGenerator(paramConfig.startValueGenerator, paramName);
+        } else {
+          // For other interpolations, we need both start and end values
+          // For now, just use the start value (the program worklet will handle envelopes)
+          resolvedState[paramName] = this._resolveGenerator(paramConfig.startValueGenerator, paramName);
+        }
+      }
+    }
+    
+    return resolvedState;
+  }
+
+  _resolveGenerator(generator, paramName) {
+    // Resolve a generator config to a concrete value
+    // This is similar to the logic in program-worklet.js but for initial resolution
+    if (!generator) return 0;
+    
+    switch (generator.type) {
+      case 'periodic': {
+        const baseValue = generator.baseValue || 440;
+        const numerators = this._parseSIN(generator.numerators || '1');
+        const denominators = this._parseSIN(generator.denominators || '1');
+        const numerator = numerators[0]; // Use first value for initial resolution
+        const denominator = denominators[0] || 1;
+        return baseValue * (numerator / denominator);
+      }
+      case 'normalised': {
+        if (typeof generator.range === 'number') {
+          return generator.range;
+        } else if (generator.range && typeof generator.range === 'object') {
+          const range = generator.range.max - generator.range.min;
+          return generator.range.min + (Math.random() * range);
+        }
+        return Math.random() * 0.5;
+      }
+      default: {
+        return generator.value || 0;
+      }
+    }
+  }
+
+  _parseSIN(sinString) {
+    // Simple parser for SIN (Simple Integer Notation) strings
+    if (!sinString || typeof sinString !== 'string') return [1];
+    
+    const results = [];
+    const parts = sinString.split(',');
+    
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (trimmed.includes('-')) {
+        const [start, end] = trimmed.split('-').map(n => parseInt(n.trim()));
+        if (!isNaN(start) && !isNaN(end)) {
+          for (let i = start; i <= end; i++) {
+            results.push(i);
+          }
+        }
+      } else {
+        const num = parseInt(trimmed);
+        if (!isNaN(num)) results.push(num);
+      }
+    }
+    
+    return results.length > 0 ? results : [1];
   }
 
 }

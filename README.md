@@ -22,22 +22,31 @@ This initial phase implements the core WebRTC star networking and phasor-based t
 
 ### Quick Start
 
-**Start all servers (recommended):**
+Unified server (HTTP + WebSocket + static + ICE):
 ```bash
-deno task launch
+# with file watch
+deno task dev
+
+# without watch
+deno task start
 ```
 
-**Or start individually:**
-1. **Signaling server:** `deno task dev`
-2. **Ctrl client server:** `deno task serve-ctrl` 
-3. **Synth client server:** `deno task serve-synth`
+Open the applications (same port):
+- Ctrl client: http://localhost:3456/ctrl/
+- Synth clients: http://localhost:3456/synth/ (open multiple tabs/devices)
 
-**Open the applications:**
-- Ctrl client: http://localhost:8080
-- Synth clients: http://localhost:8081 (open multiple tabs/devices)
+For network access from other devices, the server prints LAN URLs on startup.
 
-**For network access from other devices:**
-- The launcher displays network URLs for mobile/tablet access
+### Configuration
+
+- Environment file: `.env` in repo root. Supported variables:
+  - `PORT`: HTTP server port (default `3456`).
+  - `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`: Optional. When set, `/ice-servers` will request TURN credentials from Twilio and return full ICE servers. If unset, the server returns fallback public STUN servers.
+- Endpoint: `GET /ice-servers` returns `{ ice_servers: [...] }` for client RTCPeerConnection config.
+- Quick check:
+  ```bash
+  curl http://localhost:3456/ice-servers | jq
+  ```
 
 ### Testing the System
 
@@ -58,12 +67,13 @@ deno task launch
 ### Architecture Overview
 
 ```
-                    ┌──────────────────┐
-                    │ Signaling Server │
-                    │   (Port 8000)    │
-                    └─────────┬────────┘
-                              │ WebSocket
-                              │
+                    ┌──────────────────────────────┐
+                    │ Unified Server (HTTP+WS+ICE) │
+                    │        (Port 3456)           │
+                    └─────────┬─────────┬──────────┘
+                              │         │
+                         Static/WS   /ice-servers
+                              │         │
             ┌─────────────────┴─────────────────┐
             │          Ctrl Client              │
             │         (Star Hub)                │
@@ -187,23 +197,23 @@ The `harmonicRatio` AudioParam exists in the worklet for internal DSP calculatio
 
 ```
 src/
-├── common/                    # Shared utilities
-│   ├── webrtc-star.js        # WebRTC star topology networking
-│   ├── phasor-sync.js        # Distributed timing synchronization  
-│   ├── message-protocol.js   # Network message format definitions
-│   └── timing-math.js        # Clock synchronization mathematics
-├── server/                   # Development servers
-│   ├── signaling-server.ts   # WebSocket signaling server
-│   ├── static-server.ts      # Static file server
-│   └── launcher.ts           # Multi-server launcher
+├── common/                      # Shared modules
+│   ├── webrtc-star.js           # WebRTC star topology networking
+│   ├── message-protocol.js      # Network message definitions + validation
+│   └── parameter-types.ts       # Shared TS types for parameters
+├── server/
+│   ├── server.ts                # Unified server (HTTP + WS + static + ICE)
+│   └── utils.ts                 # Server utilities (local IPs, etc.)
 public/
-├── ctrl/                     # Control client (performer interface)
-│   ├── index.html            # Main HTML page
-│   └── ctrl-main.js          # Application logic
-└── synth/                    # Synth client (audience interface)  
-    ├── index.html            # Minimal join/active UI
-    ├── synth-main.js         # Synthesis and networking logic
+├── ctrl/                        # Control client (performer)
+│   ├── index.html
+│   └── ctrl-main.ts             # TS entry; bundled on-the-fly as JS
+└── synth/                       # Synth client (audience)
+    ├── index.html
+    ├── synth-main.js            # Synthesis + networking
     └── worklets/
-        ├── white-noise-processor.js # AudioWorklet for calibration
-        └── vowel-synth.worklet.js   # AudioWorklet for vocal synthesis with HRG
+        ├── white-noise-processor.js
+        ├── phasor-processor.worklet.js
+        ├── program-worklet.js
+        └── voice-worklet.js
 ```

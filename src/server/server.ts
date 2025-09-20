@@ -6,6 +6,7 @@
 import { serveDir } from "std/http/file_server.ts";
 import { STATUS_CODE } from "std/http/status.ts";
 import { load } from "std/dotenv/mod.ts";
+import { getLocalIPs } from "./utils.ts";
 
 // Load environment variables from .env file
 const env = await load();
@@ -542,11 +543,6 @@ async function handleRequest(request: Request): Promise<Response> {
   }
 
   return response;
-}
-
-function getLocalIPs(): string[] {
-  // Simplified - would need proper network interface detection for production
-  return ["192.168.1.136"]; // Placeholder
 }
 
 // Startup

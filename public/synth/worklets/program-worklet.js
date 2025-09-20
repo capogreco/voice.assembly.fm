@@ -15,6 +15,8 @@ class ProgramWorklet extends AudioWorkletProcessor {
     this.programState = null;
     this.envelopes = new Map();
     this.programCounters = new Map(); // Track indices for behavior sequences
+    this.shuffledSequences = new Map(); // Store shuffled sequences
+    this.lastProgramConfig = new Map();  // Detect config changes
     
     // Output parameter mapping
     this.parameterOutputs = {
@@ -41,6 +43,10 @@ class ProgramWorklet extends AudioWorkletProcessor {
     };
     
     this.port.onmessage = this.handleMessage.bind(this);
+
+    // Per-synth identity (for optional deterministic behavior) and caches
+    this.synthId = 'unknown';
+    this.staticSelections = new Map(); // key -> index
   }
   
   handleMessage(event) {
@@ -49,6 +55,9 @@ class ProgramWorklet extends AudioWorkletProcessor {
     switch (message.type) {
       case 'SET_PROGRAM':
         this.programState = message.config;
+        if (message.synthId) {
+          this.synthId = message.synthId;
+        }
         this.initializeEnvelopes();
         break;
         
@@ -57,7 +66,25 @@ class ProgramWorklet extends AudioWorkletProcessor {
           this.currentValues[message.param] = message.value;
         }
         break;
+      
+      case 'RESEED_RANDOMIZATION':
+        // Clear caches so next EOC regenerates selections
+        this.staticSelections.clear();
+        this.programCounters.clear();
+        this.shuffledSequences.clear();
+        break;
     }
+  }
+
+  // Deterministic helper (kept for potential future needs)
+  _stableIndex(key, length) {
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < key.length; i++) {
+      hash ^= key.charCodeAt(i);
+      hash = (hash + ((hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24))) >>> 0;
+    }
+    if (length <= 0) return 0;
+    return hash % length;
   }
   
   initializeEnvelopes() {
@@ -112,6 +139,82 @@ class ProgramWorklet extends AudioWorkletProcessor {
     return results.length > 0 ? results : [1];
   }
 
+  _shuffleArray(array) {
+    const shuffled = [...array]; // Create a copy
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+  }
+
+  _selectValue(part, paramName, behavior, values) {
+    const counterKey = `${paramName}_${part}`;
+    const sequenceKey = `${paramName}_${part}_sequence`;
+    const lastConfigKey = `${paramName}_${part}_config`;
+
+    // Detect if values changed - reset shuffle if so
+    const currentConfigString = values.join(',');
+    if (this.lastProgramConfig.get(lastConfigKey) !== currentConfigString) {
+      this.shuffledSequences.delete(sequenceKey);
+      this.lastProgramConfig.set(lastConfigKey, currentConfigString);
+    }
+
+    // Initialize counter if needed
+    if (!this.programCounters.has(counterKey)) {
+      // Randomize starting offset for ascending/descending; 0 for others
+      if (behavior === 'ascending' || behavior === 'descending') {
+        const startIdx = values.length > 0 ? Math.floor(Math.random() * values.length) : 0;
+        this.programCounters.set(counterKey, startIdx);
+      } else {
+        this.programCounters.set(counterKey, 0);
+      }
+    }
+    let index = this.programCounters.get(counterKey);
+
+    switch (behavior) {
+      case 'static': {
+        // Choose a per-synth random value, stable until reseed or program change
+        const currentConfigString = JSON.stringify(values);
+        const key = `${this.synthId}|${paramName}|${part}|${currentConfigString}`;
+        if (!this.staticSelections.has(key)) {
+          const idx = values.length > 0 ? Math.floor(Math.random() * values.length) : 0;
+          this.staticSelections.set(key, idx);
+        }
+        const idx = this.staticSelections.get(key) || 0;
+        return values[idx];
+      }
+      
+      case 'ascending':
+        const ascValue = values[index % values.length];
+        this.programCounters.set(counterKey, index + 1);
+        return ascValue;
+
+      case 'descending':
+        const descValue = values[(values.length - 1 - index) % values.length];
+        this.programCounters.set(counterKey, index + 1);
+        return descValue;
+
+      case 'random':
+        return values[Math.floor(Math.random() * values.length)];
+
+      case 'shuffle':
+        // Create shuffled sequence if not exists
+        if (!this.shuffledSequences.has(sequenceKey)) {
+          const newShuffledSequence = this._shuffleArray(values);
+          this.shuffledSequences.set(sequenceKey, newShuffledSequence);
+        }
+        
+        const sequence = this.shuffledSequences.get(sequenceKey);
+        const shuffleValue = sequence[index % sequence.length];
+        this.programCounters.set(counterKey, index + 1);
+        return shuffleValue;
+
+      default:
+        return values[0];
+    }
+  }
+
   generateValue(generator, paramName) {
     if (!generator) return 0;
     
@@ -124,72 +227,9 @@ class ProgramWorklet extends AudioWorkletProcessor {
         const denominatorBehavior = generator.denominatorBehavior || 'static';
         const baseValue = generator.baseValue || 440;
         
-        // Get or initialize counter for this parameter
-        const counterKey = `${paramName}_numerator`;
-        if (!this.programCounters.has(counterKey)) {
-          this.programCounters.set(counterKey, 0);
-        }
-        
-        let numIndex = this.programCounters.get(counterKey);
-        
-        // Select numerator based on behavior
-        let selectedNumerator;
-        switch (numeratorBehavior) {
-          case 'static':
-            selectedNumerator = numerators[0];
-            break;
-          case 'ascending':
-            selectedNumerator = numerators[numIndex % numerators.length];
-            this.programCounters.set(counterKey, numIndex + 1);
-            break;
-          case 'descending':
-            selectedNumerator = numerators[(numerators.length - 1 - numIndex) % numerators.length];
-            this.programCounters.set(counterKey, numIndex + 1);
-            break;
-          case 'random':
-            selectedNumerator = numerators[Math.floor(Math.random() * numerators.length)];
-            break;
-          case 'shuffle':
-            // Implement shuffle by cycling through random permutation
-            selectedNumerator = numerators[Math.floor(Math.random() * numerators.length)];
-            break;
-          default:
-            selectedNumerator = numerators[0];
-        }
-        
-        // Get or initialize counter for denominators
-        const denomCounterKey = `${paramName}_denominator`;
-        if (!this.programCounters.has(denomCounterKey)) {
-          this.programCounters.set(denomCounterKey, 0);
-        }
-        
-        let denomIndex = this.programCounters.get(denomCounterKey);
-        
-        // Select denominator based on behavior
-        let selectedDenominator;
-        switch (denominatorBehavior) {
-          case 'static':
-            selectedDenominator = denominators[0];
-            break;
-          case 'ascending':
-            selectedDenominator = denominators[denomIndex % denominators.length];
-            this.programCounters.set(denomCounterKey, denomIndex + 1);
-            break;
-          case 'descending':
-            selectedDenominator = denominators[(denominators.length - 1 - denomIndex) % denominators.length];
-            this.programCounters.set(denomCounterKey, denomIndex + 1);
-            break;
-          case 'random':
-            selectedDenominator = denominators[Math.floor(Math.random() * denominators.length)];
-            break;
-          case 'shuffle':
-            selectedDenominator = denominators[Math.floor(Math.random() * denominators.length)];
-            break;
-          default:
-            selectedDenominator = denominators[0];
-        }
-        
-        selectedDenominator = selectedDenominator || 1; // Prevent division by zero
+        // Use the new helper method for both numerator and denominator selection
+        const selectedNumerator = this._selectValue('numerator', paramName, numeratorBehavior, numerators);
+        const selectedDenominator = this._selectValue('denominator', paramName, denominatorBehavior, denominators) || 1;
         
         const ratio = selectedNumerator / selectedDenominator;
         

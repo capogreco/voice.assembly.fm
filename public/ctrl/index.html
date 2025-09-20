@@ -825,6 +825,12 @@
             background: #1a1a1a;
         }
 
+        /* Simple invalid input state */
+        .invalid-input {
+            border-color: #a33 !important;
+            background: #1a0f0f !important;
+        }
+
         .mode-select, .env-select, .interp-select {
             background: #111;
             border: 1px solid #333;
@@ -941,7 +947,7 @@
             font-family: inherit;
             font-size: 9px;
             padding: 2px 4px;
-            width: 30px;
+            width: 44px;
         }
 
         .hrg-behavior:focus {
@@ -978,6 +984,61 @@
             outline: none;
             border-color: #666;
             color: #f0f0f0;
+        }
+
+        /* Scene Memory Styles */
+        .scene-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 8px;
+        }
+
+        .scene-row {
+            display: flex;
+            justify-content: center;
+            gap: 6px;
+        }
+
+        .scene-btn {
+            background: #111;
+            border: 1px solid #333;
+            color: #666;
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 11px;
+            font-family: inherit;
+            font-weight: normal;
+            transition: all 0.1s;
+            min-width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .scene-btn:hover {
+            background: #1a1a1a;
+            color: #888;
+        }
+
+        .scene-btn:active {
+            background: #222;
+            color: #fff;
+        }
+
+        .scene-btn.has-scene {
+            border-color: #666;
+            color: #f0f0f0;
+        }
+
+        .scene-btn.has-scene:hover {
+            background: #222;
+            border-color: #888;
+        }
+
+        .scene-instructions {
+            margin-top: 8px;
         }
 
     </style>
@@ -1032,42 +1093,42 @@
                         <option value="parabolic">par</option>
                     </select>
                     <span class="hrg-fraction" id="frequency-start-hrg" style="display: none;">
-                        <input type="text" class="text-input" id="frequency-start-numerators" value="1" placeholder="1-6">
+                        <input type="text" class="text-input" id="frequency-start-numerators" value="1" placeholder="1-6" autocomplete="off">
                         <select class="hrg-behavior" id="frequency-start-numerators-behavior">
-                            <option value="static">s</option>
-                            <option value="ascending">a</option>
-                            <option value="descending">d</option>
-                            <option value="random">r</option>
-                            <option value="shuffle">sh</option>
+                            <option value="static">stat</option>
+                            <option value="ascending">asc</option>
+                            <option value="descending">desc</option>
+                            <option value="random">rand</option>
+                            <option value="shuffle">shuf</option>
                         </select>
                         <span class="hrg-slash">/</span>
-                        <input type="text" class="text-input" id="frequency-start-denominators" value="1" placeholder="1">
+                        <input type="text" class="text-input" id="frequency-start-denominators" value="1" placeholder="1" autocomplete="off">
                         <select class="hrg-behavior" id="frequency-start-denominators-behavior">
-                            <option value="static">s</option>
-                            <option value="ascending">a</option>
-                            <option value="descending">d</option>
-                            <option value="random">r</option>
-                            <option value="shuffle">sh</option>
+                            <option value="static">stat</option>
+                            <option value="ascending">asc</option>
+                            <option value="descending">desc</option>
+                            <option value="random">rand</option>
+                            <option value="shuffle">shuf</option>
                         </select>
                     </span>
                     <span class="hrg-arrow" id="frequency-hrg-arrow" style="display: none;">→</span>
                     <span class="hrg-fraction" id="frequency-end-hrg" style="display: none;">
-                        <input type="text" class="text-input" id="frequency-end-numerators" value="1" placeholder="1-6">
+                        <input type="text" class="text-input" id="frequency-end-numerators" value="1" placeholder="1-6" autocomplete="off">
                         <select class="hrg-behavior" id="frequency-end-numerators-behavior">
-                            <option value="static">s</option>
-                            <option value="ascending">a</option>
-                            <option value="descending">d</option>
-                            <option value="random">r</option>
-                            <option value="shuffle">sh</option>
+                            <option value="static">stat</option>
+                            <option value="ascending">asc</option>
+                            <option value="descending">desc</option>
+                            <option value="random">rand</option>
+                            <option value="shuffle">shuf</option>
                         </select>
                         <span class="hrg-slash">/</span>
-                        <input type="text" class="text-input" id="frequency-end-denominators" value="1" placeholder="1">
+                        <input type="text" class="text-input" id="frequency-end-denominators" value="1" placeholder="1" autocomplete="off">
                         <select class="hrg-behavior" id="frequency-end-denominators-behavior">
-                            <option value="static">s</option>
-                            <option value="ascending">a</option>
-                            <option value="descending">d</option>
-                            <option value="random">r</option>
-                            <option value="shuffle">sh</option>
+                            <option value="static">stat</option>
+                            <option value="ascending">asc</option>
+                            <option value="descending">desc</option>
+                            <option value="random">rand</option>
+                            <option value="shuffle">shuf</option>
                         </select>
                     </span>
                     <input type="text" class="intensity-input" id="frequency-intensity" value="0.5" placeholder="0.5" style="display: none;" title="Curve intensity for parabolic">
@@ -1214,7 +1275,10 @@
             <h2>control</h2>
             <div class="control-section">
                 <h3>parameters</h3>
-                <button class="button" id="apply-params-btn" disabled>send program</button>
+                <div style="display:flex; gap:6px;">
+                    <button class="button" id="apply-params-btn" disabled>send program</button>
+                    <button class="button" id="reseed-btn">re-resolve</button>
+                </div>
             </div>
             <div class="control-section">
                 <h3>synthesis</h3>
@@ -1253,11 +1317,33 @@
             </div>
         </div>
 
-        <!-- Row 2: Future Envelope Visualizer Panel (center) -->
+        <!-- Row 2: Scene Memory Panel (center) -->
         <div class="panel">
-            <h2>visualizer</h2>
-            <div style="color: #888; font-size: 10px; text-align: center; padding: 20px;">
-                envelope visualizer coming soon
+            <h2>scene memory</h2>
+            <div class="control-section">
+                <h3>memory locations</h3>
+                <div class="scene-grid">
+                    <div class="scene-row">
+                        <button class="scene-btn" data-location="0">0</button>
+                        <button class="scene-btn" data-location="1">1</button>
+                        <button class="scene-btn" data-location="2">2</button>
+                        <button class="scene-btn" data-location="3">3</button>
+                        <button class="scene-btn" data-location="4">4</button>
+                    </div>
+                    <div class="scene-row">
+                        <button class="scene-btn" data-location="5">5</button>
+                        <button class="scene-btn" data-location="6">6</button>
+                        <button class="scene-btn" data-location="7">7</button>
+                        <button class="scene-btn" data-location="8">8</button>
+                        <button class="scene-btn" data-location="9">9</button>
+                    </div>
+                </div>
+                <div class="scene-instructions">
+                    <div style="color: #444; font-size: 9px; text-align: center; margin-top: 8px;">
+                        click to load • shift+click to save<br>
+                        or use keyboard: 0-9 to load, shift+0-9 to save
+                    </div>
+                </div>
             </div>
         </div>
 

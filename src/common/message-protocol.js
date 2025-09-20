@@ -25,7 +25,12 @@ export const MessageTypes = {
   // System Control
   CALIBRATION_MODE: 'calibration-mode',
   SYNTH_READY: 'synth-ready',
-  PROGRAM: 'program'
+  PROGRAM: 'program',
+  RESEED_RANDOMIZATION: 'reseed-randomization',
+  
+  // Scene Memory
+  SAVE_SCENE: 'save-scene',
+  LOAD_SCENE: 'load-scene'
 };
 
 export class MessageBuilder {
@@ -98,11 +103,35 @@ export class MessageBuilder {
     };
   }
 
+  static reseedRandomization() {
+    return {
+      type: MessageTypes.RESEED_RANDOMIZATION,
+      timestamp: performance.now()
+    };
+  }
+
   static directParamUpdate(paramName, value) {
     return {
       type: MessageTypes.DIRECT_PARAM_UPDATE,
       param: paramName,
       value: value,
+      timestamp: performance.now()
+    };
+  }
+
+  static saveScene(memoryLocation) {
+    return {
+      type: MessageTypes.SAVE_SCENE,
+      memoryLocation,
+      timestamp: performance.now()
+    };
+  }
+
+  static loadScene(memoryLocation, program) {
+    return {
+      type: MessageTypes.LOAD_SCENE,
+      memoryLocation,
+      program,
       timestamp: performance.now()
     };
   }
@@ -157,6 +186,25 @@ export function validateMessage(message) {
     case MessageTypes.PROGRAM:
       if (!message.config || typeof message.config !== 'object') {
         throw new Error('Program message must have config object');
+      }
+      break;
+
+    case MessageTypes.RESEED_RANDOMIZATION:
+      // No required fields; used to trigger stochastic re-resolution
+      break;
+
+    case MessageTypes.SAVE_SCENE:
+      if (typeof message.memoryLocation !== 'number' || 
+          message.memoryLocation < 0 || message.memoryLocation > 9) {
+        throw new Error('Save scene message requires memoryLocation (0-9)');
+      }
+      break;
+
+    case MessageTypes.LOAD_SCENE:
+      if (typeof message.memoryLocation !== 'number' || 
+          message.memoryLocation < 0 || message.memoryLocation > 9 ||
+          !message.program || typeof message.program !== 'object') {
+        throw new Error('Load scene message requires memoryLocation (0-9) and program object');
       }
       break;
   }
@@ -219,4 +267,3 @@ function validateSynthParameters(message) {
 export function calculateRTT(pongMessage, currentTime = performance.now()) {
   return currentTime - pongMessage.pingTimestamp;
 }
-

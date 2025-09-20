@@ -285,6 +285,7 @@ class ControlClient {
       
       // Parameter controls
       applyParamsBtn: document.getElementById('apply-params-btn'),
+      reseedBtn: document.getElementById('reseed-btn'),
       
       peerList: document.getElementById('peer-list'),
       debugLog: document.getElementById('debug-log'),
@@ -318,9 +319,23 @@ class ControlClient {
       console.log('Apply Parameter Changes button clicked!');
       this.applyParameterChanges();
     });
+
+    // Re-resolve (reseed) button
+    if (this.elements.reseedBtn) {
+      this.elements.reseedBtn.addEventListener('click', () => {
+        this.reseedRandomization();
+      });
+    }
     
     // Musical controls
     this.setupMusicalControls();
+  }
+
+  reseedRandomization() {
+    if (!this.star) return;
+    const message = MessageBuilder.reseedRandomization();
+    const sent = this.star.broadcastToType('synth', message, 'control');
+    this.log(`🔀 Re-resolve randomization requested for ${sent} synths`, 'info');
   }
   
   setupMusicalControls() {
@@ -353,6 +368,9 @@ class ControlClient {
       this.elements.es8EnableBtn.addEventListener('click', () => this.toggleES8());
     }
     
+    // Scene Memory UI
+    this.setupSceneMemoryUI();
+    
     // Global keyboard shortcuts
     document.addEventListener('keydown', (e) => {
       // Cmd+Enter (Mac) or Ctrl+Enter (PC) triggers Send Program
@@ -367,6 +385,18 @@ class ControlClient {
           this.applyParameterChanges();
         } else {
           this.log('⌨️ Button check failed - not calling applyParameterChanges()', 'info');
+        }
+      }
+      
+      // Scene Memory keyboard shortcuts (0-9 to load, Shift+0-9 to save)
+      // Only intercept if user is not typing in an input field
+      if (/^[0-9]$/.test(e.key) && e.target?.tagName !== 'INPUT') {
+        e.preventDefault();
+        const location = parseInt(e.key);
+        if (e.shiftKey) {
+          this.saveScene(location);
+        } else {
+          this.loadScene(location);
         }
       }
     });
@@ -655,6 +685,8 @@ class ControlClient {
       
       if (startNumeratorsInput) {
         startNumeratorsInput.addEventListener('input', () => {
+          const { ok } = this._validateSINString(startNumeratorsInput.value);
+          startNumeratorsInput.classList.toggle('invalid-input', !ok);
           this._updatePendingState({
             type: 'SET_GENERATOR_CONFIG',
             param: 'frequency',
@@ -667,6 +699,8 @@ class ControlClient {
       
       if (startDenominatorsInput) {
         startDenominatorsInput.addEventListener('input', () => {
+          const { ok } = this._validateSINString(startDenominatorsInput.value);
+          startDenominatorsInput.classList.toggle('invalid-input', !ok);
           this._updatePendingState({
             type: 'SET_GENERATOR_CONFIG',
             param: 'frequency',
@@ -709,6 +743,8 @@ class ControlClient {
       
       if (endNumeratorsInput) {
         endNumeratorsInput.addEventListener('input', () => {
+          const { ok } = this._validateSINString(endNumeratorsInput.value);
+          endNumeratorsInput.classList.toggle('invalid-input', !ok);
           this._updatePendingState({
             type: 'SET_GENERATOR_CONFIG',
             param: 'frequency',
@@ -721,6 +757,8 @@ class ControlClient {
       
       if (endDenominatorsInput) {
         endDenominatorsInput.addEventListener('input', () => {
+          const { ok } = this._validateSINString(endDenominatorsInput.value);
+          endDenominatorsInput.classList.toggle('invalid-input', !ok);
           this._updatePendingState({
             type: 'SET_GENERATOR_CONFIG',
             param: 'frequency',
@@ -855,84 +893,158 @@ class ControlClient {
   private _updateUIFromState(paramName: keyof IMusicalState) {
     const paramState = this.pendingMusicalState[paramName];
     
-    // Update mode select
+    // Get all UI components for this parameter
     const modeSelect = document.getElementById(`${paramName}-mode`) as HTMLSelectElement;
-    if (modeSelect) {
-      modeSelect.value = paramState.scope;
-    }
-    
-    // Update interpolation select
+    const valueInput = document.getElementById(`${paramName}-value`) as HTMLInputElement;
     const interpSelect = document.getElementById(`${paramName}-interpolation`) as HTMLSelectElement;
-    const textInput = document.getElementById(`${paramName}-value`) as HTMLInputElement;
+    const hrgStartControls = document.getElementById(`${paramName}-start-hrg`);
+    const hrgEndControls = document.getElementById(`${paramName}-end-hrg`);
+    const hrgArrow = document.getElementById(`${paramName}-hrg-arrow`);
     const endValueInput = document.getElementById(`${paramName}-end-value`) as HTMLInputElement;
     const intensityInput = document.getElementById(`${paramName}-intensity`) as HTMLInputElement;
-    
-    // Update UI based on scope
-    if (paramState.scope === 'direct') {
-      // Update text input with direct value
-      if (textInput) {
-        if (paramState.directValue === null) {
-          // The state is "empty". Blank the input and focus it for the user.
-          textInput.value = '';
-          textInput.focus();
-        } else {
-          // The state has a real value. Display it.
-          textInput.value = paramState.directValue.toString();
-        }
-      }
-      
-      // Hide program-mode elements
-      if (interpSelect) interpSelect.style.display = 'none';
-      if (endValueInput) endValueInput.style.display = 'none';
-      if (intensityInput) intensityInput.style.display = 'none';
-      
-    } else if (paramState.scope === 'program') {
-      // Show program-mode elements
-      if (interpSelect) {
-        interpSelect.style.display = 'inline';
-        interpSelect.value = paramState.interpolation;
-      }
 
-      // Update start value input based on generator
-      if (textInput && paramState.startValueGenerator) {
-        const startGen = paramState.startValueGenerator;
-        if (startGen.type === 'normalised') {
-          if (typeof startGen.range === 'number') {
-            textInput.value = startGen.range.toString();
-          } else if (typeof startGen.range === 'object') {
-            textInput.value = `${startGen.range.min}-${startGen.range.max}`;
-          }
-        }
-      }
+    if (!modeSelect) return;
 
-      // Use the STATE to determine visibility of envelope-specific controls
-      if (paramState.interpolation === 'step') {
-        // In 'step' (static) mode, HIDE the end value and intensity controls
-        if (endValueInput) endValueInput.style.display = 'none';
-        if (intensityInput) intensityInput.style.display = 'none';
+    // --- START NEW, CORRECTED LOGIC ---
+
+    // 1. The main value input is ALWAYS visible. Its value is always the directValue.
+    if (valueInput) {
+      valueInput.style.display = 'inline-block'; // Ensure it's always visible
+      if (paramState.directValue !== null) {
+        valueInput.value = paramState.directValue.toString();
       } else {
-        // In any other mode ('linear', 'cosine', etc.), SHOW them
-        if (endValueInput) {
-          endValueInput.style.display = 'inline';
-          
-          // Update end value input based on generator
-          if (paramState.endValueGenerator && paramState.endValueGenerator.type === 'normalised') {
-            const endGen = paramState.endValueGenerator;
-            if (typeof endGen.range === 'number') {
-              endValueInput.value = endGen.range.toString();
-            } else if (typeof endGen.range === 'object') {
-              endValueInput.value = `${endGen.range.min}-${endGen.range.max}`;
-            }
-          }
-        }
-        if (intensityInput) {
-          intensityInput.style.display = paramState.interpolation === 'parabolic' ? 'inline' : 'none';
-          if (paramState.intensity !== undefined) {
-            intensityInput.value = paramState.intensity.toString();
-          }
-        }
+        valueInput.value = ''; // Handle the blank-and-focus case
+        valueInput.focus();
       }
     }
+
+    // 2. Set the mode dropdown's value from state.
+    modeSelect.value = paramState.scope;
+
+    // 3. The 'scope' now ONLY controls the visibility of the program-related controls.
+    const isProgramMode = paramState.scope === 'program';
+    
+    if (interpSelect) interpSelect.style.display = isProgramMode ? 'inline-block' : 'none';
+    if (hrgStartControls) hrgStartControls.style.display = isProgramMode ? 'inline' : 'none';
+
+    // 4. If in program mode, handle the interpolation-dependent controls.
+    if (isProgramMode) {
+      if (interpSelect) {
+        interpSelect.value = paramState.interpolation;
+      }
+      
+      const isEnvelope = paramState.interpolation !== 'step';
+      if (hrgEndControls) hrgEndControls.style.display = isEnvelope ? 'inline' : 'none';
+      if (hrgArrow) hrgArrow.style.display = isEnvelope ? 'inline' : 'none';
+      if (endValueInput) endValueInput.style.display = isEnvelope ? 'inline' : 'none';
+      if (intensityInput) intensityInput.style.display = (isEnvelope && paramState.interpolation === 'parabolic') ? 'inline' : 'none';
+      
+      // Update intensity value if in parabolic mode
+      if (intensityInput && paramState.intensity !== undefined) {
+        intensityInput.value = paramState.intensity.toString();
+      }
+      
+      // Update end value input based on generator for non-HRG parameters
+      if (endValueInput && isEnvelope && paramState.endValueGenerator && paramState.endValueGenerator.type === 'normalised') {
+        const endGen = paramState.endValueGenerator;
+        if (typeof endGen.range === 'number') {
+          endValueInput.value = endGen.range.toString();
+        } else if (typeof endGen.range === 'object') {
+          endValueInput.value = `${endGen.range.min}-${endGen.range.max}`;
+        }
+      }
+
+      // Ensure HRG UI reflects state (frequency only)
+      if (paramName === 'frequency') {
+        const startGen = (paramState as any).startValueGenerator;
+        if (startGen && startGen.type === 'periodic') {
+          const startNums = document.getElementById('frequency-start-numerators') as HTMLInputElement | null;
+          const startDens = document.getElementById('frequency-start-denominators') as HTMLInputElement | null;
+          const startNumBeh = document.getElementById('frequency-start-numerators-behavior') as HTMLSelectElement | null;
+          const startDenBeh = document.getElementById('frequency-start-denominators-behavior') as HTMLSelectElement | null;
+          if (startNums) startNums.value = startGen.numerators ?? '1';
+          if (startDens) startDens.value = startGen.denominators ?? '1';
+          if (startNumBeh) startNumBeh.value = startGen.numeratorBehavior ?? 'static';
+          if (startDenBeh) startDenBeh.value = startGen.denominatorBehavior ?? 'static';
+        }
+
+        if (isEnvelope) {
+          const endGen = (paramState as any).endValueGenerator;
+          if (endGen && endGen.type === 'periodic') {
+            const endNums = document.getElementById('frequency-end-numerators') as HTMLInputElement | null;
+            const endDens = document.getElementById('frequency-end-denominators') as HTMLInputElement | null;
+            const endNumBeh = document.getElementById('frequency-end-numerators-behavior') as HTMLSelectElement | null;
+            const endDenBeh = document.getElementById('frequency-end-denominators-behavior') as HTMLSelectElement | null;
+            if (endNums) endNums.value = endGen.numerators ?? '1';
+            if (endDens) endDens.value = endGen.denominators ?? '1';
+            if (endNumBeh) endNumBeh.value = endGen.numeratorBehavior ?? 'static';
+            if (endDenBeh) endDenBeh.value = endGen.denominatorBehavior ?? 'static';
+          }
+        }
+      }
+    } else {
+      // Ensure end HRG controls, arrow, and envelope controls are hidden when not in program mode.
+      if (hrgEndControls) hrgEndControls.style.display = 'none';
+      if (hrgArrow) hrgArrow.style.display = 'none';
+      if (endValueInput) endValueInput.style.display = 'none';
+      if (intensityInput) intensityInput.style.display = 'none';
+    }
+  }
+
+  // Capture current HRG inputs into pending state before apply
+  private _syncHRGStateFromInputs() {
+    const freqState = this.pendingMusicalState.frequency as any;
+    if (!freqState || freqState.scope !== 'program') return;
+
+    let anyInvalid = false;
+
+    // Helper to validate and mark
+    const validateField = (el: HTMLInputElement | null, label: string) => {
+      if (!el) return true;
+      const { ok } = this._validateSINString(el.value);
+      el.classList.toggle('invalid-input', !ok);
+      if (!ok) {
+        this.log(`Invalid ${label}: "${el.value}" (use numbers, commas, and ranges like 1-6)`, 'error');
+      }
+      return ok;
+    };
+
+    // Validate all four fields first
+    const v1 = validateField(document.getElementById('frequency-start-numerators') as HTMLInputElement | null, 'start numerators');
+    const v2 = validateField(document.getElementById('frequency-start-denominators') as HTMLInputElement | null, 'start denominators');
+    const v3 = validateField(document.getElementById('frequency-end-numerators') as HTMLInputElement | null, 'end numerators');
+    const v4 = validateField(document.getElementById('frequency-end-denominators') as HTMLInputElement | null, 'end denominators');
+    anyInvalid = !(v1 && v2 && v3 && v4);
+
+    if (anyInvalid) {
+      return false;
+    }
+
+    // Start generator
+    if (freqState.startValueGenerator?.type === 'periodic') {
+      const startNums = (document.getElementById('frequency-start-numerators') as HTMLInputElement | null)?.value;
+      const startDens = (document.getElementById('frequency-start-denominators') as HTMLInputElement | null)?.value;
+      const startNumBeh = (document.getElementById('frequency-start-numerators-behavior') as HTMLSelectElement | null)?.value;
+      const startDenBeh = (document.getElementById('frequency-start-denominators-behavior') as HTMLSelectElement | null)?.value;
+      freqState.startValueGenerator.numerators = startNums ?? freqState.startValueGenerator.numerators;
+      freqState.startValueGenerator.denominators = startDens ?? freqState.startValueGenerator.denominators;
+      freqState.startValueGenerator.numeratorBehavior = startNumBeh ?? freqState.startValueGenerator.numeratorBehavior;
+      freqState.startValueGenerator.denominatorBehavior = startDenBeh ?? freqState.startValueGenerator.denominatorBehavior;
+    }
+
+    // End generator (if envelope)
+    if (freqState.interpolation !== 'step' && freqState.endValueGenerator?.type === 'periodic') {
+      const endNums = (document.getElementById('frequency-end-numerators') as HTMLInputElement | null)?.value;
+      const endDens = (document.getElementById('frequency-end-denominators') as HTMLInputElement | null)?.value;
+      const endNumBeh = (document.getElementById('frequency-end-numerators-behavior') as HTMLSelectElement | null)?.value;
+      const endDenBeh = (document.getElementById('frequency-end-denominators-behavior') as HTMLSelectElement | null)?.value;
+      freqState.endValueGenerator.numerators = endNums ?? freqState.endValueGenerator.numerators;
+      freqState.endValueGenerator.denominators = endDens ?? freqState.endValueGenerator.denominators;
+      freqState.endValueGenerator.numeratorBehavior = endNumBeh ?? freqState.endValueGenerator.numeratorBehavior;
+      freqState.endValueGenerator.denominatorBehavior = endDenBeh ?? freqState.endValueGenerator.denominatorBehavior;
+    }
+
+    return true;
   }
 
   setupDualRangeSlider(paramName, valueType, precision) {
@@ -1163,10 +1275,43 @@ class ControlClient {
   }
 
   applyParameterChanges() {
+    // Sync visible HRG UI inputs into pending state before committing; abort on invalid
+    const ok = this._syncHRGStateFromInputs();
+    if (ok === false) {
+      this.log('Fix invalid HRG inputs before applying.', 'error');
+      return;
+    }
     this.musicalState = JSON.parse(JSON.stringify(this.pendingMusicalState));
     console.log('Applying new state:', this.musicalState);
     this.broadcastMusicalParameters();
     this.clearPendingChanges();
+  }
+
+  // Validate a SIN string like "1-3,5,7-9"
+  private _validateSINString(str: string): { ok: boolean; error?: string } {
+    if (str == null) return { ok: false, error: 'empty' };
+    const s = String(str).trim();
+    if (s.length === 0) return { ok: false, error: 'empty' };
+    // Quick format check: numbers, optional ranges, comma separated
+    const basic = /^\s*\d+(\s*-\s*\d+)?(\s*,\s*\d+(\s*-\s*\d+)?)*\s*$/;
+    if (!basic.test(s)) return { ok: false, error: 'format' };
+    // Semantic check: ranges ascending, all positive
+    const parts = s.split(',');
+    for (const p of parts) {
+      const t = p.trim();
+      if (t.includes('-')) {
+        const [aStr, bStr] = t.split('-').map(v => v.trim());
+        const a = parseInt(aStr, 10);
+        const b = parseInt(bStr, 10);
+        if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b <= 0 || a > b) {
+          return { ok: false, error: 'range' };
+        }
+      } else {
+        const n = parseInt(t, 10);
+        if (!Number.isFinite(n) || n <= 0) return { ok: false, error: 'number' };
+      }
+    }
+    return { ok: true };
   }
 
 
@@ -1714,6 +1859,102 @@ class ControlClient {
 
   clearLog() {
     this.elements.debugLog.textContent = '';
+  }
+
+  setupSceneMemoryUI() {
+    // Set up click handlers for scene buttons
+    const sceneButtons = document.querySelectorAll('.scene-btn');
+    sceneButtons.forEach(button => {
+      button.addEventListener('click', (e) => {
+        const location = parseInt(button.getAttribute('data-location'));
+        if (e.shiftKey) {
+          this.saveScene(location);
+        } else {
+          this.loadScene(location);
+        }
+      });
+    });
+    
+    // Update visual indicators for which slots have saved scenes
+    this.updateSceneMemoryIndicators();
+  }
+
+  updateSceneMemoryIndicators() {
+    const sceneButtons = document.querySelectorAll('.scene-btn');
+    sceneButtons.forEach(button => {
+      const location = parseInt(button.getAttribute('data-location'));
+      const key = `scene_${location}_controller`;
+      const hasScene = localStorage.getItem(key) !== null;
+      
+      if (hasScene) {
+        button.classList.add('has-scene');
+      } else {
+        button.classList.remove('has-scene');
+      }
+    });
+  }
+
+  saveScene(memoryLocation: number) {
+    console.log(`💾 Saving scene to memory location ${memoryLocation}...`);
+    
+    try {
+      // 1. Get the current, unresolved program state.
+      const programToSave = this.pendingMusicalState;
+      
+      // 2. Save it to the controller's local storage.
+      localStorage.setItem(`scene_${memoryLocation}_controller`, JSON.stringify(programToSave));
+      
+      // 3. Broadcast the command to all synths.
+      if (this.star) {
+        const message = MessageBuilder.saveScene(memoryLocation);
+        this.star.broadcastToType('synth', message, 'control');
+      }
+      
+      this.log(`Scene ${memoryLocation} saved.`, 'success');
+      this.updateSceneMemoryIndicators();
+    } catch (error) {
+      console.error('Error saving scene:', error);
+      this.log(`Failed to save scene ${memoryLocation}: ${error.message}`, 'error');
+    }
+  }
+
+  loadScene(memoryLocation: number) {
+    console.log(`📂 Loading scene from memory location ${memoryLocation}...`);
+    
+    try {
+      const savedProgramString = localStorage.getItem(`scene_${memoryLocation}_controller`);
+      if (!savedProgramString) {
+        this.log(`No scene found at location ${memoryLocation}.`, 'error');
+        return;
+      }
+      
+      // 1. Load and parse the saved program.
+      const loadedProgram = JSON.parse(savedProgramString);
+      
+      // 2. Update the controller's internal state.
+      this.pendingMusicalState = loadedProgram;
+      this.musicalState = JSON.parse(JSON.stringify(loadedProgram));
+      
+      // 3. Update the entire UI to match the loaded state.
+      Object.keys(this.musicalState).forEach(paramName => {
+        this._updateUIFromState(paramName as keyof IMusicalState);
+      });
+      
+      // 4. Broadcast a fresh PROGRAM_UPDATE so synths receive program configs and direct values.
+      this.broadcastMusicalParameters();
+
+      // 5. Broadcast the 'LOAD_SCENE' message with the full program (metadata for client-side snapshotting).
+      if (this.star) {
+        const message = MessageBuilder.loadScene(memoryLocation, loadedProgram);
+        this.star.broadcastToType('synth', message, 'control');
+      }
+      
+      this.log(`Scene ${memoryLocation} loaded and broadcast.`, 'success');
+      this.updateSceneMemoryIndicators();
+    } catch (error) {
+      console.error('Error loading scene:', error);
+      this.log(`Failed to load scene ${memoryLocation}: ${error.message}`, 'error');
+    }
   }
 
 
