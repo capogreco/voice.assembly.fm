@@ -56,4 +56,5 @@ export interface IMusicalState {
   zingMorph: ParameterState;
   symmetry: ParameterState;
   amplitude: ParameterState;
+  whiteNoise: ParameterState;
 }

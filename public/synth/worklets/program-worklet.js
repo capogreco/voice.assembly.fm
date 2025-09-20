@@ -24,7 +24,8 @@ class ProgramWorklet extends AudioWorkletProcessor {
       vowelX: 3,
       vowelY: 4,
       symmetry: 5,
-      amplitude: 6
+      amplitude: 6,
+      whiteNoise: 7
     };
     
     // Current parameter values for outputs
@@ -35,7 +36,8 @@ class ProgramWorklet extends AudioWorkletProcessor {
       vowelX: 0.5,
       vowelY: 0.5,
       symmetry: 0.5,
-      amplitude: 0.1
+      amplitude: 0.1,
+      whiteNoise: 0
     };
     
     this.port.onmessage = this.handleMessage.bind(this);
@@ -64,8 +66,8 @@ class ProgramWorklet extends AudioWorkletProcessor {
     this.envelopes.clear();
     
     for (const [paramName, paramState] of Object.entries(this.programState)) {
-      if (typeof paramState === 'object' && paramState.temporalBehavior) {
-        if (paramState.temporalBehavior === 'envelope') {
+      if (typeof paramState === 'object' && paramState.interpolationType) {
+        if (paramState.interpolationType !== 'step') {
           this.envelopes.set(paramName, {
             startValue: this.generateValue(paramState.startValueGenerator, paramName),
             endValue: this.generateValue(paramState.endValueGenerator, paramName),
@@ -74,9 +76,8 @@ class ProgramWorklet extends AudioWorkletProcessor {
             interpolationType: paramState.interpolationType || 'linear',
             intensity: paramState.intensity || 0.5
           });
-        } else if (paramState.temporalBehavior === 'static') {
+        } else if (paramState.interpolationType === 'step') {
           this.currentValues[paramName] = this.generateValue(paramState.startValueGenerator, paramName);
-          console.log(`📊 Program: Set ${paramName} = ${this.currentValues[paramName]} (static)`);
         }
       }
     }
@@ -192,14 +193,13 @@ class ProgramWorklet extends AudioWorkletProcessor {
         
         const ratio = selectedNumerator / selectedDenominator;
         
-        console.log(`🎵 HRG ${paramName}: ${baseValue} × (${selectedNumerator}/${selectedDenominator}) = ${baseValue * ratio}`);
         return baseValue * ratio;
       }
         
       case 'normalised': {
         // Handle normalised (RBG) generators
         if (typeof generator.range === 'number') {
-          return Math.random() * generator.range;
+          return generator.range;
         } else if (generator.range && typeof generator.range === 'object') {
           const range = generator.range.max - generator.range.min;
           return generator.range.min + (Math.random() * range);
@@ -253,7 +253,7 @@ class ProgramWorklet extends AudioWorkletProcessor {
     
     for (const [paramName, paramState] of Object.entries(this.programState)) {
       if (typeof paramState === 'object' && 
-          paramState.temporalBehavior === 'envelope') {
+          paramState.interpolationType && paramState.interpolationType !== 'step') {
         
         const envelope = this.envelopes.get(paramName);
         if (envelope) {
@@ -262,12 +262,10 @@ class ProgramWorklet extends AudioWorkletProcessor {
           envelope.interpolationType = paramState.interpolationType || 'linear';
           envelope.intensity = paramState.intensity || 0.5;
           envelope.active = true;
-          console.log(`🚀 Triggered ${envelope.interpolationType} envelope for ${paramName}: ${envelope.startValue} → ${envelope.endValue}`);
         }
       } else if (typeof paramState === 'object' && 
-                 paramState.temporalBehavior === 'static') {
+                 paramState.interpolationType === 'step') {
         this.currentValues[paramName] = this.generateValue(paramState.startValueGenerator, paramName);
-        console.log(`📊 Program: Set ${paramName} = ${this.currentValues[paramName]} (static)`);
       }
     }
   }
@@ -276,6 +274,11 @@ class ProgramWorklet extends AudioWorkletProcessor {
     const output = outputs[0];
     const blockSize = output[0].length;
     const phaseValues = parameters.phase; // Read the phase AudioParam
+    
+    // Debug: Check if we have 8 output channels
+    if (output.length !== 8) {
+      console.error(`❌ Program worklet: Expected 8 output channels, got ${output.length}`);
+    }
     
     for (let i = 0; i < blockSize; i++) {
       // Read current phase from AudioParam (sample-accurate)
@@ -288,7 +291,6 @@ class ProgramWorklet extends AudioWorkletProcessor {
       if (eoc) {
         // EOC detected - trigger envelope updates
         this.triggerEnvelopes();
-        console.log('🔔 Program EOC detected');
       }
       
       // Update envelopes using current phase as progress

@@ -34,7 +34,6 @@ export class XYOscilloscope {
     this.isRunning = false;
     this.animationId = null;
     this.trailFactor = 0.05; // How much trail to leave (0-1)
-    this.calibrationMode = false; // Track if we're in calibration mode for proper scaling
     
     this.resize();
   }
@@ -127,10 +126,8 @@ export class XYOscilloscope {
       
       // Clamp samples to avoid extreme values
       
-      // Convert to screen coordinates with appropriate scaling
-      // White noise: 1x amplification 
-      // Formant synthesis: 0.3x amplification
-      const amplification = this.calibrationMode ? 1.0 : 0.3;
+      // Convert to screen coordinates with consistent scaling
+      const amplification = 0.5; // Balanced amplification for all signals
       const x = this.centerX + (xSample * amplification * maxRadius);
       const y = this.centerY - (ySample * amplification * maxRadius); // Negative for correct orientation
       

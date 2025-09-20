@@ -57,6 +57,7 @@ export class MessageBuilder {
       vowelY: params.vowelY,
       symmetry: params.symmetry,
       amplitude: params.amplitude,
+      whiteNoise: params.whiteNoise,
       synthesisActive: params.synthesisActive,
       timestamp: performance.now()
     };
@@ -193,9 +194,9 @@ function validateSynthParameters(message) {
         throw new Error(`Parameter '${paramName}' is an object but is missing 'isProgrammatic' flag.`);
       }
 
-      // It must have a valid temporal behavior.
-      if (paramState.temporalBehavior !== 'static' && paramState.temporalBehavior !== 'envelope') {
-        throw new Error(`Programmatic parameter '${paramName}' has invalid temporalBehavior.`);
+      // It must have a valid interpolation type.
+      if (!paramState.interpolation || typeof paramState.interpolation !== 'string') {
+        throw new Error(`Programmatic parameter '${paramName}' has invalid interpolation.`);
       }
 
       // It must have a start generator.
@@ -203,9 +204,9 @@ function validateSynthParameters(message) {
         throw new Error(`Programmatic parameter '${paramName}' is missing a valid startValueGenerator.`);
       }
 
-      // If it's an envelope, it must have an end generator.
-      if (paramState.temporalBehavior === 'envelope' && typeof paramState.endValueGenerator !== 'object') {
-        throw new Error(`Envelope parameter '${paramName}' is missing an endValueGenerator.`);
+      // If it's not step interpolation, it must have an end generator.
+      if (paramState.interpolation !== 'step' && typeof paramState.endValueGenerator !== 'object') {
+        throw new Error(`Non-step parameter '${paramName}' is missing an endValueGenerator.`);
       }
     }
   }

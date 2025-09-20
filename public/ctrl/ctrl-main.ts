@@ -21,8 +21,6 @@ class ControlClient {
   star: any; // WebRTC star connection
   forceTakeover: boolean;
   peerId: string;
-  isCalibrationMode: boolean;
-  calibrationAmplitude: number;
   phasor: number;
   cpm: number;
   stepsPerCycle: number;
@@ -36,6 +34,7 @@ class ControlClient {
   es8Node: any;
   hasPendingChanges: boolean;
   elements: any;
+  synthesisActive: boolean;
 
   private _createDefaultState(): IMusicalState {
     // Helper for a default normalised generator
@@ -59,14 +58,25 @@ class ControlClient {
       directValue: value
     });
     
+    // Helper for program mode with cosine 0-1
+    const defaultProgramState = (): ParameterState => ({
+      scope: 'program',
+      interpolation: 'cosine',
+      intensity: 0.5,
+      startValueGenerator: { type: 'normalised', range: { min: 0, max: 1 }, sequenceBehavior: 'static' },
+      endValueGenerator: { type: 'normalised', range: { min: 0, max: 1 }, sequenceBehavior: 'static' },
+      directValue: 0.5 // Add missing directValue for the text input display
+    });
+
     return {
       frequency: { scope: 'direct', directValue: 220 },
-      vowelX: defaultDirectState(0.5),
-      vowelY: defaultDirectState(0.5),
-      zingAmount: defaultDirectState(0.1),
-      zingMorph: defaultDirectState(0.5),
-      symmetry: defaultDirectState(0.5),
-      amplitude: defaultDirectState(0.8)
+      vowelX: defaultProgramState(),
+      vowelY: defaultProgramState(),
+      zingAmount: defaultProgramState(),
+      zingMorph: defaultProgramState(),
+      symmetry: defaultProgramState(),
+      amplitude: defaultDirectState(0.8),
+      whiteNoise: defaultDirectState(0)
     };
   }
 
@@ -79,15 +89,10 @@ class ControlClient {
     switch (action.type) {
       case 'SET_SCOPE': {
         if (action.scope === 'direct') {
-          // Convert to direct mode - keep the current value if possible
-          const currentParam = newState[action.param];
-          const directValue = currentParam.scope === 'direct' 
-            ? currentParam.directValue 
-            : 220; // Default fallback
-          
+          // Convert to direct mode - set to null to signal blank and focus input
           newState[action.param] = {
             scope: 'direct',
-            directValue
+            directValue: null
           };
         } else {
           // Convert to program mode - preserve current directValue for baseValue
@@ -182,6 +187,12 @@ class ControlClient {
     }
     
     this.pendingMusicalState = newState;
+    
+    // Update UI to reflect the state change
+    if (action.param) {
+      this._updateUIFromState(action.param);
+    }
+    
     this.markPendingChanges();
   }
 
@@ -219,11 +230,7 @@ class ControlClient {
     
     this.peerId = generatePeerId('ctrl');
     this.star = null;
-    this.isCalibrationMode = false;
     // Moved to this.synthesisActive (defined in state management section)
-    
-    // Calibration settings
-    this.calibrationAmplitude = 0.1;
     
     // Phasor state
     this.phasor = 0.0;              // Current phasor position (0.0 to 1.0)
@@ -259,7 +266,6 @@ class ControlClient {
       peersStatus: document.getElementById('peers-status'),
       peersValue: document.getElementById('peers-value'),
       
-      calibrationBtn: document.getElementById('calibration-btn'),
       manualModeBtn: document.getElementById('manual-mode-btn'),
       
       // Musical controls
@@ -300,8 +306,6 @@ class ControlClient {
   setupEventHandlers() {
     console.log('Setting up handlers, button exists:', !!this.elements.applyParamsBtn);
     
-    // Calibration
-    this.elements.calibrationBtn.addEventListener('click', () => this.toggleCalibration());
     
     // Manual mode
     this.elements.manualModeBtn.addEventListener('click', () => this.toggleSynthesis());
@@ -379,6 +383,12 @@ class ControlClient {
     this.setupCompactParameterControls('zingMorph');
     this.setupCompactParameterControls('symmetry');
     this.setupCompactParameterControls('amplitude');
+    this.setupCompactParameterControls('whiteNoise');
+    
+    // Initialize all parameter UIs using unified state/UI sync
+    Object.keys(this.musicalState).forEach(paramName => {
+      this.setParameterState(paramName as keyof IMusicalState, this.musicalState[paramName]);
+    });
   }
 
   setupParameterEnvelopeControls(paramName, suffix, precision) {
@@ -512,22 +522,8 @@ class ControlClient {
         scope: isDirect ? 'direct' : 'program'
       });
       
-      // Update UI visibility
-      if (isDirect) {
-        // Direct mode: hide program controls
-        if (interpSelect) interpSelect.style.display = 'none';
-        if (startHrg) startHrg.style.display = 'none';
-        if (endHrg) endHrg.style.display = 'none';
-        if (hrgArrow) hrgArrow.style.display = 'none';
-        if (endValueInput) endValueInput.style.display = 'none';
-        if (intensityInput) intensityInput.style.display = 'none';
-      } else {
-        // Program mode: show interpolation select and appropriate controls
-        if (interpSelect) interpSelect.style.display = 'inline';
-        this._updateInterpolationUI(paramName);
-      }
+      // UI will be updated automatically by _updatePendingState → _updateUIFromState
       
-      console.log(`🔧 Set ${paramName} scope to: ${modeSelect.value}`);
     });
     
     // Handle interpolation changes
@@ -542,41 +538,97 @@ class ControlClient {
           interpolation: interpolation
         });
         
-        // Update UI visibility based on interpolation type
-        this._updateInterpolationUI(paramName);
+        // UI will be updated automatically by _updatePendingState → _updateUIFromState
         
-        console.log(`🎛️ Set ${paramName} interpolation to: ${interpolation}`);
         this.markPendingChanges();
       });
     }
 
     // Handle end value input changes
     if (endValueInput) {
-      endValueInput.addEventListener('input', () => {
+      // Use 'change' event for final state update (fires when user commits value)
+      endValueInput.addEventListener('change', () => {
         this._handleValueInput(paramName, endValueInput.value, 'end');
         this.markPendingChanges();
+      });
+      
+      // Optional: Add 'input' listener for validation feedback only
+      endValueInput.addEventListener('input', () => {
+        const isValid = /^-?\d*\.?\d*(\s*-\s*-?\d*\.?\d*)?$/.test(endValueInput.value);
+        endValueInput.classList.toggle('invalid-input', !isValid && endValueInput.value !== '');
       });
     }
     
     // Handle text input changes
     if (textInput) {
-      textInput.addEventListener('input', () => {
+      // Use 'change' event for final state update (fires when user commits value)
+      textInput.addEventListener('change', () => {
         this._handleValueInput(paramName, textInput.value, 'start');
         this.markPendingChanges();
       });
-      
+
       // Handle blur for immediate broadcast in direct mode
       textInput.addEventListener('blur', () => {
         if (modeSelect && modeSelect.value === 'direct') {
-          // Apply and broadcast this single direct parameter
+          
+          // Check if input is empty and apply appropriate default
+          if (textInput.value.trim() === '') {
+            // Determine the correct default based on the parameter name
+            let defaultValue: number;
+
+            switch (paramName) {
+              case 'vowelX':
+              case 'vowelY':
+              case 'symmetry':
+              case 'zingMorph':
+              case 'zingAmount':
+                defaultValue = 0.5;
+                break;
+              
+              case 'frequency':
+                defaultValue = 220;
+                break;
+
+              case 'amplitude':
+                defaultValue = 0.8;
+                break;
+
+              case 'whiteNoise':
+              default: // Safe fallback
+                defaultValue = 0;
+                break;
+            }
+            
+            console.log(`Input for '${paramName}' was empty on blur, defaulting to ${defaultValue}`);
+            
+            // Update the state with the determined default value
+            this._updatePendingState({
+              type: 'SET_DIRECT_VALUE',
+              param: paramName as keyof IMusicalState,
+              value: defaultValue
+            });
+            // The UI will automatically update to show this new value because
+            // _updatePendingState calls _updateUIFromState
+          }
+
+          // Always apply and broadcast the current state on blur for direct mode
+          // If the field was empty, this will broadcast the default we just set
+          // If the field had a value, it will broadcast that value
           this._applyDirectParameter(paramName as keyof IMusicalState);
         }
+      });
+      
+      // Optional: Add 'input' listener for validation feedback only
+      textInput.addEventListener('input', () => {
+        const isValid = /^-?\d*\.?\d*(\s*-\s*-?\d*\.?\d*)?$/.test(textInput.value);
+        textInput.classList.toggle('invalid-input', !isValid && textInput.value !== '');
       });
     }
 
     // Handle intensity input changes
     if (intensityInput) {
-      intensityInput.addEventListener('input', () => {
+      // Use 'change' event for final state update (fires when user commits value)
+      intensityInput.addEventListener('change', () => {
         const intensity = parseFloat(intensityInput.value) || 0.5;
         this._updatePendingState({
           type: 'SET_INTENSITY',
@@ -584,6 +636,12 @@ class ControlClient {
           intensity: intensity
         });
         this.markPendingChanges();
+      });
+      
+      // Optional: Add 'input' listener for validation feedback only
+      intensityInput.addEventListener('input', () => {
+        const isValid = /^-?\d*\.?\d*$/.test(intensityInput.value);
+        intensityInput.classList.toggle('invalid-input', !isValid && intensityInput.value !== '');
       });
     }
     
@@ -700,18 +758,6 @@ class ControlClient {
     
     // Initialize UI to reflect the current typed state
     this._updateUIFromState(paramName);
-    const initialMode = modeSelect.value;
-    if (initialMode === 'direct') {
-      if (interpSelect) interpSelect.style.display = 'none';
-      if (startHrg) startHrg.style.display = 'none';
-      if (endHrg) endHrg.style.display = 'none';
-      if (hrgArrow) hrgArrow.style.display = 'none';
-      if (endValueInput) endValueInput.style.display = 'none';
-      if (intensityInput) intensityInput.style.display = 'none';
-    } else {
-      if (interpSelect) interpSelect.style.display = 'inline';
-      this._updateInterpolationUI(paramName);
-    }
   }
 
   /**
@@ -800,36 +846,6 @@ class ControlClient {
   /**
    * Update UI visibility based on current interpolation type
    */
-  private _updateInterpolationUI(paramName: string) {
-    const paramState = this.pendingMusicalState[paramName as keyof IMusicalState];
-    if (paramState.scope !== 'program') return;
-    
-    const startHrg = document.getElementById(`${paramName}-start-hrg`);
-    const endHrg = document.getElementById(`${paramName}-end-hrg`);
-    const hrgArrow = document.getElementById(`${paramName}-hrg-arrow`);
-    const endValueInput = document.getElementById(`${paramName}-end-value`);
-    const intensityInput = document.getElementById(`${paramName}-intensity`);
-    
-    if (paramState.interpolation === 'step') {
-      // Step interpolation: only show start controls
-      if (startHrg) startHrg.style.display = 'inline';
-      if (endHrg) endHrg.style.display = 'none';
-      if (hrgArrow) hrgArrow.style.display = 'none';
-      if (endValueInput) endValueInput.style.display = 'none';
-      if (intensityInput) intensityInput.style.display = 'none';
-    } else {
-      // Linear/cosine/parabolic interpolation: show both start and end controls
-      if (startHrg) startHrg.style.display = 'inline';
-      if (hrgArrow) hrgArrow.style.display = 'inline';
-      if (endHrg) endHrg.style.display = 'inline';
-      if (endValueInput) endValueInput.style.display = 'inline';
-      
-      // Show intensity input for parabolic interpolation
-      if (intensityInput) {
-        intensityInput.style.display = paramState.interpolation === 'parabolic' ? 'inline' : 'none';
-      }
-    }
-  }
 
   /**
    * Update UI elements to reflect the current typed state
@@ -847,77 +863,72 @@ class ControlClient {
     
     // Update interpolation select
     const interpSelect = document.getElementById(`${paramName}-interpolation`) as HTMLSelectElement;
-    if (interpSelect && paramState.scope === 'program') {
-      interpSelect.value = paramState.interpolation;
-    }
+    const textInput = document.getElementById(`${paramName}-value`) as HTMLInputElement;
+    const endValueInput = document.getElementById(`${paramName}-end-value`) as HTMLInputElement;
+    const intensityInput = document.getElementById(`${paramName}-intensity`) as HTMLInputElement;
     
     // Update UI based on scope
     if (paramState.scope === 'direct') {
       // Update text input with direct value
-      const textInput = document.getElementById(`${paramName}-value`) as HTMLInputElement;
       if (textInput) {
-        textInput.value = paramState.directValue.toString();
+        if (paramState.directValue === null) {
+          // The state is "empty". Blank the input and focus it for the user.
+          textInput.value = '';
+          textInput.focus();
+        } else {
+          // The state has a real value. Display it.
+          textInput.value = paramState.directValue.toString();
+        }
       }
       
       // Hide program-mode elements
       if (interpSelect) interpSelect.style.display = 'none';
-      const startHrg = document.getElementById(`${paramName}-start-hrg`);
-      const endHrg = document.getElementById(`${paramName}-end-hrg`);
-      const startRbg = document.getElementById(`${paramName}-start-rbg`);
-      const endRbg = document.getElementById(`${paramName}-end-rbg`);
-      if (startHrg) startHrg.style.display = 'none';
-      if (endHrg) endHrg.style.display = 'none';
-      if (startRbg) startRbg.style.display = 'none';
-      if (endRbg) endRbg.style.display = 'none';
+      if (endValueInput) endValueInput.style.display = 'none';
+      if (intensityInput) intensityInput.style.display = 'none';
       
     } else if (paramState.scope === 'program') {
       // Show program-mode elements
-      if (interpSelect) interpSelect.style.display = 'inline';
-      
-      // Update interpolation UI visibility
-      this._updateInterpolationUI(paramName);
-      
-      // Update generator-specific UI
-      if (paramState.startValueGenerator.type === 'periodic') {
-        // Update HRG controls for periodic parameters (like frequency)
-        const startNumInput = document.getElementById('frequency-start-numerators') as HTMLInputElement;
-        const startDenInput = document.getElementById('frequency-start-denominators') as HTMLInputElement;
-        const startNumBehavior = document.getElementById('frequency-start-numerators-behavior') as HTMLSelectElement;
-        
-        if (startNumInput && paramState.startValueGenerator.numerators) {
-          startNumInput.value = paramState.startValueGenerator.numerators;
+      if (interpSelect) {
+        interpSelect.style.display = 'inline';
+        interpSelect.value = paramState.interpolation;
+      }
+
+      // Update start value input based on generator
+      if (textInput && paramState.startValueGenerator) {
+        const startGen = paramState.startValueGenerator;
+        if (startGen.type === 'normalised') {
+          if (typeof startGen.range === 'number') {
+            textInput.value = startGen.range.toString();
+          } else if (typeof startGen.range === 'object') {
+            textInput.value = `${startGen.range.min}-${startGen.range.max}`;
+          }
         }
-        if (startDenInput && paramState.startValueGenerator.denominators) {
-          startDenInput.value = paramState.startValueGenerator.denominators;
-        }
-        if (startNumBehavior && paramState.startValueGenerator.sequenceBehavior) {
-          startNumBehavior.value = paramState.startValueGenerator.sequenceBehavior;
-        }
-        
-        // Update end generator if in envelope mode
-        if (paramState.temporalBehavior === 'envelope' && paramState.endValueGenerator) {
-          const endNumInput = document.getElementById('frequency-end-numerators') as HTMLInputElement;
-          const endDenInput = document.getElementById('frequency-end-denominators') as HTMLInputElement;
-          const endNumBehavior = document.getElementById('frequency-end-numerators-behavior') as HTMLSelectElement;
+      }
+
+      // Use the STATE to determine visibility of envelope-specific controls
+      if (paramState.interpolation === 'step') {
+        // In 'step' (static) mode, HIDE the end value and intensity controls
+        if (endValueInput) endValueInput.style.display = 'none';
+        if (intensityInput) intensityInput.style.display = 'none';
+      } else {
+        // In any other mode ('linear', 'cosine', etc.), SHOW them
+        if (endValueInput) {
+          endValueInput.style.display = 'inline';
           
-          if (endNumInput && paramState.endValueGenerator.numerators) {
-            endNumInput.value = paramState.endValueGenerator.numerators;
-          }
-          if (endDenInput && paramState.endValueGenerator.denominators) {
-            endDenInput.value = paramState.endValueGenerator.denominators;
-          }
-          if (endNumBehavior && paramState.endValueGenerator.sequenceBehavior) {
-            endNumBehavior.value = paramState.endValueGenerator.sequenceBehavior;
+          // Update end value input based on generator
+          if (paramState.endValueGenerator && paramState.endValueGenerator.type === 'normalised') {
+            const endGen = paramState.endValueGenerator;
+            if (typeof endGen.range === 'number') {
+              endValueInput.value = endGen.range.toString();
+            } else if (typeof endGen.range === 'object') {
+              endValueInput.value = `${endGen.range.min}-${endGen.range.max}`;
+            }
           }
         }
-      } else if (paramState.startValueGenerator.type === 'normalised') {
-        // Update range controls for normalised parameters
-        const textInput = document.getElementById(`${paramName}-value`) as HTMLInputElement;
-        if (textInput && paramState.startValueGenerator.range !== undefined) {
-          if (typeof paramState.startValueGenerator.range === 'number') {
-            textInput.value = paramState.startValueGenerator.range.toString();
-          } else {
-            textInput.value = `${paramState.startValueGenerator.range.min}-${paramState.startValueGenerator.range.max}`;
+        if (intensityInput) {
+          intensityInput.style.display = paramState.interpolation === 'parabolic' ? 'inline' : 'none';
+          if (paramState.intensity !== undefined) {
+            intensityInput.value = paramState.intensity.toString();
           }
         }
       }
@@ -1139,6 +1150,18 @@ class ControlClient {
 
 
 
+  /**
+   * Unified method to set parameter state and update UI
+   */
+  setParameterState(paramName: keyof IMusicalState, newState: ParameterState) {
+    // Update both state objects
+    this.musicalState[paramName] = newState;
+    this.pendingMusicalState[paramName] = { ...newState };
+    
+    // Update UI to match using the centralized function
+    this._updateUIFromState(paramName);
+  }
+
   applyParameterChanges() {
     this.musicalState = JSON.parse(JSON.stringify(this.pendingMusicalState));
     console.log('Applying new state:', this.musicalState);
@@ -1157,10 +1180,12 @@ class ControlClient {
       isManualMode: this.isManualControlMode,
     };
 
+
     // Send discriminated union format directly
     for (const key in this.musicalState) {
       const paramKey = key as keyof IMusicalState;
       const paramState = this.musicalState[paramKey];
+
 
       if (paramState.scope === 'direct') {
         // Send direct parameters as-is
@@ -1199,6 +1224,7 @@ class ControlClient {
     
     const wirePayload = this._getWirePayload();
     console.log("Broadcasting translated payload:", wirePayload);
+    
     
     const message = MessageBuilder.createParameterUpdate(MessageTypes.PROGRAM_UPDATE, wirePayload);
     this.star.broadcast(message);
@@ -1532,27 +1558,6 @@ class ControlClient {
 
 
 
-  toggleCalibration() {
-    this.isCalibrationMode = !this.isCalibrationMode;
-    
-    
-    if (this.isCalibrationMode) {
-      this.elements.calibrationBtn.textContent = 'Disable Calibration Mode';
-      this.elements.calibrationBtn.classList.add('primary');
-      this.log('Calibration mode enabled', 'info');
-    } else {
-      this.elements.calibrationBtn.textContent = 'Enable Calibration Mode';
-      this.elements.calibrationBtn.classList.remove('primary');
-      this.log('Calibration mode disabled', 'info');
-    }
-    
-    // Broadcast calibration mode to all peers
-    if (this.star) {
-      const message = MessageBuilder.calibrationMode(this.isCalibrationMode);
-      const sent = this.star.broadcast(message, 'control');
-      this.log(`Broadcast calibration mode to ${sent} peers`, 'debug');
-    }
-  }
 
   toggleSynthesis() {
     this.synthesisActive = !this.synthesisActive;
@@ -1584,21 +1589,7 @@ class ControlClient {
   sendCompleteStateToSynth(synthId) {
     this.log(`Sending complete state to new synth: ${synthId}`, 'info');
     
-    // 1. Send calibration mode if active
-    if (this.isCalibrationMode) {
-      const calibrationMsg = MessageBuilder.calibrationMode(
-        this.isCalibrationMode,
-        this.calibrationAmplitude
-      );
-      const success = this.star.sendToPeer(synthId, calibrationMsg, 'control');
-      if (success) {
-        this.log(`✅ Sent calibration mode to ${synthId}`, 'debug');
-      } else {
-        this.log(`❌ Failed to send calibration mode to ${synthId}`, 'error');
-      }
-    }
-    
-    // 2. Send current musical state using unified payload function
+    // Send current musical state using unified payload function
     const wirePayload = this._getWirePayload();
     
     const message = MessageBuilder.createParameterUpdate(MessageTypes.PROGRAM_UPDATE, wirePayload);

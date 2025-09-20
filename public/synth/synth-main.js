@@ -18,7 +18,6 @@ class SynthClient {
     this.formantNode = null; // Legacy - will be replaced by voiceNode
     this.voiceNode = null;   // New voice worklet for pure DSP
     this.programNode = null; // New program worklet for timing/control
-    this.isCalibrationMode = false;
     this.synthesisActive = false; // Track if synthesis is active
     this.noiseNode = null;
     
@@ -30,7 +29,8 @@ class SynthClient {
       vowelX: 3,
       vowelY: 4,
       symmetry: 5,
-      amplitude: 6
+      amplitude: 6,
+      whiteNoise: 7
     };
     
     // Audio graph components for parameter routing
@@ -96,7 +96,7 @@ class SynthClient {
       synthId: document.getElementById('synth-id'),
       synthesisStatus: document.getElementById('synthesis-status'),
       loading: document.getElementById('loading'),
-      canvas: document.getElementById('oscilloscope-canvas')
+      canvas: document.getElementById('oscilloscope-canvas'),
     };
     
     this.amplitudeEnvelope = null;
@@ -157,11 +157,13 @@ class SynthClient {
     if (mode === 'direct') {
       // Turn off program worklet input for this parameter (use AudioParam)
       gainNode.gain.setTargetAtTime(0, this.audioContext.currentTime, 0.015);
-      console.log(`🔌 Route for '${paramName}': Main Thread -> Voice`);
+      const destination = paramName === 'whiteNoise' ? 'WhiteNoise Gain' : 'Voice';
+      console.log(`🔌 Route for '${paramName}': Main Thread -> ${destination}`);
     } else { // mode is 'program'
       // Turn on program worklet input for this parameter
       gainNode.gain.setTargetAtTime(1, this.audioContext.currentTime, 0.015);
-      console.log(`🔌 Route for '${paramName}': Program -> Voice`);
+      const destination = paramName === 'whiteNoise' ? 'WhiteNoise Gain' : 'Voice';
+      console.log(`🔌 Route for '${paramName}': Program -> ${destination}`);
     }
   }
 
@@ -169,6 +171,7 @@ class SynthClient {
   setupEventHandlers() {
     // Join button
     this.elements.joinButton.addEventListener('click', () => this.joinChoir());
+    
     
     // Handle window resize for canvas
     window.addEventListener('resize', () => {
@@ -287,73 +290,113 @@ class SynthClient {
     // Request screen wake lock to keep screen awake during performance
     await this.requestWakeLock();
     
-    // Apply any pending calibration state
-    if (this.isCalibrationMode) {
-      
-      // Disconnect voice synthesis during calibration
-      if (this.voiceNode) {
-        this.voiceNode.disconnect();
-      }
-      
-      this.startWhiteNoise(0.1);
-      this.updateConnectionStatus('syncing', 'Calibration mode');
-    }
     
   }
 
   async initializeFormantSynthesis() {
     try {
-      // Load both worklet modules
+      // Load all worklet modules
       await this.audioContext.audioWorklet.addModule('./worklets/program-worklet.js');
       await this.audioContext.audioWorklet.addModule('./worklets/voice-worklet.js');
+      await this.audioContext.audioWorklet.addModule('./worklets/white-noise-processor.js');
       
-      // Create program worklet with 7 outputs (one per parameter)
+      // Create program worklet with 8 outputs (one per parameter)
       this.programNode = new AudioWorkletNode(this.audioContext, 'program-worklet', {
         numberOfInputs: 0,
         numberOfOutputs: 1,
-        outputChannelCount: [7]  // frequency, zingMorph, zingAmount, vowelX, vowelY, symmetry, amplitude
+        outputChannelCount: [8]  // frequency, zingMorph, zingAmount, vowelX, vowelY, symmetry, amplitude, whiteNoise
       });
-      
-      // Program worklet message handler (EOC feedback disabled - using phasor reset triggers)
-      // this.programNode.port.onmessage = (event) => {
-      //   if (event.data.type === 'EOC_DETECTED') {
-      //     this.handleEOCFeedback(event.data);
-      //   }
-      // };
       
       // Create voice worklet with 5 channels output (main + duplicate + F1 + F2 + F3)
       this.voiceNode = new AudioWorkletNode(this.audioContext, 'voice-worklet', {
         numberOfInputs: 1,   // Accept control inputs from program worklet
         numberOfOutputs: 1,
-        inputChannelCount: [7],   // 7 control channels from program worklet
+        inputChannelCount: [7],   // 7 control channels from program worklet (excluding whiteNoise)
         outputChannelCount: [5]   // Main, duplicate, F1, F2, F3
       });
       
-      // Create gain node switches for each parameter channel
+      // Create white noise worklet with stereo output
+      this.whiteNoiseWorklet = new AudioWorkletNode(this.audioContext, 'white-noise-processor', {
+        numberOfInputs: 0,
+        numberOfOutputs: 1,
+        outputChannelCount: [2]   // Stereo white noise
+      });
+      
+      // Create parameter routing system
       this.parameterSwitches = {};
-      this.channelSplitter = this.audioContext.createChannelSplitter(7);
-      this.channelMerger = this.audioContext.createChannelMerger(7);
+      this.channelSplitter = this.audioContext.createChannelSplitter(8);
+      
+      // Create separate mergers for voice and noise parameters
+      this.voiceChannelMerger = this.audioContext.createChannelMerger(7);   // For voice worklet
+      this.whiteNoiseGain = this.audioContext.createGain(); // For white noise volume
+      this.whiteNoiseGain.gain.value = 0; // Default to silent
       
       // Connect program worklet to channel splitter
       this.programNode.connect(this.channelSplitter);
       
-      // Create a gain node switch for each parameter
-      const paramNames = ['frequency', 'zingMorph', 'zingAmount', 'vowelX', 'vowelY', 'symmetry', 'amplitude'];
-      paramNames.forEach((paramName, index) => {
+      // Create gain node switches for voice parameters (first 7 channels)
+      const voiceParamNames = ['frequency', 'zingMorph', 'zingAmount', 'vowelX', 'vowelY', 'symmetry', 'amplitude'];
+      voiceParamNames.forEach((paramName, index) => {
         const gainNode = this.audioContext.createGain();
         gainNode.gain.value = 0; // Default to off (direct mode)
         this.parameterSwitches[paramName] = gainNode;
         
-        // Connect: splitter → gain switch → merger
+        // Connect: splitter → gain switch → voice merger
         this.channelSplitter.connect(gainNode, index);
-        gainNode.connect(this.channelMerger, 0, index);
+        gainNode.connect(this.voiceChannelMerger, 0, index);
       });
       
-      // Connect merger to voice worklet
-      this.channelMerger.connect(this.voiceNode);
+      // Create gain switch for white noise parameter (channel 7)
+      const whiteNoiseGainSwitch = this.audioContext.createGain();
+      whiteNoiseGainSwitch.gain.value = 0; // Default to off (direct mode)
+      this.parameterSwitches['whiteNoise'] = whiteNoiseGainSwitch;
       
-      // Connect voice worklet to master gain
-      this.voiceNode.connect(this.masterGain);
+      // Connect whiteNoise parameter to control white noise volume
+      this.channelSplitter.connect(whiteNoiseGainSwitch, 7); // Channel 7 is whiteNoise
+      whiteNoiseGainSwitch.connect(this.whiteNoiseGain.gain); // Control the gain
+      
+      // Create mixer for combining voice and white noise
+      this.mixer = this.audioContext.createGain(); // Simple mixer
+      
+      // Connect voice merger to voice worklet
+      this.voiceChannelMerger.connect(this.voiceNode);
+      
+      // Create channel splitter for voice worklet's 5 outputs
+      this.voiceSplitter = this.audioContext.createChannelSplitter(5);
+      this.voiceNode.connect(this.voiceSplitter);
+      
+      // Route channel 0 (main audio) to mixer for sound output
+      this.voiceSplitter.connect(this.mixer, 0);
+      
+      // Create gain nodes to mix formants with white noise for oscilloscope
+      this.oscilloscopeLeftGain = this.audioContext.createGain();
+      this.oscilloscopeRightGain = this.audioContext.createGain();
+      
+      // Route F1 and F2 to the oscilloscope gain nodes
+      this.voiceSplitter.connect(this.oscilloscopeLeftGain, 2);  // F1 -> X axis mixer
+      this.voiceSplitter.connect(this.oscilloscopeRightGain, 3); // F2 -> Y axis mixer
+      
+      // Create stereo merger for oscilloscope (F1/F2 + white noise visualization)
+      this.oscilloscopeMerger = this.audioContext.createChannelMerger(2);
+      
+      // Connect mixed signals to oscilloscope merger
+      this.oscilloscopeLeftGain.connect(this.oscilloscopeMerger, 0, 0);  // Mixed X axis
+      this.oscilloscopeRightGain.connect(this.oscilloscopeMerger, 0, 1); // Mixed Y axis
+      
+      // Connect white noise worklet through gain to mixer
+      this.whiteNoiseWorklet.connect(this.whiteNoiseGain);
+      this.whiteNoiseGain.connect(this.mixer);
+      
+      // Create white noise splitter for oscilloscope routing
+      this.whiteNoiseSplitter = this.audioContext.createChannelSplitter(2);
+      this.whiteNoiseGain.connect(this.whiteNoiseSplitter);
+      
+      // Route white noise left to X axis, right to Y axis
+      this.whiteNoiseSplitter.connect(this.oscilloscopeLeftGain, 0);  // WN Left -> X axis
+      this.whiteNoiseSplitter.connect(this.oscilloscopeRightGain, 1); // WN Right -> Y axis
+      
+      // Connect mixer to master gain
+      this.mixer.connect(this.masterGain);
       
       // Apply any stored state that was received before audio was ready
       this.applyStoredState();
@@ -367,13 +410,6 @@ class SynthClient {
   applyStoredState() {
     console.log('🔄 Applying stored state after audio initialization');
     
-    // Apply calibration mode if it was received before audio was ready
-    if (this.isCalibrationMode) {
-      console.log('📢 Applying stored calibration mode');
-      this.startWhiteNoise(0.1);
-      this.connectOscilloscopeToWhiteNoise();
-      this.updateConnectionStatus('syncing', 'Calibration mode');
-    }
     
     // Apply synth parameters if they were received before audio was ready
     if (this.lastSynthParams) {
@@ -418,9 +454,6 @@ class SynthClient {
 
   handleDataMessage(peerId, channelType, message) {
     switch (message.type) {
-      case MessageTypes.CALIBRATION_MODE:
-        this.handleCalibrationMode(message);
-        break;
         
       case MessageTypes.SYNTH_PARAMS:
         this.handleSynthParams(message);
@@ -447,40 +480,6 @@ class SynthClient {
     }
   }
 
-  handleCalibrationMode(message) {
-    this.isCalibrationMode = message.enabled;
-    
-    if (this.isCalibrationMode) {
-      
-      // Disconnect voice synthesis during calibration
-      if (this.voiceNode) {
-        this.voiceNode.disconnect();
-      }
-      
-      // Only start white noise if audio context is initialized
-      if (this.audioContext) {
-        this.startWhiteNoise(message.amplitude || 0.1);
-        // Connect oscilloscope to white noise for calibration
-        this.connectOscilloscopeToWhiteNoise();
-        this.updateConnectionStatus('syncing', 'Calibration mode');
-      } else {
-        this.updateConnectionStatus('syncing', 'Calibration mode (no audio)');
-      }
-    } else {
-      this.stopWhiteNoise();
-      
-      // Reconnect voice synthesis to master gain
-      if (this.voiceNode) {
-        this.voiceNode.connect(this.masterGain);
-      }
-      
-      // Reconnect oscilloscope to voice synthesis
-      this.connectOscilloscopeToFormant();
-      
-      // Formant synthesis ready for parameter control
-      this.updateConnectionStatus('connected', 'Connected');
-    }
-  }
 
   handleDirectParamUpdate(message) {
     console.log(`🎛️ Direct parameter update: ${message.param} = ${message.value}`);
@@ -492,7 +491,13 @@ class SynthClient {
 
     this._updateParameterRouting(message.param, 'direct');
     
-    if (this.voiceNode && this.voiceNode.parameters.has(`${message.param}_in`)) {
+    if (message.param === 'whiteNoise') {
+      // White noise controls the gain directly
+      if (this.whiteNoiseGain) {
+        this.whiteNoiseGain.gain.setTargetAtTime(message.value, this.audioContext.currentTime, 0.015);
+        console.log(`🔌 Route for '${message.param}': Main Thread -> WhiteNoise Gain`);
+      }
+    } else if (this.voiceNode && this.voiceNode.parameters.has(`${message.param}_in`)) {
       const audioParam = this.voiceNode.parameters.get(`${message.param}_in`);
       audioParam.setTargetAtTime(message.value, this.audioContext.currentTime, 0.015);
       console.log(`🔌 Route for '${message.param}': Main Thread -> Voice`);
@@ -505,9 +510,6 @@ class SynthClient {
       return false;
     }
     
-    if (this.isCalibrationMode) {
-      return false;
-    }
     
     return true;
   }
@@ -576,6 +578,7 @@ class SynthClient {
 
     const program = message;
     const programmaticConfigs = {};
+    
 
     // Handle synthesis active state
     if (message.synthesisActive !== undefined) {
@@ -592,11 +595,22 @@ class SynthClient {
       
       const paramData = program[paramName];
       
+      // Debug: Check if white noise is in the program update
+      if (paramName === 'whiteNoise') {
+        console.log(`🔍 WHITE NOISE found in program update: scope=${paramData.scope}, interpolation=${paramData.interpolation}`);
+      }
+      
       // Handle discriminated union format based on scope
       if (paramData.scope === 'direct') {
         this._updateParameterRouting(paramName, 'direct');
         
-        if (this.voiceNode.parameters.has(`${paramName}_in`)) {
+        if (paramName === 'whiteNoise') {
+          // White noise controls the gain directly
+          if (this.whiteNoiseGain) {
+            this.whiteNoiseGain.gain.setTargetAtTime(paramData.directValue, this.audioContext.currentTime, 0.015);
+            console.log(`🎚️ Applied direct parameter: ${paramName} = ${paramData.directValue}`);
+          }
+        } else if (this.voiceNode.parameters.has(`${paramName}_in`)) {
           const audioParam = this.voiceNode.parameters.get(`${paramName}_in`);
           audioParam.setTargetAtTime(paramData.directValue, this.audioContext.currentTime, 0.015);
           console.log(`🎚️ Applied direct parameter: ${paramName} = ${paramData.directValue}`);
@@ -609,20 +623,23 @@ class SynthClient {
         if (paramData.interpolation === 'step') {
           // Step interpolation - constant values between EOCs
           programmaticConfigs[paramName] = {
-            temporalBehavior: 'static',
+            interpolationType: 'step',
             startValueGenerator: paramData.startValueGenerator
           };
-          // console.log(`🎯 Step interpolation for ${paramName}`);
+          console.log(`🎯 Step interpolation for ${paramName}`);
         } else {
           // Linear/cosine/parabolic interpolation - envelope behavior
           programmaticConfigs[paramName] = {
-            temporalBehavior: 'envelope',
+            interpolationType: paramData.interpolation,
             startValueGenerator: paramData.startValueGenerator,
             endValueGenerator: paramData.endValueGenerator,
-            interpolationType: paramData.interpolation,
             intensity: paramData.intensity
           };
-          console.log(`📈 ${paramData.interpolation} interpolation for ${paramName}`);
+          if (paramName === 'whiteNoise') {
+            console.log(`🎵 WHITE NOISE ${paramData.interpolation} interpolation for ${paramName}`);
+          } else {
+            console.log(`📈 ${paramData.interpolation} interpolation for ${paramName}`);
+          }
         }
       }
     }
@@ -633,7 +650,7 @@ class SynthClient {
         type: 'SET_PROGRAM',
         config: programmaticConfigs
       });
-      // console.log('✅ Forwarded programmatic configs to program worklet:', programmaticConfigs);
+      console.log('✅ Forwarded programmatic configs to program worklet:', programmaticConfigs);
     }
   }
 
@@ -997,65 +1014,17 @@ class SynthClient {
     console.log(`Rhythm ${this.rhythmEnabled ? 'enabled' : 'disabled'}`);
   }
 
-  startWhiteNoise(amplitude = 0.3) {
-    if (this.whiteNoiseWorklet) {
-      this.stopWhiteNoise();
-    }
-    
-    try {
-      // Create white noise AudioWorklet node (stereo output for XY oscilloscope)
-      this.whiteNoiseWorklet = new AudioWorkletNode(this.audioContext, 'white-noise-processor', {
-        outputChannelCount: [2] // Ensure stereo output
-      });
-      
-      // Create gain node for volume control
-      this.noiseGain = this.audioContext.createGain();
-      this.noiseGain.gain.setValueAtTime(amplitude, this.audioContext.currentTime);
-      
-      // Connect: WhiteNoise -> Gain -> MasterGain
-      this.whiteNoiseWorklet.connect(this.noiseGain);
-      this.noiseGain.connect(this.masterGain);
-      
-      
-      // Disconnect voice synthesis during calibration
-      if (this.voiceNode) {
-        this.voiceNode.disconnect();
-      }
-      
-    } catch (error) {
-      console.error('❌ Failed to start white noise:', error);
-      throw error;
-    }
-  }
 
 
-  stopWhiteNoise() {
-    if (this.whiteNoiseWorklet) {
-      this.whiteNoiseWorklet.disconnect();
-      this.whiteNoiseWorklet = null;
-    }
-    
-    if (this.noiseGain) {
-      this.noiseGain.disconnect();
-      this.noiseGain = null;
-    }
-    
-  }
 
   initializeOscilloscope() {
     this.oscilloscope = new XYOscilloscope(
       this.elements.canvas,
       this.audioContext,
-      this.masterGain  // Will connect to white noise during calibration
+      this.oscilloscopeMerger  // Connect to F1/F2 stereo merger for Lissajous curves
     );
     
-    // Connect to appropriate source based on current mode
-    if (this.isCalibrationMode && this.whiteNoiseWorklet) {
-      this.connectOscilloscopeToWhiteNoise();
-    } else if (this.voiceNode) {
-      this.connectOscilloscopeToFormant();
-    }
-    
+    // XYOscilloscope constructor connects F1/F2 merger to channel splitter for XY visualization
     this.oscilloscope.start();
   }
 
@@ -1096,52 +1065,7 @@ class SynthClient {
     }
   }
 
-  connectOscilloscopeToFormant() {
-    if (!this.oscilloscope || !this.voiceNode) return;
-    
-    
-    // Disconnect current oscilloscope connections
-    this.oscilloscope.disconnect();
-    
-    // Set normal amplification for formant visualization
-    this.oscilloscope.calibrationMode = false;
-    
-    // Create channel splitter for 5-channel voice output
-    if (this.formantSplitter) {
-      this.formantSplitter.disconnect();
-    }
-    this.formantSplitter = this.audioContext.createChannelSplitter(5);
-    this.voiceNode.connect(this.formantSplitter);
-    
-    // Connect F1 (channel 2) to left, F2 (channel 3) to right for XY scope
-    this.formantSplitter.connect(this.oscilloscope.leftAnalyser, 2);  // F1 -> X axis
-    this.formantSplitter.connect(this.oscilloscope.rightAnalyser, 3); // F2 -> Y axis
-    
-    // Note: We don't reconnect masterGain to oscilloscope.channelSplitter 
-    // because we're using direct formant channel connections
-  }
   
-  connectOscilloscopeToWhiteNoise() {
-    if (!this.oscilloscope || !this.whiteNoiseWorklet) return;
-    
-    
-    // Disconnect any formant connections
-    if (this.formantSplitter) {
-      this.formantSplitter.disconnect();
-    }
-    
-    // Disconnect current oscilloscope input
-    this.oscilloscope.disconnect();
-    
-    // Set high amplification for low-volume white noise
-    this.oscilloscope.calibrationMode = true;
-    
-    // Connect white noise to oscilloscope channel splitter
-    this.whiteNoiseWorklet.connect(this.oscilloscope.channelSplitter);
-    // Reconnect splitter to analysers
-    this.oscilloscope.channelSplitter.connect(this.oscilloscope.leftAnalyser, 0);
-    this.oscilloscope.channelSplitter.connect(this.oscilloscope.rightAnalyser, 1);
-  }
 
 
   updateConnectionStatus(status, message = '') {
@@ -1337,7 +1261,6 @@ class SynthClient {
       this.programNode.disconnect();
     }
     
-    this.stopWhiteNoise();
     
     console.log('🧹 Synth client cleaned up');
   }

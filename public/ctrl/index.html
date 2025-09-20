@@ -1188,15 +1188,30 @@
                     <input type="text" class="intensity-input" id="amplitude-intensity" value="0.5" placeholder="0.5" style="display: none;" title="Curve intensity for parabolic">
                 </div>
             </div>
+
+            <div class="param-control compact-control">
+                <div class="param-line">
+                    <span class="param-label">noise</span>
+                    <input type="text" class="text-input" id="whiteNoise-value" value="0" placeholder="0 or 0-0.5">
+                    <select class="mode-select" id="whiteNoise-mode">
+                        <option value="direct">direct</option>
+                        <option value="program">program</option>
+                    </select>
+                    <select class="interp-select" id="whiteNoise-interpolation" style="display: none;">
+                        <option value="step">step</option>
+                        <option value="linear">lin</option>
+                        <option value="cosine">cos</option>
+                        <option value="parabolic">par</option>
+                    </select>
+                    <input type="text" class="end-value-input" id="whiteNoise-end-value" value="0" placeholder="0 or 0-0.5" style="display: none;" title="End value">
+                    <input type="text" class="intensity-input" id="whiteNoise-intensity" value="0.5" placeholder="0.5" style="display: none;" title="Curve intensity for parabolic">
+                </div>
+            </div>
         </div>
 
         <!-- Row 1: Control Panel (narrow, right) -->
         <div class="panel narrow">
             <h2>control</h2>
-            <div class="control-section">
-                <h3>calibration</h3>
-                <button class="button" id="calibration-btn">enable calibration mode</button>
-            </div>
             <div class="control-section">
                 <h3>parameters</h3>
                 <button class="button" id="apply-params-btn" disabled>send program</button>
