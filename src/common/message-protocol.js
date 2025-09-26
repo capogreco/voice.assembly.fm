@@ -31,6 +31,8 @@ export const MessageTypes = {
   // Scene Memory
   SAVE_SCENE: "save-scene",
   LOAD_SCENE: "load-scene",
+  CLEAR_BANKS: "clear-banks",
+  CLEAR_SCENE: "clear-scene",
 };
 
 export class MessageBuilder {
@@ -134,6 +136,21 @@ export class MessageBuilder {
       timestamp: performance.now(),
     };
   }
+
+  static clearBanks() {
+    return {
+      type: MessageTypes.CLEAR_BANKS,
+      timestamp: performance.now(),
+    };
+  }
+
+  static clearScene(memoryLocation) {
+    return {
+      type: MessageTypes.CLEAR_SCENE,
+      memoryLocation,
+      timestamp: performance.now(),
+    };
+  }
 }
 
 export function validateMessage(message) {
@@ -214,6 +231,19 @@ export function validateMessage(message) {
         throw new Error(
           "Load scene message requires memoryLocation (0-9) and program object",
         );
+      }
+      break;
+
+    case MessageTypes.CLEAR_BANKS:
+      // No required fields
+      break;
+
+    case MessageTypes.CLEAR_SCENE:
+      if (
+        typeof message.memoryLocation !== "number" ||
+        message.memoryLocation < 0 || message.memoryLocation > 9
+      ) {
+        throw new Error("Clear scene message requires memoryLocation (0-9)");
       }
       break;
   }

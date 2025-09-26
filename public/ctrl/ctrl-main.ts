@@ -323,6 +323,9 @@ class ControlClient {
       peerList: document.getElementById("peer-list"),
       debugLog: document.getElementById("debug-log"),
       clearLogBtn: document.getElementById("clear-log-btn"),
+      
+      // Scene memory
+      clearBanksBtn: document.getElementById("clear-banks-btn"),
     };
 
     console.log("applyParamsBtn element:", this.elements.applyParamsBtn);
@@ -358,6 +361,11 @@ class ControlClient {
 
     // Debug log
     this.elements.clearLogBtn.addEventListener("click", () => this.clearLog());
+    
+    // Clear banks button
+    if (this.elements.clearBanksBtn) {
+      this.elements.clearBanksBtn.addEventListener("click", () => this.clearSceneBanks());
+    }
 
     // Apply button
     this.elements.applyParamsBtn.addEventListener("click", () => {
@@ -1849,8 +1857,11 @@ class ControlClient {
     console.log(`💾 Saving scene to memory location ${memoryLocation}...`);
 
     try {
-      // 1. Get the current, unresolved program state.
-      const programToSave = this.pendingMusicalState;
+      // 1. Get the current applied program state.
+      const programToSave = {
+        ...this.musicalState,
+        savedAt: Date.now()
+      };
 
       // 2. Save it to the controller's local storage.
       localStorage.setItem(
@@ -1899,14 +1910,14 @@ class ControlClient {
         this._updateUIFromState(paramName as keyof IMusicalState);
       });
 
-      // 4. Broadcast a fresh PROGRAM_UPDATE so synths receive program configs and direct values.
-      this.broadcastMusicalParameters();
-
-      // 5. Broadcast the 'LOAD_SCENE' message with the full program (metadata for client-side snapshotting).
+      // 4. Broadcast LOAD_SCENE first (so synths prepare snapshot routing)
       if (this.star) {
         const message = MessageBuilder.loadScene(memoryLocation, loadedProgram);
         this.star.broadcastToType("synth", message, "control");
       }
+
+      // 5. Then broadcast PROGRAM_UPDATE (for synths without snapshots)
+      this.broadcastMusicalParameters();
 
       this.log(`Scene ${memoryLocation} loaded and broadcast.`, "success");
       this.updateSceneMemoryIndicators();
@@ -1916,6 +1927,34 @@ class ControlClient {
         `Failed to load scene ${memoryLocation}: ${error.message}`,
         "error",
       );
+    }
+  }
+
+  clearSceneBanks() {
+    // 1) Clear controller banks
+    for (let i = 0; i <= 9; i++) {
+      localStorage.removeItem(`scene_${i}_controller`);
+    }
+    this.updateSceneMemoryIndicators();
+    this.log('Cleared all scene banks', 'success');
+    
+    // 2) Broadcast clear to synths
+    if (this.star) {
+      const msg = MessageBuilder.clearBanks();
+      this.star.broadcastToType('synth', msg, 'control');
+    }
+  }
+
+  clearBank(memoryLocation: number) {
+    // Clear single bank
+    localStorage.removeItem(`scene_${memoryLocation}_controller`);
+    this.updateSceneMemoryIndicators();
+    this.log(`Cleared scene bank ${memoryLocation}`, 'success');
+    
+    // Broadcast to synths
+    if (this.star) {
+      const msg = MessageBuilder.clearScene(memoryLocation);
+      this.star.broadcastToType('synth', msg, 'control');
     }
   }
 

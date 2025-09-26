@@ -78,6 +78,19 @@ class ProgramWorklet extends AudioWorkletProcessor {
         this.programCounters.clear();
         this.shuffledSequences.clear();
         break;
+
+      case "RESTORE_SEQUENCES":
+        for (const [param, seq] of Object.entries(message.sequences || {})) {
+          this.programCounters.set(`${param}_start_numerator`, seq.numeratorIndex);
+          this.programCounters.set(`${param}_start_denominator`, seq.denominatorIndex);
+          if (seq.numeratorShuffle) {
+            this.shuffledSequences.set(`${param}_start_numerator_sequence`, seq.numeratorShuffle);
+          }
+          if (seq.denominatorShuffle) {
+            this.shuffledSequences.set(`${param}_start_denominator_sequence`, seq.denominatorShuffle);
+          }
+        }
+        break;
     }
   }
 
@@ -387,6 +400,52 @@ class ProgramWorklet extends AudioWorkletProcessor {
         
         // EOC detected - trigger envelope updates
         this.triggerEnvelopes();
+        
+        // Report step values and sequence positions at EOC
+        const report = { type: 'EOC_REPORT', values: {}, sequences: {} };
+
+        for (const [param, state] of Object.entries(this.programState || {})) {
+          if (state.interpolationType === "step") {
+            report.values[param] = this.currentValues[param];
+            
+            // Save sequence positions for HRG
+            if (state.startValueGenerator?.type === "periodic") {
+              const numeratorKey = `${param}_start_numerator`;
+              const denominatorKey = `${param}_start_denominator`;
+              
+              // Get the actual indices used (counter was incremented after use)
+              const numCounter = this.programCounters.get(numeratorKey) || 0;
+              const denCounter = this.programCounters.get(denominatorKey) || 0;
+
+              // For behaviors that increment, report the index that was used
+              const numBehavior = state.startValueGenerator?.numeratorBehavior || "static";
+              const denBehavior = state.startValueGenerator?.denominatorBehavior || "static";
+
+              const numerators = this.parseSIN(state.startValueGenerator?.numerators || "1");
+              const denominators = this.parseSIN(state.startValueGenerator?.denominators || "1");
+
+              let numIndex = numCounter;
+              let denIndex = denCounter;
+
+              // Adjust for behaviors that increment after use
+              if (numBehavior === "ascending" || numBehavior === "descending" || numBehavior === "shuffle") {
+                numIndex = numCounter > 0 ? (numCounter - 1) % numerators.length : 0;
+              }
+              if (denBehavior === "ascending" || denBehavior === "descending" || denBehavior === "shuffle") {
+                denIndex = denCounter > 0 ? (denCounter - 1) % denominators.length : 0;
+              }
+              
+              report.sequences[param] = {
+                numeratorIndex: numIndex,
+                denominatorIndex: denIndex,
+                numeratorShuffle: this.shuffledSequences.get(`${numeratorKey}_sequence`),
+                denominatorShuffle: this.shuffledSequences.get(`${denominatorKey}_sequence`)
+              };
+            }
+          }
+        }
+
+        this.port.postMessage(report);
       }
 
       // Update envelopes using current phase as progress

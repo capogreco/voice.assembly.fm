@@ -49,6 +49,10 @@ class SynthClient {
     this.lastSynthParams = null;
     this.lastProgramUpdate = null; // Cache PROGRAM_UPDATE until audio/worklets are ready
 
+    // Routing state management for EOC-safe scope changes
+    this.currentRouting = {};  // Current active routing per parameter
+    this.pendingRouting = {};  // Routing changes to apply at next EOC
+
     // Program configuration
     this.program = null;
     this.randomSeed = this.hashString(this.peerId); // Unique seed per synth
@@ -147,6 +151,8 @@ class SynthClient {
 
     // Scene Memory: Track resolved parameter state
     this.currentResolvedState = {};
+    this.pendingCaptureBank = null;  // Bank to capture on next EOC
+    this.lastEocReport = null;       // Latest EOC report
     this.stableSynthId = this.getStableSynthId(); // Persistent ID for scene storage
 
     // Display synth ID (but it won't be visible until after joinChoir)
@@ -316,6 +322,19 @@ class SynthClient {
           outputChannelCount: [8], // frequency, zingMorph, zingAmount, vowelX, vowelY, symmetry, amplitude, whiteNoise
         },
       );
+      
+      // Set up worklet message listener for EOC reports
+      this.programNode.port.onmessage = (event) => {
+        if (event.data.type === 'EOC_REPORT') {
+          this.lastEocReport = event.data;
+          
+          // Capture if pending
+          if (this.pendingCaptureBank !== null) {
+            this.captureScene(this.pendingCaptureBank);
+            this.pendingCaptureBank = null;
+          }
+        }
+      };
 
       // Create voice worklet with 5 channels output (main + duplicate + F1 + F2 + F3)
       this.voiceNode = new AudioWorkletNode(
@@ -400,6 +419,12 @@ class SynthClient {
       // Connect whiteNoise parameter to control audio white noise volume only
       this.channelSplitter.connect(whiteNoiseGainSwitch, 7); // Channel 7 is whiteNoise
       whiteNoiseGainSwitch.connect(this.whiteNoiseAudioGain.gain); // Control the audio gain only
+
+      // Initialize all parameters to direct mode (gain switches are 0 by default)
+      voiceParamNames.forEach((paramName) => {
+        this.currentRouting[paramName] = 'direct';
+      });
+      this.currentRouting['whiteNoise'] = 'direct';
 
       // Create mixer for combining voice and white noise
       this.mixer = this.audioContext.createGain(); // Simple mixer
@@ -549,6 +574,14 @@ class SynthClient {
         this.handleLoadScene(message);
         break;
 
+      case MessageTypes.CLEAR_BANKS:
+        this.clearAllBanks();
+        break;
+
+      case MessageTypes.CLEAR_SCENE:
+        this.clearBank(message.memoryLocation);
+        break;
+
       default:
         break;
     }
@@ -564,7 +597,8 @@ class SynthClient {
       return;
     }
 
-    this._updateParameterRouting(message.param, "direct");
+    // Note: Routing changes are now handled by handleProgramUpdate staging
+    // Direct value updates only - routing changes happen at EOC
 
     if (message.param === "whiteNoise") {
       // White noise controls both audio and visualization gain
@@ -714,7 +748,12 @@ class SynthClient {
 
       // Handle discriminated union format based on scope
       if (paramData.scope === "direct") {
-        this._updateParameterRouting(paramName, "direct");
+        // Stage routing change if different from current
+        const desiredMode = 'direct';
+        if (this.currentRouting[paramName] !== desiredMode) {
+          this.pendingRouting[paramName] = desiredMode;
+          console.log(`📋 Staging routing change: ${paramName} → ${desiredMode} (at next EOC)`);
+        }
 
         if (paramName === "whiteNoise") {
           // White noise controls both audio and visualization gain
@@ -747,7 +786,18 @@ class SynthClient {
           );
         }
       } else if (paramData.scope === "program") {
-        this._updateParameterRouting(paramName, "program");
+        // Don't stage program routing if a snapshot is pending for this param
+        if (this.pendingSceneState && Object.prototype.hasOwnProperty.call(this.pendingSceneState, paramName)) {
+          // Snapshot will control this param at EOC - skip program routing
+          console.log(`⏭️ Skipping program routing for ${paramName} - snapshot pending`);
+        } else {
+          // Stage routing change if different from current
+          const desiredMode = 'program';
+          if (this.currentRouting[paramName] !== desiredMode) {
+            this.pendingRouting[paramName] = desiredMode;
+            console.log(`📋 Staging routing change: ${paramName} → ${desiredMode} (at next EOC)`);
+          }
+        }
 
         // Convert discriminated union to program worklet format
         if (paramData.interpolation === "step") {
@@ -1040,11 +1090,44 @@ class SynthClient {
     phaseParam.setValueAtTime(0, resetTime);
     phaseParam.linearRampToValueAtTime(1.0, rampEndTime);
 
-    // If we have a pending scene snapshot, apply it exactly at cycle start
+    // Compute snapshot keys that must be forced to direct
+    const snapshotParams = this.pendingSceneState ? new Set(Object.keys(this.pendingSceneState)) : new Set();
+
+    // Apply routing in two passes for correct priority
+    if (Object.keys(this.pendingRouting).length > 0 || snapshotParams.size > 0) {
+      const finalRouting = {};
+      
+      // Pass 1: Apply non-snapshot routes from pendingRouting
+      for (const [paramName, mode] of Object.entries(this.pendingRouting)) {
+        if (!snapshotParams.has(paramName)) {
+          finalRouting[paramName] = mode;
+        }
+      }
+      
+      // Pass 2: Force direct for all snapshot params (override any conflicting routes)
+      for (const paramName of snapshotParams) {
+        finalRouting[paramName] = 'direct';
+      }
+      
+      // Apply all routing changes
+      if (Object.keys(finalRouting).length > 0) {
+        console.log(`🔄 Applying routing changes at EOC:`, finalRouting);
+        
+        for (const [paramName, mode] of Object.entries(finalRouting)) {
+          this._updateParameterRouting(paramName, mode);
+          this.currentRouting[paramName] = mode;
+        }
+      }
+    }
+
+    // Clear pending routing
+    this.pendingRouting = {};
+
+    // Now apply scene values (routing is already in place with snapshot params forced to direct)
     if (this.pendingSceneState) {
       const snapshot = this.pendingSceneState;
       this.pendingSceneState = null;
-      this.applyResolvedState(snapshot);
+      this.applyResolvedStateValues(snapshot);
     }
   }
 
@@ -1420,136 +1503,203 @@ class SynthClient {
   }
 
   handleSaveScene(payload) {
-    const { memoryLocation } = payload;
-    console.log(
-      `💾 Received command to save scene to location ${memoryLocation}`,
-    );
+    console.log(`💾 Will capture scene ${payload.memoryLocation} at next EOC`);
+    this.pendingCaptureBank = payload.memoryLocation;
+  }
 
-    const key = `scene_${memoryLocation}_synth_${this.stableSynthId}`;
-    const hasSnapshot = this.currentResolvedState &&
-      Object.keys(this.currentResolvedState).length > 0;
-    const snapshot = hasSnapshot
-      ? this.currentResolvedState
-      : (this.lastProgramUpdate
-        ? this._resolveProgram(this.lastProgramUpdate)
-        : {});
-    this.currentResolvedState = snapshot;
-    const stateToSave = JSON.stringify(snapshot);
-
-    localStorage.setItem(key, stateToSave);
-    console.log(`✅ Saved local state for scene ${memoryLocation}.`);
+  captureScene(bank) {
+    const snapshot = {};
+    
+    // Capture state objects based on their mode AND generator type
+    for (const param of ['frequency', 'vowelX', 'vowelY', 'zingAmount', 
+                          'zingMorph', 'symmetry', 'amplitude', 'whiteNoise']) {
+      const paramConfig = this.lastProgramUpdate?.[param];
+      
+      if (!paramConfig || paramConfig?.scope === 'direct') {
+        // Direct mode - store scalar value
+        let value;
+        if (param === 'whiteNoise') {
+          value = this.whiteNoiseAudioGain?.gain.value || 0;
+        } else {
+          const key = `${param}_in`;
+          if (this.voiceNode?.parameters.has(key)) {
+            value = this.voiceNode.parameters.get(key).value;
+          }
+        }
+        
+        if (value !== undefined) {
+          snapshot[param] = { type: 'direct', value };
+        }
+        
+      } else if (paramConfig?.scope === 'program') {
+        // Skip cosine parameters - they regenerate from program
+        if (paramConfig.interpolation !== 'step') {
+          console.log(`🔄 Skipping ${param} (${paramConfig.interpolation} interpolation regenerates from program)`);
+          continue;
+        }
+        // Program step mode - check generator type
+        if (paramConfig.startValueGenerator?.type === 'periodic') {
+          // HRG - store sequence state
+          const sequences = this.lastEocReport?.sequences?.[param];
+          if (sequences) {
+            snapshot[param] = {
+              type: 'hrg',
+              numeratorIndex: sequences.numeratorIndex,
+              denominatorIndex: sequences.denominatorIndex,
+              numeratorShuffle: sequences.numeratorShuffle,
+              denominatorShuffle: sequences.denominatorShuffle
+            };
+          }
+        } else if (paramConfig.startValueGenerator?.type === 'normalised') {
+          // RBG - determine if stat or rand mode
+          const generator = paramConfig.startValueGenerator;
+          if (typeof generator.range === 'number') {
+            // Stat mode - store scalar
+            snapshot[param] = { type: 'rbg_stat', value: generator.range };
+          } else if (generator.range && typeof generator.range === 'object') {
+            // Rand mode - store range
+            snapshot[param] = { 
+              type: 'rbg_rand', 
+              min: generator.range.min, 
+              max: generator.range.max 
+            };
+          }
+        }
+      }
+      // Skip cosine parameters - they regenerate from program
+    }
+    
+    // Save snapshot (sequences are now embedded in HRG state objects)
+    const key = `scene_${bank}_synth_${this.stableSynthId}`;
+    localStorage.setItem(key, JSON.stringify({ snapshot }));
+    
+    console.log(`✅ Captured scene ${bank}`, snapshot);
   }
 
   handleLoadScene(payload) {
     const { memoryLocation, program } = payload;
-    console.log(
-      `📂 Received command to load scene from location ${memoryLocation}`,
-    );
-
     const key = `scene_${memoryLocation}_synth_${this.stableSynthId}`;
-    const localData = localStorage.getItem(key);
-
-    if (localData) {
-      // This synth has a saved state for this scene. Load it.
-      console.log("Found local state. Loading...");
-      let resolvedState = {};
-      try {
-        resolvedState = JSON.parse(localData) || {};
-      } catch {}
-      if (!resolvedState || Object.keys(resolvedState).length === 0) {
-        if (program) {
-          console.log(
-            "Saved snapshot empty; resolving from provided program...",
-          );
-          resolvedState = this._resolveProgram(program);
-          localStorage.setItem(key, JSON.stringify(resolvedState));
-        } else if (this.lastProgramUpdate) {
-          console.log(
-            "Saved snapshot empty; resolving from last PROGRAM_UPDATE...",
-          );
-          resolvedState = this._resolveProgram(this.lastProgramUpdate);
-          localStorage.setItem(key, JSON.stringify(resolvedState));
+    const saved = localStorage.getItem(key);
+    
+    if (saved) {
+      const { snapshot } = JSON.parse(saved);
+      
+      // Process state objects to prepare values and routing
+      const resolvedValues = {};
+      const sequences = {};
+      
+      for (const [param, stateObj] of Object.entries(snapshot)) {
+        switch (stateObj.type) {
+          case 'direct':
+            // Direct value - apply immediately
+            resolvedValues[param] = stateObj.value;
+            this.pendingRouting[param] = 'direct';
+            break;
+            
+          case 'hrg':
+            // HRG - restore sequence state but don't force direct routing
+            if (stateObj.numeratorIndex !== undefined && stateObj.denominatorIndex !== undefined) {
+              sequences[param] = {
+                numeratorIndex: stateObj.numeratorIndex,
+                denominatorIndex: stateObj.denominatorIndex,
+                numeratorShuffle: stateObj.numeratorShuffle,
+                denominatorShuffle: stateObj.denominatorShuffle
+              };
+            }
+            // Keep program routing for HRG
+            break;
+            
+          case 'rbg_stat':
+            // RBG stat mode - apply scalar value and force direct routing
+            resolvedValues[param] = stateObj.value;
+            this.pendingRouting[param] = 'direct';
+            break;
+            
+          case 'rbg_rand':
+            // RBG rand mode - re-randomize within range
+            const range = stateObj.max - stateObj.min;
+            resolvedValues[param] = stateObj.min + (Math.random() * range);
+            this.pendingRouting[param] = 'direct';
+            break;
         }
       }
-      // Defer apply to next cycle reset to minimize glitches
-      this.pendingSceneState = resolvedState;
-      this.currentResolvedState = resolvedState;
+      
+      // Stage resolved values for next EOC
+      this.pendingSceneState = resolvedValues;
+      
+      console.log(`📋 Staged routing for snapshot params:`, this.pendingRouting);
+      
+      // Restore HRG sequences immediately
+      if (Object.keys(sequences).length > 0 && this.programNode) {
+        this.programNode.port.postMessage({
+          type: 'RESTORE_SEQUENCES',
+          sequences
+        });
+      }
     } else {
-      // This is a new synth. Resolve the program, apply it, and save the result.
-      console.log("No local state found. Resolving new state from program...");
-      const newResolvedState = this._resolveProgram(program);
-      this.pendingSceneState = newResolvedState;
-      this.currentResolvedState = newResolvedState;
-
-      // Immediately save this newly generated state for future loads.
-      localStorage.setItem(key, JSON.stringify(newResolvedState));
-      console.log(
-        `✅ Resolved and saved new local state for scene ${memoryLocation}.`,
-      );
+      // New synth - resolve from program
+      this.pendingSceneState = this._resolveProgram(program);
     }
   }
 
+  clearAllBanks() {
+    const prefix = 'scene_';
+    const suffix = `_synth_${this.stableSynthId}`;
+    const keys = [];
+    
+    // Find all scene keys for this synth
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(prefix) && k.endsWith(suffix)) {
+        keys.push(k);
+      }
+    }
+    
+    // Remove all found keys
+    keys.forEach(k => localStorage.removeItem(k));
+    console.log(`🧹 Cleared ${keys.length} synth scene bank(s)`);
+  }
+
+  clearBank(bank) {
+    const key = `scene_${bank}_synth_${this.stableSynthId}`;
+    localStorage.removeItem(key);
+    console.log(`🧹 Cleared synth scene bank ${bank}`);
+  }
+
   applyResolvedState(resolvedState) {
-    // Apply resolved parameter values to the audio engine
     if (this.verbose) {
       console.log("🧩 Applying resolved scene state:", resolvedState);
     }
+    
     for (const [paramName, value] of Object.entries(resolvedState)) {
       const v = Number.isFinite(value) ? value : 0;
-      const wasProgram = this.lastProgramUpdate &&
-        this.lastProgramUpdate[paramName] &&
-        this.lastProgramUpdate[paramName].scope === "program";
-
+      
+      // Always route snapshot values to direct
+      const desiredMode = "direct";
+      if (this.currentRouting[paramName] !== desiredMode) {
+        this.pendingRouting[paramName] = desiredMode;
+        if (this.verbose) console.log(`📋 Scene staging routing: ${paramName} → direct`);
+      }
+      
+      // Set the value
       if (paramName === "whiteNoise") {
         if (this.whiteNoiseAudioGain) {
-          if (wasProgram && this.programNode) {
-            // Keep program routing and set immediate value via program worklet
-            this._updateParameterRouting("whiteNoise", "program");
-            this.programNode.port.postMessage({
-              type: "SET_DIRECT_VALUE",
-              param: "whiteNoise",
-              value: v,
-            });
-          } else {
-            // Route direct and set gain
-            this._updateParameterRouting("whiteNoise", "direct");
-            this.whiteNoiseAudioGain.gain.setTargetAtTime(
-              v,
-              this.audioContext.currentTime,
-              0.015,
-            );
-            if (this.whiteNoiseVizGain) {
-              this.whiteNoiseVizGain.gain.setTargetAtTime(
-                v,
-                this.audioContext.currentTime,
-                0.015,
-              );
-            }
+          this.whiteNoiseAudioGain.gain.setTargetAtTime(v, this.audioContext.currentTime, 0.015);
+          if (this.whiteNoiseVizGain) {
+            this.whiteNoiseVizGain.gain.setTargetAtTime(v, this.audioContext.currentTime, 0.015);
           }
           if (this.verbose) console.log(`🎚️ Scene apply: whiteNoise -> ${v}`);
         }
       } else if (this.voiceNode) {
-        if (wasProgram && this.programNode) {
-          // Keep program routing and push immediate value into program worklet
-          this._updateParameterRouting(paramName, "program");
-          this.programNode.port.postMessage({
-            type: "SET_DIRECT_VALUE",
-            param: paramName,
-            value: v,
-          });
-        } else {
-          // Route direct and set AudioParam via main thread
-          this._updateParameterRouting(paramName, "direct");
-          const paramKey = `${paramName}_in`;
-          if (this.voiceNode.parameters.has(paramKey)) {
-            const audioParam = this.voiceNode.parameters.get(paramKey);
-            audioParam.setTargetAtTime(v, this.audioContext.currentTime, 0.015);
-            if (this.verbose) {
-              console.log(`🎚️ Scene apply: ${paramKey} -> ${v}`);
-            }
-          } else if (this.verbose) {
-            console.warn(`⚠️ Scene apply: voice param missing '${paramKey}'`);
+        const paramKey = `${paramName}_in`;
+        if (this.voiceNode.parameters.has(paramKey)) {
+          const audioParam = this.voiceNode.parameters.get(paramKey);
+          audioParam.setTargetAtTime(v, this.audioContext.currentTime, 0.015);
+          if (this.verbose) {
+            console.log(`🎚️ Scene apply: ${paramKey} -> ${v}`);
           }
+        } else if (this.verbose) {
+          console.warn(`⚠️ Scene apply: voice param missing '${paramKey}'`);
         }
       }
     }
@@ -1561,6 +1711,44 @@ class SynthClient {
       if (this.verbose) {
         console.log(`🔈 Voice active = ${this.synthesisActive ? 1 : 0}`);
       }
+    }
+  }
+
+  applyResolvedStateValues(resolvedState) {
+    if (this.verbose) {
+      console.log("🧩 Applying resolved scene values:", resolvedState);
+    }
+    
+    for (const [paramName, value] of Object.entries(resolvedState)) {
+      const v = Number.isFinite(value) ? value : 0;
+      
+      // Just set the value - routing was already handled
+      if (paramName === "whiteNoise") {
+        if (this.whiteNoiseAudioGain) {
+          this.whiteNoiseAudioGain.gain.setTargetAtTime(v, this.audioContext.currentTime, 0.015);
+          if (this.whiteNoiseVizGain) {
+            this.whiteNoiseVizGain.gain.setTargetAtTime(v, this.audioContext.currentTime, 0.015);
+          }
+          if (this.verbose) console.log(`🎚️ Scene apply: whiteNoise -> ${v}`);
+        }
+      } else if (this.voiceNode) {
+        const paramKey = `${paramName}_in`;
+        if (this.voiceNode.parameters.has(paramKey)) {
+          const audioParam = this.voiceNode.parameters.get(paramKey);
+          audioParam.setTargetAtTime(v, this.audioContext.currentTime, 0.015);
+          if (this.verbose) {
+            console.log(`🎚️ Scene apply: ${paramKey} -> ${v}`);
+          }
+        } else if (this.verbose) {
+          console.warn(`⚠️ Scene apply: voice param missing '${paramKey}'`);
+        }
+      }
+    }
+    
+    // Ensure synthesis is active if desired
+    if (this.voiceNode && this.voiceNode.parameters.has("active")) {
+      const activeParam = this.voiceNode.parameters.get("active");
+      activeParam.value = this.synthesisActive ? 1 : 0;
     }
   }
 
