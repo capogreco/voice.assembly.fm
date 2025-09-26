@@ -113,8 +113,7 @@ class ProgramWorklet extends AudioWorkletProcessor {
             ),
             currentValue: 0,
             active: false,
-            interpolationType: paramState.interpolationType || "linear",
-            intensity: paramState.intensity || 0.5,
+            interpolationType: paramState.interpolationType || "cosine",
           });
         } else if (paramState.interpolationType === "step") {
           this.currentValues[paramName] = this.generateValue(
@@ -300,22 +299,11 @@ class ProgramWorklet extends AudioWorkletProcessor {
 
         // Apply interpolation curve
         switch (envelope.interpolationType) {
-          case "linear":
-            shapedProgress = rawProgress;
-            break;
           case "cosine":
             shapedProgress = 0.5 - Math.cos(rawProgress * Math.PI) * 0.5;
             break;
-          case "parabolic": {
-            // Use intensity to control curve shape
-            const intensity = Math.max(
-              0.1,
-              Math.min(10, envelope.intensity * 10),
-            ); // Map 0-1 to 0.1-10
-            shapedProgress = Math.pow(rawProgress, intensity);
-            break;
-          }
           default:
+            // Fallback for safety
             shapedProgress = rawProgress;
         }
 
@@ -344,8 +332,7 @@ class ProgramWorklet extends AudioWorkletProcessor {
             paramState.endValueGenerator,
             paramName,
           );
-          envelope.interpolationType = paramState.interpolationType || "linear";
-          envelope.intensity = paramState.intensity || 0.5;
+          envelope.interpolationType = paramState.interpolationType || "cosine";
           envelope.active = true;
         }
       } else if (

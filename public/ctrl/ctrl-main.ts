@@ -24,9 +24,8 @@ type ControlAction =
   | {
     type: "SET_INTERPOLATION";
     param: keyof IMusicalState;
-    interpolation: "step" | "linear" | "cosine" | "parabolic";
+    interpolation: "step" | "cosine";
   }
-  | { type: "SET_INTENSITY"; param: keyof IMusicalState; intensity: number }
   | {
     type: "SET_GENERATOR_CONFIG";
     param: keyof IMusicalState;
@@ -82,7 +81,6 @@ class ControlClient {
     const defaultProgramState = (): ParameterState => ({
       scope: "program",
       interpolation: "cosine",
-      intensity: 0.5,
       startValueGenerator: {
         type: "normalised",
         range: { min: 0, max: 1 },
@@ -175,17 +173,8 @@ class ControlClient {
               endValueGenerator: param.endValueGenerator || {
                 ...param.startValueGenerator, // Copy start generator as default
               },
-              intensity: param.intensity ?? 0.5,
             };
           }
-        }
-        break;
-      }
-
-      case "SET_INTENSITY": {
-        const param = newState[action.param];
-        if (param.scope === "program" && param.interpolation !== "step") {
-          param.intensity = action.intensity;
         }
         break;
       }
@@ -509,7 +498,6 @@ class ControlClient {
     const endHrg = document.getElementById(`${paramName}-end-hrg`);
     const hrgArrow = document.getElementById(`${paramName}-hrg-arrow`);
     const endValueInput = document.getElementById(`${paramName}-end-value`);
-    const intensityInput = document.getElementById(`${paramName}-intensity`);
 
     if (!modeSelect) return;
 
@@ -637,29 +625,6 @@ class ControlClient {
         textInput.classList.toggle(
           "invalid-input",
           !isValid && textInput.value !== "",
-        );
-      });
-    }
-
-    // Handle intensity input changes
-    if (intensityInput) {
-      // Use 'change' event for final state update (fires when user commits value)
-      intensityInput.addEventListener("change", () => {
-        const intensity = parseFloat(intensityInput.value) || 0.5;
-        this._updatePendingState({
-          type: "SET_INTENSITY",
-          param: paramName,
-          intensity: intensity,
-        });
-        this.markPendingChanges();
-      });
-
-      // Optional: Add 'input' listener for validation feedback only
-      intensityInput.addEventListener("input", () => {
-        const isValid = /^-?\d*\.?\d*$/.test(intensityInput.value);
-        intensityInput.classList.toggle(
-          "invalid-input",
-          !isValid && intensityInput.value !== "",
         );
       });
     }
@@ -926,9 +891,6 @@ class ControlClient {
     const endValueInput = document.getElementById(
       `${paramName}-end-value`,
     ) as HTMLInputElement;
-    const intensityInput = document.getElementById(
-      `${paramName}-intensity`,
-    ) as HTMLInputElement;
 
     if (!modeSelect) return;
 
@@ -988,17 +950,6 @@ class ControlClient {
       if (hrgArrow) hrgArrow.style.display = isEnvelope ? "inline" : "none";
       if (endValueInput) {
         endValueInput.style.display = isEnvelope ? "inline" : "none";
-      }
-      if (intensityInput) {
-        intensityInput.style.display =
-          (isEnvelope && paramState.interpolation === "parabolic")
-            ? "inline"
-            : "none";
-      }
-
-      // Update intensity value if in parabolic mode
-      if (intensityInput && paramState.intensity !== undefined) {
-        intensityInput.value = paramState.intensity.toString();
       }
 
       // Update end value input based on generator for non-HRG parameters
@@ -1071,7 +1022,6 @@ class ControlClient {
       if (hrgEndControls) hrgEndControls.style.display = "none";
       if (hrgArrow) hrgArrow.style.display = "none";
       if (endValueInput) endValueInput.style.display = "none";
-      if (intensityInput) intensityInput.style.display = "none";
     }
   }
 
@@ -1305,9 +1255,6 @@ class ControlClient {
           interpolation: paramState.interpolation,
           startValueGenerator: startGen,
           endValueGenerator: endGen,
-          intensity: paramState.interpolation !== "step"
-            ? paramState.intensity
-            : undefined,
           directValue: paramState.directValue,
         };
       }

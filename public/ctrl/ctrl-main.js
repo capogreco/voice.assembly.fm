@@ -178,6 +178,9 @@ var WebRTCStar = class extends EventTarget {
     this.isConnectedToSignaling = false;
     this.pingInterval = null;
     this.pingTimeouts = /* @__PURE__ */ new Map();
+    this.ctrlRetryCount = 0;
+    this.maxCtrlRetries = 3;
+    this.ctrlRetryTimeout = null;
     this.iceServers = [
       {
         urls: "stun:stun.l.google.com:19302"
@@ -288,16 +291,47 @@ var WebRTCStar = class extends EventTarget {
           if (this.verbose) {
             console.log("\u{1F4CB} Received ctrls list:", message.ctrls);
           }
-          for (const ctrlId of message.ctrls) {
-            if (!this.peers.has(ctrlId)) {
-              if (this.verbose) console.log(`\u{1F39B}\uFE0F Connecting to ctrl: ${ctrlId}`);
-              await this.createPeerConnection(ctrlId, true);
+          if (this.ctrlRetryTimeout) {
+            clearTimeout(this.ctrlRetryTimeout);
+            this.ctrlRetryTimeout = null;
+          }
+          if (message.ctrls.length === 0) {
+            if (this.ctrlRetryCount < this.maxCtrlRetries) {
+              this.ctrlRetryCount++;
+              const retryDelay = 1e3 + Math.random() * 500;
+              if (this.verbose) {
+                console.log(`\u{1F504} No controllers found, retrying in ${Math.round(retryDelay)}ms (attempt ${this.ctrlRetryCount}/${this.maxCtrlRetries})`);
+              }
+              this.ctrlRetryTimeout = setTimeout(() => {
+                if (this.signalingSocket && this.signalingSocket.readyState === WebSocket.OPEN) {
+                  this.signalingSocket.send(JSON.stringify({
+                    type: "request-ctrls"
+                  }));
+                }
+              }, retryDelay);
+            } else {
+              if (this.verbose) {
+                console.log(`\u26A0\uFE0F No controllers found after ${this.maxCtrlRetries} attempts, giving up`);
+              }
+            }
+          } else {
+            this.ctrlRetryCount = 0;
+            for (const ctrlId of message.ctrls) {
+              if (!this.peers.has(ctrlId)) {
+                if (this.verbose) console.log(`\u{1F39B}\uFE0F Connecting to ctrl: ${ctrlId}`);
+                await this.createPeerConnection(ctrlId, true);
+              }
             }
           }
         }
         break;
       case "ctrl-joined":
         if (this.peerType === "synth") {
+          this.ctrlRetryCount = 0;
+          if (this.ctrlRetryTimeout) {
+            clearTimeout(this.ctrlRetryTimeout);
+            this.ctrlRetryTimeout = null;
+          }
           if (this.verbose) {
             console.log(`\u{1F39B}\uFE0F New ctrl joined: ${message.ctrl_id}`);
           }
@@ -791,6 +825,10 @@ var WebRTCStar = class extends EventTarget {
       clearInterval(this.pingInterval);
       this.pingInterval = null;
     }
+    if (this.ctrlRetryTimeout) {
+      clearTimeout(this.ctrlRetryTimeout);
+      this.ctrlRetryTimeout = null;
+    }
     for (const timeout of this.pingTimeouts.values()) {
       clearTimeout(timeout);
     }
@@ -853,7 +891,6 @@ var ControlClient = class {
     const defaultProgramState = () => ({
       scope: "program",
       interpolation: "cosine",
-      intensity: 0.5,
       startValueGenerator: {
         type: "normalised",
         range: {
@@ -942,17 +979,9 @@ var ControlClient = class {
               startValueGenerator: param.startValueGenerator,
               endValueGenerator: param.endValueGenerator || {
                 ...param.startValueGenerator
-              },
-              intensity: param.intensity ?? 0.5
+              }
             };
           }
-        }
-        break;
-      }
-      case "SET_INTENSITY": {
-        const param = newState[action.param];
-        if (param.scope === "program" && param.interpolation !== "step") {
-          param.intensity = action.intensity;
         }
         break;
       }
@@ -1151,7 +1180,6 @@ var ControlClient = class {
     const endHrg = document.getElementById(`${paramName}-end-hrg`);
     const hrgArrow = document.getElementById(`${paramName}-hrg-arrow`);
     const endValueInput = document.getElementById(`${paramName}-end-value`);
-    const intensityInput = document.getElementById(`${paramName}-intensity`);
     if (!modeSelect) return;
     modeSelect.addEventListener("change", () => {
       const isDirect = modeSelect.value === "direct";
@@ -1223,21 +1251,6 @@ var ControlClient = class {
       textInput.addEventListener("input", () => {
         const isValid = /^-?\d*\.?\d*(\s*-\s*-?\d*\.?\d*)?$/.test(textInput.value);
         textInput.classList.toggle("invalid-input", !isValid && textInput.value !== "");
-      });
-    }
-    if (intensityInput) {
-      intensityInput.addEventListener("change", () => {
-        const intensity = parseFloat(intensityInput.value) || 0.5;
-        this._updatePendingState({
-          type: "SET_INTENSITY",
-          param: paramName,
-          intensity
-        });
-        this.markPendingChanges();
-      });
-      intensityInput.addEventListener("input", () => {
-        const isValid = /^-?\d*\.?\d*$/.test(intensityInput.value);
-        intensityInput.classList.toggle("invalid-input", !isValid && intensityInput.value !== "");
       });
     }
     if (paramName === "frequency") {
@@ -1454,7 +1467,6 @@ var ControlClient = class {
     const hrgEndControls = document.getElementById(`${paramName}-end-hrg`);
     const hrgArrow = document.getElementById(`${paramName}-hrg-arrow`);
     const endValueInput = document.getElementById(`${paramName}-end-value`);
-    const intensityInput = document.getElementById(`${paramName}-intensity`);
     if (!modeSelect) return;
     if (valueInput) {
       valueInput.style.display = "inline-block";
@@ -1495,12 +1507,6 @@ var ControlClient = class {
       if (hrgArrow) hrgArrow.style.display = isEnvelope ? "inline" : "none";
       if (endValueInput) {
         endValueInput.style.display = isEnvelope ? "inline" : "none";
-      }
-      if (intensityInput) {
-        intensityInput.style.display = isEnvelope && paramState.interpolation === "parabolic" ? "inline" : "none";
-      }
-      if (intensityInput && paramState.intensity !== void 0) {
-        intensityInput.value = paramState.intensity.toString();
       }
       if (endValueInput && isEnvelope && paramState.endValueGenerator && paramState.endValueGenerator.type === "normalised") {
         const endGen = paramState.endValueGenerator;
@@ -1548,7 +1554,6 @@ var ControlClient = class {
       if (hrgEndControls) hrgEndControls.style.display = "none";
       if (hrgArrow) hrgArrow.style.display = "none";
       if (endValueInput) endValueInput.style.display = "none";
-      if (intensityInput) intensityInput.style.display = "none";
     }
   }
   // Capture current HRG inputs into pending state before apply
@@ -1709,7 +1714,6 @@ var ControlClient = class {
           interpolation: paramState.interpolation,
           startValueGenerator: startGen,
           endValueGenerator: endGen,
-          intensity: paramState.interpolation !== "step" ? paramState.intensity : void 0,
           directValue: paramState.directValue
         };
       }

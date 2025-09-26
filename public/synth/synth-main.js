@@ -760,12 +760,11 @@ class SynthClient {
             console.log(`🎯 Step interpolation for ${paramName}`);
           }
         } else {
-          // Linear/cosine/parabolic interpolation - envelope behavior
+          // Cosine interpolation - envelope behavior
           programmaticConfigs[paramName] = {
             interpolationType: paramData.interpolation,
             startValueGenerator: paramData.startValueGenerator,
             endValueGenerator: paramData.endValueGenerator,
-            intensity: paramData.intensity,
           };
           if (paramName === "whiteNoise") {
             if (this.verbose) {

@@ -43,10 +43,9 @@ export type ParameterState =
   }
   | {
     scope: "program";
-    interpolation: "linear" | "cosine" | "parabolic"; // Values that glide between events
+    interpolation: "cosine"; // Values that glide between events
     startValueGenerator: GeneratorConfig;
     endValueGenerator: GeneratorConfig;
-    intensity?: number; // Curve shaping for non-linear interpolations
     directValue?: number; // Used as baseValue for HRG
   };
 

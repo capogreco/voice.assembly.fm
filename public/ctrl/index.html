@@ -437,21 +437,9 @@
         margin-right: 8px;
       }
 
-      .envelope-intensity {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-      }
-
       .envelope-type input[type="radio"] {
         margin-right: 3px;
         transform: scale(0.8);
-      }
-
-      .envelope-intensity {
-        display: flex;
-        align-items: center;
-        gap: 4px;
       }
 
       .small-slider {
@@ -819,16 +807,6 @@
         width: 40px;
       }
 
-      .intensity-input {
-        background: #111;
-        border: 1px solid #333;
-        color: #888;
-        font-family: inherit;
-        font-size: 9px;
-        padding: 2px 4px;
-        width: 40px;
-      }
-
       .hrg-line {
         display: flex;
         align-items: center;
@@ -903,22 +881,6 @@
         margin: 0 6px;
       }
 
-      .intensity-input {
-        background: #111;
-        border: 1px solid #333;
-        color: #888;
-        font-family: inherit;
-        font-size: 9px;
-        padding: 2px 4px;
-        width: 40px;
-        margin-left: 4px;
-      }
-
-      .intensity-input:focus {
-        outline: none;
-        border-color: #666;
-        color: #f0f0f0;
-      }
 
       /* Scene Memory Styles */
       .scene-grid {
@@ -1042,9 +1004,7 @@
               style="display: none"
             >
               <option value="step">step</option>
-              <option value="linear">lin</option>
               <option value="cosine">cos</option>
-              <option value="parabolic">par</option>
             </select>
             <span
               class="hrg-fraction"
@@ -1137,15 +1097,6 @@
                 <option value="shuffle">shuf</option>
               </select>
             </span>
-            <input
-              type="text"
-              class="intensity-input"
-              id="frequency-intensity"
-              value="0.5"
-              placeholder="0.5"
-              style="display: none"
-              title="Curve intensity for parabolic"
-            >
           </div>
         </div>
 
@@ -1169,9 +1120,7 @@
               style="display: none"
             >
               <option value="step">step</option>
-              <option value="linear">lin</option>
               <option value="cosine">cos</option>
-              <option value="parabolic">par</option>
             </select>
             <input
               type="text"
@@ -1181,15 +1130,6 @@
               placeholder="0.5 or 0.2-0.8"
               style="display: none"
               title="End value"
-            >
-            <input
-              type="text"
-              class="intensity-input"
-              id="vowelX-intensity"
-              value="0.5"
-              placeholder="0.5"
-              style="display: none"
-              title="Curve intensity for parabolic"
             >
           </div>
         </div>
@@ -1214,9 +1154,7 @@
               style="display: none"
             >
               <option value="step">step</option>
-              <option value="linear">lin</option>
               <option value="cosine">cos</option>
-              <option value="parabolic">par</option>
             </select>
             <input
               type="text"
@@ -1226,15 +1164,6 @@
               placeholder="0.5 or 0.2-0.8"
               style="display: none"
               title="End value"
-            >
-            <input
-              type="text"
-              class="intensity-input"
-              id="vowelY-intensity"
-              value="0.5"
-              placeholder="0.5"
-              style="display: none"
-              title="Curve intensity for parabolic"
             >
           </div>
         </div>
@@ -1259,9 +1188,7 @@
               style="display: none"
             >
               <option value="step">step</option>
-              <option value="linear">lin</option>
               <option value="cosine">cos</option>
-              <option value="parabolic">par</option>
             </select>
             <input
               type="text"
@@ -1271,15 +1198,6 @@
               placeholder="0.5 or 0.2-0.8"
               style="display: none"
               title="End value"
-            >
-            <input
-              type="text"
-              class="intensity-input"
-              id="symmetry-intensity"
-              value="0.5"
-              placeholder="0.5"
-              style="display: none"
-              title="Curve intensity for parabolic"
             >
           </div>
         </div>
@@ -1304,9 +1222,7 @@
               style="display: none"
             >
               <option value="step">step</option>
-              <option value="linear">lin</option>
               <option value="cosine">cos</option>
-              <option value="parabolic">par</option>
             </select>
             <input
               type="text"
@@ -1316,15 +1232,6 @@
               placeholder="0 or 0-0.5"
               style="display: none"
               title="End value"
-            >
-            <input
-              type="text"
-              class="intensity-input"
-              id="zingAmount-intensity"
-              value="0.5"
-              placeholder="0.5"
-              style="display: none"
-              title="Curve intensity for parabolic"
             >
           </div>
         </div>
@@ -1349,9 +1256,7 @@
               style="display: none"
             >
               <option value="step">step</option>
-              <option value="linear">lin</option>
               <option value="cosine">cos</option>
-              <option value="parabolic">par</option>
             </select>
             <input
               type="text"
@@ -1361,15 +1266,6 @@
               placeholder="0.5 or 0.2-0.8"
               style="display: none"
               title="End value"
-            >
-            <input
-              type="text"
-              class="intensity-input"
-              id="zingMorph-intensity"
-              value="0.5"
-              placeholder="0.5"
-              style="display: none"
-              title="Curve intensity for parabolic"
             >
           </div>
         </div>
@@ -1394,9 +1290,7 @@
               style="display: none"
             >
               <option value="step">step</option>
-              <option value="linear">lin</option>
               <option value="cosine">cos</option>
-              <option value="parabolic">par</option>
             </select>
             <input
               type="text"
@@ -1406,15 +1300,6 @@
               placeholder="1.0 or 0.5-1.0"
               style="display: none"
               title="End value"
-            >
-            <input
-              type="text"
-              class="intensity-input"
-              id="amplitude-intensity"
-              value="0.5"
-              placeholder="0.5"
-              style="display: none"
-              title="Curve intensity for parabolic"
             >
           </div>
         </div>
@@ -1439,9 +1324,7 @@
               style="display: none"
             >
               <option value="step">step</option>
-              <option value="linear">lin</option>
               <option value="cosine">cos</option>
-              <option value="parabolic">par</option>
             </select>
             <input
               type="text"
@@ -1451,15 +1334,6 @@
               placeholder="0 or 0-0.5"
               style="display: none"
               title="End value"
-            >
-            <input
-              type="text"
-              class="intensity-input"
-              id="whiteNoise-intensity"
-              value="0.5"
-              placeholder="0.5"
-              style="display: none"
-              title="Curve intensity for parabolic"
             >
           </div>
         </div>
