@@ -3,56 +3,72 @@
  * Handles peer-to-peer connections and data channels in star topology
  */
 
-import { MessageBuilder, MessageTypes, validateMessage } from './message-protocol.js';
+import {
+  MessageBuilder,
+  MessageTypes,
+  validateMessage,
+} from "./message-protocol.js";
 
 export class WebRTCStar extends EventTarget {
-  constructor(peerId, peerType, roomId = 'voice-assembly-default') {
+  constructor(peerId, peerType) {
     super();
     this.peerId = peerId;
     this.peerType = peerType; // 'ctrl' or 'synth'
-    this.roomId = roomId;
     this.verbose = false; // toggle for noisy logs
-    
+    this.forceTakeover = false; // will be set by connect()
+
     // Network state
     this.peers = new Map(); // peerId -> PeerConnection
     this.signalingSocket = null;
     this.isConnectedToSignaling = false;
-    
+
     // Network health tracking
     this.pingInterval = null;
     this.pingTimeouts = new Map();
-    
+
     // ICE servers configuration
     this.iceServers = [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' }
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
     ];
-    
-    console.log(`🔗 WebRTC Star initialized: ${this.peerId} (${this.peerType})`);
-    
+
+    console.log(
+      `🔗 WebRTC Star initialized: ${this.peerId} (${this.peerType})`,
+    );
+
     // Fetch ICE servers from server
     this.fetchIceServers();
   }
 
   async fetchIceServers() {
     try {
-      if (this.verbose) console.log('🔍 Fetching ICE servers from /ice-servers...');
-      const response = await fetch('/ice-servers');
+      if (this.verbose) {
+        console.log("🔍 Fetching ICE servers from /ice-servers...");
+      }
+      const response = await fetch("/ice-servers");
       if (response.ok) {
         const data = await response.json();
         if (data.ice_servers && data.ice_servers.length > 0) {
           this.iceServers = data.ice_servers;
-          if (this.verbose) console.log(`✅ Successfully fetched ${this.iceServers.length} ICE servers`);
+          if (this.verbose) {
+            console.log(
+              `✅ Successfully fetched ${this.iceServers.length} ICE servers`,
+            );
+          }
         } else {
-          if (this.verbose) console.log('⚠️ No ICE servers returned, using fallback STUN');
+          if (this.verbose) {
+            console.log("⚠️ No ICE servers returned, using fallback STUN");
+          }
         }
       } else {
-        throw new Error(`Failed to fetch ICE servers: ${response.status} ${response.statusText}`);
+        throw new Error(
+          `Failed to fetch ICE servers: ${response.status} ${response.statusText}`,
+        );
       }
     } catch (error) {
       if (this.verbose) {
         console.log(`⚠️ ICE server fetch failed: ${error.message}`);
-        console.log('Using fallback STUN servers');
+        console.log("Using fallback STUN servers");
       }
       // Keep default STUN servers as fallback
     }
@@ -63,10 +79,10 @@ export class WebRTCStar extends EventTarget {
    * Star topology: ctrl connects to synths, synths connect to ctrl
    */
   shouldConnectToPeer(peerType) {
-    if (this.peerType === 'ctrl') {
-      return peerType === 'synth'; // Ctrl connects to synths
-    } else if (this.peerType === 'synth') {
-      return peerType === 'ctrl'; // Synths connect to ctrl
+    if (this.peerType === "ctrl") {
+      return peerType === "synth"; // Ctrl connects to synths
+    } else if (this.peerType === "synth") {
+      return peerType === "ctrl"; // Synths connect to ctrl
     }
     return false;
   }
@@ -74,42 +90,50 @@ export class WebRTCStar extends EventTarget {
   /**
    * Connect to signaling server and register
    */
-  async connect(signalingUrl = 'ws://localhost:8000/ws', forceTakeover = false) {
+  async connect(
+    signalingUrl = "ws://localhost:8000/ws",
+    forceTakeover = false,
+  ) {
+    this.forceTakeover = forceTakeover;
     return new Promise((resolve, reject) => {
       this.signalingSocket = new WebSocket(signalingUrl);
-      
-      this.signalingSocket.addEventListener('open', () => {
-        if (this.verbose) console.log('📡 Connected to signaling server');
-        
-        // Register with server using new simplified protocol
-        this.sendSignalingMessage({
-          type: 'register',
+
+      this.signalingSocket.addEventListener("open", () => {
+        if (this.verbose) console.log("📡 Connected to signaling server");
+
+        // Register with server - include force_takeover for ctrl clients
+        const registerMessage = {
+          type: "register",
           client_id: this.peerId,
-          roomId: this.roomId
-        });
-        
+        };
+
+        if (this.peerType === "ctrl" && forceTakeover) {
+          registerMessage.force_takeover = true;
+        }
+
+        this.sendSignalingMessage(registerMessage);
+
         // If we're a synth, immediately request ctrl list
-        if (this.peerType === 'synth') {
+        if (this.peerType === "synth") {
           setTimeout(() => {
             this.sendSignalingMessage({
-              type: 'request-ctrls', 
-              roomId: this.roomId
+              type: "request-ctrls",
             });
           }, 100); // Small delay to ensure registration is processed
         }
       });
 
-      this.signalingSocket.addEventListener('message', async (event) => {
+      this.signalingSocket.addEventListener("message", async (event) => {
         const message = JSON.parse(event.data);
         await this.handleSignalingMessage(message);
-        
+
         // Handle successful connection for simplified protocol
-        if (message.type === 'ctrls-list' || message.type === 'ctrl-joined') {
+        if (message.type === "ctrls-list" || message.type === "ctrl-joined") {
           this.isConnectedToSignaling = true;
-          // Delay ping timer to allow data channels to establish  
+          // Delay ping timer to allow data channels to establish
           setTimeout(() => this.startPingTimer(), 3000);
           resolve(true);
-        } else if (this.peerType === 'ctrl') {
+        } else if (this.peerType === "ctrl") {
           // Ctrl clients resolve immediately after registration
           this.isConnectedToSignaling = true;
           setTimeout(() => this.startPingTimer(), 3000);
@@ -117,13 +141,13 @@ export class WebRTCStar extends EventTarget {
         }
       });
 
-      this.signalingSocket.addEventListener('error', (error) => {
-        console.error('❌ Signaling connection error:', error);
+      this.signalingSocket.addEventListener("error", (error) => {
+        console.error("❌ Signaling connection error:", error);
         reject(error);
       });
 
-      this.signalingSocket.addEventListener('close', () => {
-        console.log('🔌 Signaling connection closed');
+      this.signalingSocket.addEventListener("close", () => {
+        console.log("🔌 Signaling connection closed");
         this.isConnectedToSignaling = false;
         this.cleanup();
       });
@@ -135,9 +159,11 @@ export class WebRTCStar extends EventTarget {
    */
   async handleSignalingMessage(message) {
     switch (message.type) {
-      case 'ctrls-list':
-        if (this.peerType === 'synth') {
-          if (this.verbose) console.log('📋 Received ctrls list:', message.ctrls);
+      case "ctrls-list":
+        if (this.peerType === "synth") {
+          if (this.verbose) {
+            console.log("📋 Received ctrls list:", message.ctrls);
+          }
           // Synths initiate connections to all available ctrls
           for (const ctrlId of message.ctrls) {
             if (!this.peers.has(ctrlId)) {
@@ -148,9 +174,11 @@ export class WebRTCStar extends EventTarget {
         }
         break;
 
-      case 'ctrl-joined':
-        if (this.peerType === 'synth' && message.roomId === this.roomId) {
-          if (this.verbose) console.log(`🎛️ New ctrl joined: ${message.ctrl_id}`);
+      case "ctrl-joined":
+        if (this.peerType === "synth") {
+          if (this.verbose) {
+            console.log(`🎛️ New ctrl joined: ${message.ctrl_id}`);
+          }
           // Synth initiates connection to new ctrl
           if (!this.peers.has(message.ctrl_id)) {
             await this.createPeerConnection(message.ctrl_id, true);
@@ -158,49 +186,65 @@ export class WebRTCStar extends EventTarget {
         }
         break;
 
-      case 'ctrl-left':
-        if (message.roomId === this.roomId && message.ctrl_id !== this.peerId) {
+      case "ctrl-left":
+        if (message.ctrl_id !== this.peerId) {
           if (this.verbose) console.log(`👋 Ctrl left: ${message.ctrl_id}`);
           this.removePeer(message.ctrl_id);
         }
         break;
 
-      case 'synth-left':
+      case "synth-joined":
+        if (this.peerType === "ctrl") {
+          if (this.verbose) {
+            console.log(`🎤 New synth joined: ${message.synth_id}`);
+          }
+          // Ctrl initiates connection to new synth
+          if (!this.peers.has(message.synth_id)) {
+            await this.createPeerConnection(message.synth_id, true);
+          }
+        }
+        break;
+
+      case "synth-left":
         if (message.synth_id !== this.peerId) {
           if (this.verbose) console.log(`👋 Synth left: ${message.synth_id}`);
           this.removePeer(message.synth_id);
         }
         break;
 
-      case 'offer':
+      case "offer":
         await this.handleOffer(message);
         break;
 
-      case 'answer':
+      case "answer":
         await this.handleAnswer(message);
         break;
 
-      case 'ice-candidate':
+      case "ice-candidate":
         await this.handleIceCandidate(message);
         break;
 
-      case 'error':
-        console.error('❌ Signaling error:', message.message);
+      case "error":
+        console.error("❌ Signaling error:", message.message);
         break;
 
-      case 'kicked':
+      case "kicked":
         console.error(`❌ Kicked from network: ${message.reason}`);
-        this.dispatchEvent(new CustomEvent('kicked', {
-          detail: { reason: message.reason }
-        }));
+        this.dispatchEvent(
+          new CustomEvent("kicked", {
+            detail: { reason: message.reason },
+          }),
+        );
         this.cleanup();
         break;
-        
-      case 'join-rejected':
+
+      case "join-rejected":
         console.error(`❌ Join rejected: ${message.reason}`);
-        this.dispatchEvent(new CustomEvent('join-rejected', {
-          detail: { reason: message.reason }
-        }));
+        this.dispatchEvent(
+          new CustomEvent("join-rejected", {
+            detail: { reason: message.reason },
+          }),
+        );
         this.signalingSocket.close();
         break;
     }
@@ -210,18 +254,20 @@ export class WebRTCStar extends EventTarget {
    * Handle initial peer list from signaling server
    */
   async handlePeerList(peers) {
-    console.log('📋 Received peer list:', peers.length, 'peers');
-    
+    console.log("📋 Received peer list:", peers.length, "peers");
+
     // Star topology: only connect to appropriate peer types
     for (const peer of peers) {
       if (peer.id !== this.peerId && this.shouldConnectToPeer(peer.type)) {
         // In star topology: ctrl always initiates connections to synths
-        const shouldInitiate = (this.peerType === 'ctrl' && peer.type === 'synth');
-        console.log(`🔗 Creating connection to ${peer.id} (initiating: ${shouldInitiate})`);
+        const shouldInitiate = this.peerType === "ctrl" &&
+          peer.type === "synth";
+        console.log(
+          `🔗 Creating connection to ${peer.id} (initiating: ${shouldInitiate})`,
+        );
         await this.createPeerConnection(peer.id, shouldInitiate);
       }
     }
-
   }
 
   /**
@@ -235,14 +281,14 @@ export class WebRTCStar extends EventTarget {
 
     // Determine peer type based on star topology
     let targetPeerType;
-    if (this.peerType === 'ctrl') {
-      targetPeerType = 'synth'; // Ctrl connects to synths
+    if (this.peerType === "ctrl") {
+      targetPeerType = "synth"; // Ctrl connects to synths
     } else {
-      targetPeerType = 'ctrl'; // Synths connect to ctrl
+      targetPeerType = "ctrl"; // Synths connect to ctrl
     }
 
     const peerConnection = new RTCPeerConnection({
-      iceServers: this.iceServers
+      iceServers: this.iceServers,
     });
 
     // Create peer record first
@@ -251,24 +297,26 @@ export class WebRTCStar extends EventTarget {
       peerType: targetPeerType, // Store the peer type
       syncChannel: null,
       controlChannel: null,
-      connectedEventSent: false
+      connectedEventSent: false,
     });
 
     // Create data channels if we're initiating
     let syncChannel, controlChannel;
-    
+
     if (shouldInitiate) {
-      if (this.verbose) console.log(`📡 Creating data channels for ${peerId} (initiator)`);
-      
-      syncChannel = peerConnection.createDataChannel('sync', {
+      if (this.verbose) {
+        console.log(`📡 Creating data channels for ${peerId} (initiator)`);
+      }
+
+      syncChannel = peerConnection.createDataChannel("sync", {
         ordered: false,
-        maxRetransmits: 0
+        maxRetransmits: 0,
       });
-      
-      controlChannel = peerConnection.createDataChannel('control', {
-        ordered: true
+
+      controlChannel = peerConnection.createDataChannel("control", {
+        ordered: true,
       });
-      
+
       // Set up channels immediately after creation
       this.setupDataChannel(syncChannel, peerId);
       this.setupDataChannel(controlChannel, peerId);
@@ -277,49 +325,65 @@ export class WebRTCStar extends EventTarget {
     // Handle incoming data channels (when we're not the initiator)
     peerConnection.ondatachannel = (event) => {
       const channel = event.channel;
-      if (this.verbose) console.log(`📡 Received data channel '${channel.label}' from ${peerId}`);
-      
-      if (channel.label === 'sync') {
+      if (this.verbose) {
+        console.log(
+          `📡 Received data channel '${channel.label}' from ${peerId}`,
+        );
+      }
+
+      if (channel.label === "sync") {
         syncChannel = channel;
-      } else if (channel.label === 'control') {
+      } else if (channel.label === "control") {
         controlChannel = channel;
       }
-      
+
       this.setupDataChannel(channel, peerId);
     };
 
     // ICE candidate handling
-    peerConnection.addEventListener('icecandidate', (event) => {
+    peerConnection.addEventListener("icecandidate", (event) => {
       if (event.candidate) {
         this.sendSignalingMessage({
-          type: 'ice-candidate',
+          type: "ice-candidate",
           targetPeerId: peerId,
-          candidate: event.candidate
+          candidate: event.candidate,
         });
       }
     });
 
     // Connection state monitoring
-    peerConnection.addEventListener('connectionstatechange', () => {
-      if (this.verbose) console.log(`🔗 Connection to ${peerId}: ${peerConnection.connectionState}`);
-      
-      if (peerConnection.connectionState === 'connected') {
+    peerConnection.addEventListener("connectionstatechange", () => {
+      if (this.verbose) {
+        console.log(
+          `🔗 Connection to ${peerId}: ${peerConnection.connectionState}`,
+        );
+      }
+
+      if (peerConnection.connectionState === "connected") {
         // Use a small delay to allow channels to stabilize
         setTimeout(() => {
           this.checkPeerReadiness(peerId);
         }, 100);
-      } else if (peerConnection.connectionState === 'failed' || 
-                 peerConnection.connectionState === 'disconnected') {
+      } else if (
+        peerConnection.connectionState === "failed" ||
+        peerConnection.connectionState === "disconnected"
+      ) {
         this.removePeer(peerId);
       }
     });
 
     // Also monitor ICE connection state
-    peerConnection.addEventListener('iceconnectionstatechange', () => {
-      if (this.verbose) console.log(`🧊 ICE connection to ${peerId}: ${peerConnection.iceConnectionState}`);
-      
-      if (peerConnection.iceConnectionState === 'connected' || 
-          peerConnection.iceConnectionState === 'completed') {
+    peerConnection.addEventListener("iceconnectionstatechange", () => {
+      if (this.verbose) {
+        console.log(
+          `🧊 ICE connection to ${peerId}: ${peerConnection.iceConnectionState}`,
+        );
+      }
+
+      if (
+        peerConnection.iceConnectionState === "connected" ||
+        peerConnection.iceConnectionState === "completed"
+      ) {
         // Use a small delay to allow channels to stabilize
         setTimeout(() => {
           this.checkPeerReadiness(peerId);
@@ -331,11 +395,11 @@ export class WebRTCStar extends EventTarget {
     if (shouldInitiate) {
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
-      
+
       this.sendSignalingMessage({
-        type: 'offer',
+        type: "offer",
         targetPeerId: peerId,
-        offer: offer
+        offer: offer,
       });
     }
   }
@@ -348,37 +412,42 @@ export class WebRTCStar extends EventTarget {
     if (!peer) return;
 
     // Store channel reference
-    if (channel.label === 'sync') {
+    if (channel.label === "sync") {
       peer.syncChannel = channel;
-    } else if (channel.label === 'control') {
+    } else if (channel.label === "control") {
       peer.controlChannel = channel;
     }
 
-    channel.addEventListener('open', () => {
+    channel.addEventListener("open", () => {
       console.log(`📡 ${channel.label} channel open to ${peerId}`);
-      
+
       // Check if peer is now ready (both connection and sync channel)
       this.checkPeerReadiness(peerId);
     });
 
     // Debug: Log channel state immediately
-    console.log(`📡 Channel '${channel.label}' for ${peerId} initial state: ${channel.readyState}`);
+    console.log(
+      `📡 Channel '${channel.label}' for ${peerId} initial state: ${channel.readyState}`,
+    );
 
-    channel.addEventListener('message', (event) => {
+    channel.addEventListener("message", (event) => {
       try {
         const message = JSON.parse(event.data);
         validateMessage(message);
         this.handleDataChannelMessage(peerId, channel.label, message);
       } catch (error) {
-        console.error('❌ Invalid data channel message:', error);
+        console.error("❌ Invalid data channel message:", error);
       }
     });
 
-    channel.addEventListener('error', (error) => {
-      console.error(`❌ Data channel error (${channel.label} to ${peerId}):`, error);
+    channel.addEventListener("error", (error) => {
+      console.error(
+        `❌ Data channel error (${channel.label} to ${peerId}):`,
+        error,
+      );
     });
 
-    channel.addEventListener('close', () => {
+    channel.addEventListener("close", () => {
       console.log(`📡 ${channel.label} channel closed to ${peerId}`);
     });
   }
@@ -388,37 +457,56 @@ export class WebRTCStar extends EventTarget {
    */
   async handleOffer(message) {
     const { fromPeerId, offer } = message;
-    let peer = this.peers.get(fromPeerId);
-    
-    if (!peer) {
-      // In simplified system, ctrl clients need to accept incoming offers from synths
-      // Create peer connection on-demand when receiving an offer
-      if (this.peerType === 'ctrl') {
-        console.log(`🎵 Creating peer connection for incoming synth: ${fromPeerId}`);
-        await this.createPeerConnection(fromPeerId, false); // Ctrl doesn't initiate
-        peer = this.peers.get(fromPeerId);
-      } else {
-        console.error(`❌ Received offer from unknown peer: ${fromPeerId}`);
-        return;
+
+    // If this is an unknown peer, create a connection for it now
+    if (!this.peers.has(fromPeerId)) {
+      if (this.verbose) {
+        console.log(
+          `🤝 Received offer from new peer ${fromPeerId}, creating connection`,
+        );
       }
-    } else {
-      // If we already have a peer connection, clean up the old one before handling new offer
-      // This happens when synth client refreshes/reconnects quickly
-      console.log(`🔄 Replacing existing connection to ${fromPeerId}`);
-      this.removePeer(fromPeerId);
+      // Create a peer connection, but DO NOT initiate (isInitiator = false)
       await this.createPeerConnection(fromPeerId, false);
-      peer = this.peers.get(fromPeerId);
     }
 
-    await peer.connection.setRemoteDescription(offer);
-    const answer = await peer.connection.createAnswer();
-    await peer.connection.setLocalDescription(answer);
+    const peer = this.peers.get(fromPeerId);
+    if (!peer) {
+      console.error(
+        `❌ Could not get peer connection for ${fromPeerId} after creation attempt`,
+      );
+      return;
+    }
 
-    this.sendSignalingMessage({
-      type: 'answer',
-      targetPeerId: fromPeerId,
-      answer: answer
-    });
+    try {
+      const pc = peer.connection;
+
+      if (pc.signalingState !== "stable") {
+        if (this.verbose) {
+          console.warn(
+            `⚠️ Received offer while signaling state is ${pc.signalingState}, rolling back`,
+          );
+        }
+        await Promise.all([
+          pc.setLocalDescription({ type: "rollback" }),
+          pc.setRemoteDescription(offer),
+        ]);
+      } else {
+        await pc.setRemoteDescription(offer);
+      }
+
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      this.sendSignalingMessage({
+        type: "answer",
+        targetPeerId: fromPeerId,
+        answer: pc.localDescription,
+      });
+
+      if (this.verbose) console.log(`✅ Sent answer to ${fromPeerId}`);
+    } catch (error) {
+      console.error(`❌ Error handling offer from ${fromPeerId}:`, error);
+    }
   }
 
   /**
@@ -427,7 +515,7 @@ export class WebRTCStar extends EventTarget {
   async handleAnswer(message) {
     const { fromPeerId, answer } = message;
     const peer = this.peers.get(fromPeerId);
-    
+
     if (!peer) {
       console.error(`❌ Received answer from unknown peer: ${fromPeerId}`);
       return;
@@ -441,24 +529,44 @@ export class WebRTCStar extends EventTarget {
    */
   async handleIceCandidate(message) {
     const { fromPeerId, candidate } = message;
-    let peer = this.peers.get(fromPeerId);
-    
-    if (!peer) {
-      // Ctrl clients should accept ICE candidates from synths
-      if (this.peerType === 'ctrl') {
-        if (this.verbose) console.log(`🧊 Creating peer connection for ICE candidate from: ${fromPeerId}`);
-        await this.createPeerConnection(fromPeerId, false);
-        peer = this.peers.get(fromPeerId);
-      } else {
-        console.error(`❌ Received ICE candidate from unknown peer: ${fromPeerId}`);
-        return;
+
+    // If we get a candidate before the offer, we need to create the peer connection
+    // This can happen due to network timing
+    if (!this.peers.has(fromPeerId)) {
+      if (this.verbose) {
+        console.log(
+          `🤝 Received ICE candidate from new peer ${fromPeerId}, creating placeholder connection`,
+        );
       }
+      await this.createPeerConnection(fromPeerId, false);
+    }
+
+    const peer = this.peers.get(fromPeerId);
+    if (!peer) {
+      console.error(
+        `❌ Could not get peer connection for ICE candidate from ${fromPeerId}`,
+      );
+      return;
     }
 
     try {
-      await peer.connection.addIceCandidate(candidate);
+      if (candidate) {
+        // Add the ICE candidate. RTCPeerConnection will buffer candidates if the remote description isn't set yet
+        await peer.connection.addIceCandidate(new RTCIceCandidate(candidate));
+      }
+      // A null candidate indicates the end of the gathering process
     } catch (error) {
-      console.error('❌ Error adding ICE candidate:', error);
+      if (
+        !error.message.includes(
+          "Cannot add ICE candidate before a remote description",
+        )
+      ) {
+        console.error(
+          `❌ Error adding ICE candidate for ${fromPeerId}:`,
+          error,
+        );
+      }
+      // Silently ignore "remote description not set" errors as they're expected during race conditions
     }
   }
 
@@ -481,16 +589,18 @@ export class WebRTCStar extends EventTarget {
       this.sendToPeer(peerId, pongMessage, channelType);
       return; // Don't emit ping messages to application layer
     }
-    
+
     if (message.type === MessageTypes.PONG) {
       this.handlePongMessage(peerId, message);
       return; // Don't emit pong messages to application layer
     }
 
     // Emit event for upper layers to handle
-    this.dispatchEvent(new CustomEvent('data-message', {
-      detail: { peerId, channelType, message }
-    }));
+    this.dispatchEvent(
+      new CustomEvent("data-message", {
+        detail: { peerId, channelType, message },
+      }),
+    );
   }
 
   /**
@@ -499,14 +609,16 @@ export class WebRTCStar extends EventTarget {
   handlePongMessage(peerId, pongMessage) {
     const pingId = pongMessage.pingId;
     const timeout = this.pingTimeouts.get(pingId);
-    
+
     if (timeout) {
       clearTimeout(timeout);
       this.pingTimeouts.delete(pingId);
-      
+
       // Calculate RTT for basic connectivity (suppress noisy logs unless verbose)
       const rtt = performance.now() - pongMessage.pingTimestamp;
-      if (this.verbose) console.log(`🏓 Pong from ${peerId}: ${Math.round(rtt)}ms`);
+      if (this.verbose) {
+        console.log(`🏓 Pong from ${peerId}: ${Math.round(rtt)}ms`);
+      }
     }
   }
 
@@ -514,7 +626,9 @@ export class WebRTCStar extends EventTarget {
    * Send message via signaling server
    */
   sendSignalingMessage(message) {
-    if (this.signalingSocket && this.signalingSocket.readyState === WebSocket.OPEN) {
+    if (
+      this.signalingSocket && this.signalingSocket.readyState === WebSocket.OPEN
+    ) {
       this.signalingSocket.send(JSON.stringify(message));
     }
   }
@@ -522,33 +636,40 @@ export class WebRTCStar extends EventTarget {
   /**
    * Send message to specific peer via data channel
    */
-  sendToPeer(peerId, message, channelType = 'sync') {
+  sendToPeer(peerId, message, channelType = "sync") {
     const peer = this.peers.get(peerId);
     if (!peer) {
       console.warn(`⚠️ Cannot send to unknown peer: ${peerId}`);
       return false;
     }
 
-    const channel = channelType === 'sync' ? peer.syncChannel : peer.controlChannel;
-    if (!channel || channel.readyState !== 'open') {
+    const channel = channelType === "sync"
+      ? peer.syncChannel
+      : peer.controlChannel;
+    if (!channel || channel.readyState !== "open") {
       // Only log first few warnings to avoid spam
       if (!peer.channelWarningCount) peer.channelWarningCount = {};
-      peer.channelWarningCount[channelType] = (peer.channelWarningCount[channelType] || 0) + 1;
-      
+      peer.channelWarningCount[channelType] =
+        (peer.channelWarningCount[channelType] || 0) + 1;
+
       if (peer.channelWarningCount[channelType] <= 3) {
-        console.warn(`⚠️ Channel ${channelType} to ${peerId} not ready (${channel?.readyState || 'none'})`);
+        console.warn(
+          `⚠️ Channel ${channelType} to ${peerId} not ready (${
+            channel?.readyState || "none"
+          })`,
+        );
       }
       return false;
     }
 
     try {
       channel.send(JSON.stringify(message));
-      
+
       // Reset warning count on successful send
       if (peer.channelWarningCount) {
         peer.channelWarningCount[channelType] = 0;
       }
-      
+
       return true;
     } catch (error) {
       console.error(`❌ Failed to send message to ${peerId}:`, error);
@@ -559,24 +680,24 @@ export class WebRTCStar extends EventTarget {
   /**
    * Broadcast message to all connected peers
    */
-  broadcast(message, channelType = 'sync') {
+  broadcast(message, channelType = "sync") {
     let successCount = 0;
-    
+
     for (const [peerId] of this.peers) {
       if (this.sendToPeer(peerId, message, channelType)) {
         successCount++;
       }
     }
-    
+
     return successCount;
   }
 
   /**
    * Broadcast message to peers of a specific type (e.g., 'synth', 'ctrl')
    */
-  broadcastToType(targetType, message, channelType = 'sync') {
+  broadcastToType(targetType, message, channelType = "sync") {
     let successCount = 0;
-    
+
     for (const [peerId, peer] of this.peers) {
       if (peer.peerType === targetType) {
         if (this.sendToPeer(peerId, message, channelType)) {
@@ -584,7 +705,7 @@ export class WebRTCStar extends EventTarget {
         }
       }
     }
-    
+
     return successCount;
   }
 
@@ -615,26 +736,25 @@ export class WebRTCStar extends EventTarget {
    */
   pingPeer(peerId) {
     const peer = this.peers.get(peerId);
-    if (!peer || !peer.syncChannel || peer.syncChannel.readyState !== 'open') {
+    if (!peer || !peer.syncChannel || peer.syncChannel.readyState !== "open") {
       // Skip ping if channel not ready
       return;
     }
 
     const pingMessage = MessageBuilder.ping();
-    
-    // Set timeout for ping response  
+
+    // Set timeout for ping response
     const timeout = setTimeout(() => {
       console.log(`⚠️ Ping timeout for ${peerId}`);
       this.pingTimeouts.delete(pingMessage.id);
-      
+
       // Don't automatically remove peers on ping timeout - let WebRTC connection state handle disconnections
       // This prevents booting peers due to temporary network hiccups
     }, 5000); // 5 second timeout
-    
-    this.pingTimeouts.set(pingMessage.id, timeout);
-    this.sendToPeer(peerId, pingMessage, 'sync');
-  }
 
+    this.pingTimeouts.set(pingMessage.id, timeout);
+    this.sendToPeer(peerId, pingMessage, "sync");
+  }
 
   /**
    * Check if peer is ready (connection established and both channels open)
@@ -644,42 +764,58 @@ export class WebRTCStar extends EventTarget {
     if (!peer) return;
 
     const peerConnection = peer.connection;
-    const isConnectionReady = peerConnection && 
-      (peerConnection.connectionState === 'connected' || 
-       peerConnection.iceConnectionState === 'connected' ||
-       peerConnection.iceConnectionState === 'completed');
-    
-    const isSyncChannelReady = peer.syncChannel && peer.syncChannel.readyState === 'open';
-    const isControlChannelReady = peer.controlChannel && peer.controlChannel.readyState === 'open';
-    
+    const isConnectionReady = peerConnection &&
+      (peerConnection.connectionState === "connected" ||
+        peerConnection.iceConnectionState === "connected" ||
+        peerConnection.iceConnectionState === "completed");
+
+    const isSyncChannelReady = peer.syncChannel &&
+      peer.syncChannel.readyState === "open";
+    const isControlChannelReady = peer.controlChannel &&
+      peer.controlChannel.readyState === "open";
+
     // Debug info
-      if (this.verbose) console.log(`🔍 Peer ${peerId} readiness check:`, {
-      connectionState: peerConnection?.connectionState,
-      iceConnectionState: peerConnection?.iceConnectionState,
-      hasSyncChannel: !!peer.syncChannel,
-      syncChannelState: peer.syncChannel?.readyState,
-      hasControlChannel: !!peer.controlChannel,
-      controlChannelState: peer.controlChannel?.readyState,
-      isConnectionReady,
-      isSyncChannelReady,
-      isControlChannelReady
-    });
-    
+    if (this.verbose) {
+      console.log(`🔍 Peer ${peerId} readiness check:`, {
+        connectionState: peerConnection?.connectionState,
+        iceConnectionState: peerConnection?.iceConnectionState,
+        hasSyncChannel: !!peer.syncChannel,
+        syncChannelState: peer.syncChannel?.readyState,
+        hasControlChannel: !!peer.controlChannel,
+        controlChannelState: peer.controlChannel?.readyState,
+        isConnectionReady,
+        isSyncChannelReady,
+        isControlChannelReady,
+      });
+    }
+
     if (isConnectionReady && isSyncChannelReady && isControlChannelReady) {
-      if (this.verbose) console.log(`✅ Connection and both channels ready for ${peerId}`);
+      if (this.verbose) {
+        console.log(`✅ Connection and both channels ready for ${peerId}`);
+      }
       // Prevent duplicate events
       if (!peer.connectedEventSent) {
         peer.connectedEventSent = true;
-        this.dispatchEvent(new CustomEvent('peer-connected', {
-          detail: { 
-            peerId, 
-            syncChannel: peer.syncChannel, 
-            controlChannel: peer.controlChannel 
-          }
-        }));
+        this.dispatchEvent(
+          new CustomEvent("peer-connected", {
+            detail: {
+              peerId,
+              syncChannel: peer.syncChannel,
+              controlChannel: peer.controlChannel,
+            },
+          }),
+        );
       }
     } else {
-      if (this.verbose) console.log(`⏳ Peer ${peerId} - Connection: ${isConnectionReady ? 'ready' : 'waiting'}, Sync channel: ${isSyncChannelReady ? 'ready' : 'waiting'}, Control channel: ${isControlChannelReady ? 'ready' : 'waiting'}`);
+      if (this.verbose) {
+        console.log(
+          `⏳ Peer ${peerId} - Connection: ${
+            isConnectionReady ? "ready" : "waiting"
+          }, Sync channel: ${
+            isSyncChannelReady ? "ready" : "waiting"
+          }, Control channel: ${isControlChannelReady ? "ready" : "waiting"}`,
+        );
+      }
     }
   }
 
@@ -691,16 +827,18 @@ export class WebRTCStar extends EventTarget {
     if (!peer) return;
 
     // Close connection
-    if (peer.connection.connectionState !== 'closed') {
+    if (peer.connection.connectionState !== "closed") {
       peer.connection.close();
     }
 
     this.peers.delete(peerId);
     if (this.verbose) console.log(`🗑️ Removed peer ${peerId}`);
 
-    this.dispatchEvent(new CustomEvent('peer-removed', {
-      detail: { peerId }
-    }));
+    this.dispatchEvent(
+      new CustomEvent("peer-removed", {
+        detail: { peerId },
+      }),
+    );
   }
 
   /**
@@ -708,11 +846,11 @@ export class WebRTCStar extends EventTarget {
    */
   getNetworkStats() {
     const peerStats = {};
-    
+
     for (const [peerId, peer] of this.peers) {
       peerStats[peerId] = {
         connectionState: peer.connection.connectionState,
-        peerType: peer.peerType
+        peerType: peer.peerType,
       };
     }
 
@@ -720,7 +858,7 @@ export class WebRTCStar extends EventTarget {
       peerId: this.peerId,
       peerType: this.peerType,
       connectedPeers: this.peers.size,
-      peerStats
+      peerStats,
     };
   }
 
@@ -752,8 +890,8 @@ export class WebRTCStar extends EventTarget {
     }
 
     this.isConnectedToSignaling = false;
-    
-    if (this.verbose) console.log('🧹 WebRTC mesh cleaned up');
+
+    if (this.verbose) console.log("🧹 WebRTC mesh cleaned up");
   }
 }
 

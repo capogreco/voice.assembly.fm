@@ -1,275 +1,281 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
+  <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, user-scalable=no"
+    >
     <title>voice.assembly.fm - synth</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
 
-        html, body {
-            height: 100%;
-            overflow: hidden;
-            font-family: Monaco, 'Courier New', monospace;
-            background: #0a0a0a;
-            color: #f0f0f0;
-            font-size: 11px;
-            touch-action: none;
-            user-select: none;
-            -webkit-user-select: none;
-        }
+      html, body {
+        height: 100%;
+        overflow: hidden;
+        font-family: Monaco, "Courier New", monospace;
+        background: #0a0a0a;
+        color: #f0f0f0;
+        font-size: 11px;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
 
-        /* Join State Styles */
-        .join-state {
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            padding: 20px;
-            text-align: center;
-            background: #0a0a0a;
-        }
+      /* Join State Styles */
+      .join-state {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        padding: 20px;
+        text-align: center;
+        background: #0a0a0a;
+      }
 
-        .join-state h1 {
-            font-size: 14px;
-            font-weight: normal;
-            margin-bottom: 10px;
-            color: #f0f0f0;
-            text-transform: lowercase;
-        }
+      .join-state h1 {
+        font-size: 14px;
+        font-weight: normal;
+        margin-bottom: 10px;
+        color: #f0f0f0;
+        text-transform: lowercase;
+      }
 
-        .join-state .subtitle {
-            font-size: 10px;
-            color: #444;
-            margin-bottom: 30px;
-            line-height: 1.4;
-            text-transform: lowercase;
-        }
+      .join-state .subtitle {
+        font-size: 10px;
+        color: #444;
+        margin-bottom: 30px;
+        line-height: 1.4;
+        text-transform: lowercase;
+      }
 
-        .join-button {
-            background: #111;
-            border: 1px solid #333;
-            color: #666;
-            font-size: 11px;
-            font-weight: normal;
-            font-family: inherit;
-            padding: 10px 20px;
-            cursor: pointer;
-            text-transform: lowercase;
-            transition: all 0.1s;
-        }
+      .join-button {
+        background: #111;
+        border: 1px solid #333;
+        color: #666;
+        font-size: 11px;
+        font-weight: normal;
+        font-family: inherit;
+        padding: 10px 20px;
+        cursor: pointer;
+        text-transform: lowercase;
+        transition: all 0.1s;
+      }
 
-        .join-button:hover {
-            background: #1a1a1a;
-            color: #888;
-        }
+      .join-button:hover {
+        background: #1a1a1a;
+        color: #888;
+      }
 
-        .instructions {
-            margin-top: 20px;
-            font-size: 9px;
-            color: #333;
-            max-width: 300px;
-            line-height: 1.3;
-        }
+      .instructions {
+        margin-top: 20px;
+        font-size: 9px;
+        color: #333;
+        max-width: 300px;
+        line-height: 1.3;
+      }
 
-        /* Active State Styles */
-        .active-state {
-            display: none;
-            height: 100vh;
-            position: relative;
-            background: #0a0a0a;
-        }
+      /* Active State Styles */
+      .active-state {
+        display: none;
+        height: 100vh;
+        position: relative;
+        background: #0a0a0a;
+      }
 
-        .active-state.visible {
-            display: block;
-        }
+      .active-state.visible {
+        display: block;
+      }
 
+      .oscilloscope {
+        position: absolute;
+        top: 20px;
+        left: 20px;
+        right: 20px;
+        bottom: 20px;
+        background: #000;
+        border: 1px solid #222;
+      }
+
+      .oscilloscope canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+
+      .status-overlay {
+        position: absolute;
+        top: 20px;
+        left: 20px;
+        z-index: 10;
+        pointer-events: none;
+      }
+
+      .synth-id-overlay {
+        position: absolute;
+        top: 20px;
+        right: 20px;
+        z-index: 10;
+        pointer-events: auto;
+      }
+
+      .connection-status {
+        background: #111;
+        border: 1px solid #333;
+        padding: 4px 8px;
+        font-size: 9px;
+        color: #444;
+        font-family: inherit;
+      }
+
+      .connection-status.connected {
+        color: #666;
+      }
+
+      .connection-status.syncing {
+        color: #444;
+      }
+
+      .connection-status.error {
+        color: #f0f0f0;
+      }
+
+      .synthesis-status {
+        background: #111;
+        border: 1px solid #333;
+        padding: 4px 8px;
+        font-size: 9px;
+        color: #333;
+        font-family: inherit;
+        margin-top: 4px;
+      }
+
+      .synthesis-status.active {
+        color: #fff;
+      }
+
+      .synthesis-status.active::before {
+        content: "● ";
+        color: #fff;
+      }
+
+      /* Long press feedback for synth ID */
+      #synth-id {
+        transition: transform 0.1s ease, opacity 0.1s ease;
+        user-select: none;
+        -webkit-user-select: none;
+        cursor: pointer;
+        padding: 2px 4px;
+      }
+
+      #synth-id.pressing {
+        transform: scale(0.95);
+        opacity: 0.7;
+        background: #222;
+      }
+
+      #synth-id.rhythm-active {
+        color: #666 !important;
+      }
+
+      /* Loading animation */
+      .loading {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        text-align: center;
+        font-size: 10px;
+        color: #444;
+      }
+
+      .spinner {
+        border: 1px solid #222;
+        border-top: 1px solid #666;
+        width: 18px;
+        height: 18px;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 10px;
+      }
+
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+
+      .loading div {
+        text-transform: lowercase;
+      }
+
+      /* Mobile optimizations */
+      @media (max-width: 768px) {
         .oscilloscope {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            right: 20px;
-            bottom: 20px;
-            background: #000;
-            border: 1px solid #222;
-        }
-
-        .oscilloscope canvas {
-            width: 100%;
-            height: 100%;
-            display: block;
+          top: 15px;
+          left: 15px;
+          right: 15px;
+          bottom: 15px;
         }
 
         .status-overlay {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            z-index: 10;
-            pointer-events: none;
+          top: 15px;
+          left: 15px;
         }
-
-        .synth-id-overlay {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            z-index: 10;
-            pointer-events: auto;
-        }
-
-        .connection-status {
-            background: #111;
-            border: 1px solid #333;
-            padding: 4px 8px;
-            font-size: 9px;
-            color: #444;
-            font-family: inherit;
-        }
-
-        .connection-status.connected {
-            color: #666;
-        }
-
-        .connection-status.syncing {
-            color: #444;
-        }
-
-        .connection-status.error {
-            color: #f0f0f0;
-        }
-
-        .synthesis-status {
-            background: #111;
-            border: 1px solid #333;
-            padding: 4px 8px;
-            font-size: 9px;
-            color: #333;
-            font-family: inherit;
-            margin-top: 4px;
-        }
-
-        .synthesis-status.active {
-            color: #fff;
-        }
-
-        .synthesis-status.active::before {
-            content: "● ";
-            color: #fff;
-        }
-
-        /* Long press feedback for synth ID */
-        #synth-id {
-            transition: transform 0.1s ease, opacity 0.1s ease;
-            user-select: none;
-            -webkit-user-select: none;
-            cursor: pointer;
-            padding: 2px 4px;
-        }
-
-        #synth-id.pressing {
-            transform: scale(0.95);
-            opacity: 0.7;
-            background: #222;
-        }
-
-        #synth-id.rhythm-active {
-            color: #666 !important;
-        }
-
-        /* Loading animation */
-        .loading {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            text-align: center;
-            font-size: 10px;
-            color: #444;
-        }
-
-        .spinner {
-            border: 1px solid #222;
-            border-top: 1px solid #666;
-            width: 18px;
-            height: 18px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 10px;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        
-        .loading div {
-            text-transform: lowercase;
-        }
-
-        /* Mobile optimizations */
-        @media (max-width: 768px) {
-            .oscilloscope {
-                top: 15px;
-                left: 15px;
-                right: 15px;
-                bottom: 15px;
-            }
-            
-            .status-overlay {
-                top: 15px;
-                left: 15px;
-            }
-        }
+      }
     </style>
-</head>
-<body>
+  </head>
+  <body>
     <!-- Join State -->
     <div class="join-state" id="join-state">
-        <h1>voice.assembly.fm</h1>
-        <div class="subtitle">
-            join the distributed choir<br>
-            your voice becomes part of the collective
-        </div>
-        
-        <button class="join-button" id="join-button">
-            enable audio
-        </button>
-        
-        <div class="instructions">
-            this will initialize audio processing. network connection happens automatically in the background.
-        </div>
+      <h1>voice.assembly.fm</h1>
+      <div class="subtitle">
+        join the distributed choir<br>
+        your voice becomes part of the collective
+      </div>
+
+      <button class="join-button" id="join-button">
+        enable audio
+      </button>
+
+      <div class="instructions">
+        this will initialize audio processing. network connection happens
+        automatically in the background.
+      </div>
     </div>
 
     <!-- Active State -->
     <div class="active-state" id="active-state">
-        <div class="oscilloscope">
-            <canvas id="oscilloscope-canvas"></canvas>
+      <div class="oscilloscope">
+        <canvas id="oscilloscope-canvas"></canvas>
+      </div>
+
+      <div class="status-overlay">
+        <div class="connection-status" id="connection-status">
+          connecting...
         </div>
-        
-        <div class="status-overlay">
-            <div class="connection-status" id="connection-status">
-                connecting...
-            </div>
-            <div class="synthesis-status" id="synthesis-status">
-                synthesis off
-            </div>
+        <div class="synthesis-status" id="synthesis-status">
+          synthesis off
         </div>
-        
-        <div class="synth-id-overlay">
-            <div class="connection-status" id="synth-id" style="color: #666;">
-                
-            </div>
-        </div>
-        
-        <div class="loading" id="loading">
-            <div class="spinner"></div>
-            <div>initializing...</div>
-        </div>
+      </div>
+
+      <div class="synth-id-overlay">
+        <div class="connection-status" id="synth-id" style="color: #666"></div>
+      </div>
+
+      <div class="loading" id="loading">
+        <div class="spinner"></div>
+        <div>initializing...</div>
+      </div>
     </div>
 
     <script type="module" src="/synth/synth-main.js"></script>
-</body>
+  </body>
 </html>

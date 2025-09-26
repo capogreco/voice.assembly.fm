@@ -1,7 +1,9 @@
 {
   "tasks": {
+    "build": "deno run -A scripts/bundle_ctrl.ts",
     "dev": "deno run --allow-net --allow-read --allow-sys --allow-env --allow-run --unstable-kv --watch src/server/server.ts",
-    "start": "deno run --allow-net --allow-read --allow-sys --allow-env --allow-run --unstable-kv src/server/server.ts"
+    "start": "deno run --allow-net --allow-read --allow-sys --allow-env --allow-run --unstable-kv src/server/server.ts",
+    "lint": "deno lint src/ public/ctrl/ public/synth/ scripts/"
   },
   "imports": {
     "std/": "https://deno.land/std@0.220.0/"

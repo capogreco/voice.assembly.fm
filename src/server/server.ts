@@ -4,7 +4,6 @@
  */
 
 import { serveDir } from "std/http/file_server.ts";
-import { STATUS_CODE } from "std/http/status.ts";
 import { load } from "std/dotenv/mod.ts";
 import { getLocalIPs } from "./utils.ts";
 
@@ -14,8 +13,10 @@ const env = await load();
 const port = parseInt(env.PORT || Deno.env.get("PORT") || "3456");
 
 // Load Twilio credentials for TURN servers
-const TWILIO_ACCOUNT_SID = env.TWILIO_ACCOUNT_SID || Deno.env.get("TWILIO_ACCOUNT_SID");
-const TWILIO_AUTH_TOKEN = env.TWILIO_AUTH_TOKEN || Deno.env.get("TWILIO_AUTH_TOKEN");
+const TWILIO_ACCOUNT_SID = env.TWILIO_ACCOUNT_SID ||
+  Deno.env.get("TWILIO_ACCOUNT_SID");
+const TWILIO_AUTH_TOKEN = env.TWILIO_AUTH_TOKEN ||
+  Deno.env.get("TWILIO_AUTH_TOKEN");
 
 // Types for ICE server responses
 interface IceServer {
@@ -29,21 +30,36 @@ interface IceServersResponse {
 }
 
 // Get TURN credentials from Twilio
-async function getTurnCredentials(requestSource = "unknown"): Promise<IceServer[] | null> {
-  console.log(`[TURN] ${requestSource} - Environment check - TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID ? 'SET' : 'MISSING'}`);
-  console.log(`[TURN] ${requestSource} - Environment check - TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN ? 'SET' : 'MISSING'}`);
-  
+async function getTurnCredentials(
+  requestSource = "unknown",
+): Promise<IceServer[] | null> {
+  console.log(
+    `[TURN] ${requestSource} - Environment check - TWILIO_ACCOUNT_SID: ${
+      TWILIO_ACCOUNT_SID ? "SET" : "MISSING"
+    }`,
+  );
+  console.log(
+    `[TURN] ${requestSource} - Environment check - TWILIO_AUTH_TOKEN: ${
+      TWILIO_AUTH_TOKEN ? "SET" : "MISSING"
+    }`,
+  );
+
   if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN) {
-    console.error(`[TURN] ${requestSource} - Missing Twilio credentials - SID: ${!!TWILIO_ACCOUNT_SID}, Token: ${!!TWILIO_AUTH_TOKEN}`);
+    console.error(
+      `[TURN] ${requestSource} - Missing Twilio credentials - SID: ${!!TWILIO_ACCOUNT_SID}, Token: ${!!TWILIO_AUTH_TOKEN}`,
+    );
     return null;
   }
 
   try {
     const auth = btoa(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`);
-    const url = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Tokens.json`;
+    const url =
+      `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Tokens.json`;
 
-    console.log(`[TURN] ${requestSource} - Making request to Twilio API: ${url}`);
-    
+    console.log(
+      `[TURN] ${requestSource} - Making request to Twilio API: ${url}`,
+    );
+
     const response = await fetch(url, {
       method: "POST",
       headers: {
@@ -52,19 +68,30 @@ async function getTurnCredentials(requestSource = "unknown"): Promise<IceServer[
       },
     });
 
-    console.log(`[TURN] ${requestSource} - Twilio API response status: ${response.status} ${response.statusText}`);
+    console.log(
+      `[TURN] ${requestSource} - Twilio API response status: ${response.status} ${response.statusText}`,
+    );
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`[TURN] ${requestSource} - Twilio API error - Status: ${response.status}, Response: ${errorText}`);
+      console.error(
+        `[TURN] ${requestSource} - Twilio API error - Status: ${response.status}, Response: ${errorText}`,
+      );
       return null;
     }
 
     const data = await response.json();
-    console.log(`[TURN] ${requestSource} - Successfully fetched ${data.ice_servers?.length || 0} ICE servers from Twilio`);
+    console.log(
+      `[TURN] ${requestSource} - Successfully fetched ${
+        data.ice_servers?.length || 0
+      } ICE servers from Twilio`,
+    );
     return data.ice_servers;
   } catch (error) {
-    console.error(`[TURN] ${requestSource} - Error fetching TURN credentials:`, error);
+    console.error(
+      `[TURN] ${requestSource} - Error fetching TURN credentials:`,
+      error,
+    );
     return null;
   }
 }
@@ -75,9 +102,9 @@ interface ConnectionInfo {
 }
 
 interface KVCtrlEntry {
+  client_id: string;
   timestamp: number;
   ws_id: string;
-  roomId: string;
 }
 
 interface BaseMessage {
@@ -91,12 +118,11 @@ interface BaseMessage {
 interface RegisterMessage extends BaseMessage {
   type: "register";
   client_id: string;
-  roomId?: string;
+  force_takeover?: boolean;
 }
 
 interface RequestCtrlsMessage extends BaseMessage {
   type: "request-ctrls";
-  roomId: string;
 }
 
 interface CtrlsListMessage extends BaseMessage {
@@ -107,13 +133,21 @@ interface CtrlsListMessage extends BaseMessage {
 interface CtrlJoinedMessage extends BaseMessage {
   type: "ctrl-joined";
   ctrl_id: string;
-  roomId: string;
 }
 
 interface CtrlLeftMessage extends BaseMessage {
   type: "ctrl-left";
   ctrl_id: string;
-  roomId: string;
+}
+
+interface SynthJoinedMessage extends BaseMessage {
+  type: "synth-joined";
+  synth_id: string;
+}
+
+interface SynthLeftMessage extends BaseMessage {
+  type: "synth-left";
+  synth_id: string;
 }
 
 interface SignalingMessage extends BaseMessage {
@@ -122,12 +156,14 @@ interface SignalingMessage extends BaseMessage {
   targetPeerId: string;
 }
 
-type Message = 
+type Message =
   | RegisterMessage
   | RequestCtrlsMessage
   | CtrlsListMessage
   | CtrlJoinedMessage
   | CtrlLeftMessage
+  | SynthJoinedMessage
+  | SynthLeftMessage
   | SignalingMessage
   | BaseMessage;
 
@@ -138,8 +174,8 @@ console.log(`🎵 Voice.Assembly.FM Simplified Signaling Server starting...`);
 
 // Cleanup stale KV entries on startup
 async function cleanupKVOnStartup() {
-  console.log('🧹 Cleaning up stale KV entries...');
-  
+  console.log("🧹 Cleaning up stale KV entries...");
+
   try {
     // Clean up old messages
     const messageEntries = kv.list({ prefix: ["messages"] });
@@ -149,7 +185,7 @@ async function cleanupKVOnStartup() {
       messageCount++;
     }
     console.log(`🧹 Cleaned up ${messageCount} stale message entries`);
-    
+
     // Clean up old ctrl entries
     const ctrlEntries = kv.list({ prefix: ["ctrls"] });
     let ctrlCount = 0;
@@ -158,14 +194,32 @@ async function cleanupKVOnStartup() {
       ctrlCount++;
     }
     console.log(`🧹 Cleaned up ${ctrlCount} stale ctrl entries`);
-    
   } catch (error) {
-    console.error('🧹 Error cleaning up KV entries:', error);
+    console.error("🧹 Error cleaning up KV entries:", error);
+  }
+}
+
+// Helper function to send message directly or queue for cross-edge delivery
+async function sendOrQueue(
+  targetPeerId: string,
+  payload: Record<string, unknown>,
+  ttlMs = 10_000,
+): Promise<void> {
+  const target = connections.get(targetPeerId)?.socket;
+  if (target?.readyState === WebSocket.OPEN) {
+    target.send(JSON.stringify(payload));
+  } else {
+    await kv.set(["messages", targetPeerId, crypto.randomUUID()], payload, {
+      expireIn: ttlMs,
+    });
   }
 }
 
 // Handle WebSocket messages and queue them in KV
-async function handleWebSocketMessage(sender_id: string, data: string): Promise<void> {
+async function handleWebSocketMessage(
+  sender_id: string,
+  data: string,
+): Promise<void> {
   try {
     const message: Message = JSON.parse(data);
     message.sender_id = sender_id;
@@ -173,25 +227,24 @@ async function handleWebSocketMessage(sender_id: string, data: string): Promise<
 
     console.log(`📨 Message from ${sender_id}: ${message.type}`);
 
-    // Handle synth requesting ctrl list
+    // Handle synth requesting ctrl list - now returns single active controller
     if (message.type === "request-ctrls") {
-      const reqMessage = message as RequestCtrlsMessage;
       const ctrlsList = [];
-      const entries = kv.list({ prefix: ["ctrls", reqMessage.roomId] });
+      const activeCtrlEntry = await kv.get(["active_ctrl"]);
 
-      for await (const entry of entries) {
-        const ctrl_id = entry.key[2] as string;
-        const ctrlData = entry.value as KVCtrlEntry;
+      if (activeCtrlEntry && activeCtrlEntry.value) {
+        const activeCtrl = activeCtrlEntry.value as KVCtrlEntry;
 
-        // Check if this ctrl is still connected locally
-        const isConnected = connections.has(ctrl_id) && 
-                           connections.get(ctrl_id)?.socket.readyState === WebSocket.OPEN;
+        // Check if the active ctrl is still connected locally
+        const isConnected = connections.has(activeCtrl.client_id) &&
+          connections.get(activeCtrl.client_id)?.socket.readyState ===
+            WebSocket.OPEN;
 
         if (isConnected) {
-          ctrlsList.push(ctrl_id);
+          ctrlsList.push(activeCtrl.client_id);
         } else {
-          // Clean up stale KV entry
-          await kv.delete(entry.key);
+          // Clean up stale active ctrl entry
+          await kv.delete(["active_ctrl"]);
         }
       }
 
@@ -209,45 +262,59 @@ async function handleWebSocketMessage(sender_id: string, data: string): Promise<
     }
 
     // Handle signaling messages (offer, answer, ice-candidate)
-    if (['offer', 'answer', 'ice-candidate'].includes(message.type)) {
+    if (["offer", "answer", "ice-candidate"].includes(message.type)) {
       const sigMessage = message as SignalingMessage;
-      const targetPeer = connections.get(sigMessage.targetPeerId);
-      
-      if (targetPeer?.socket.readyState === WebSocket.OPEN) {
-        // Target is connected locally - relay directly
-        targetPeer.socket.send(JSON.stringify({
-          ...sigMessage,
-          fromPeerId: sender_id
-        }));
-        console.log(`📤 Relayed ${message.type} from ${sender_id} to ${sigMessage.targetPeerId} (local)`);
+      const payload = {
+        ...sigMessage,
+        fromPeerId: sender_id,
+      };
+
+      const target = connections.get(sigMessage.targetPeerId)?.socket;
+      if (target?.readyState === WebSocket.OPEN) {
+        console.log(
+          `📤 Relayed ${message.type} from ${sender_id} to ${sigMessage.targetPeerId} (local)`,
+        );
       } else {
-        // Queue message for cross-edge delivery
-        const key = ["messages", sigMessage.targetPeerId, crypto.randomUUID()];
-        await kv.set(key, {
-          ...sigMessage,
-          fromPeerId: sender_id
-        }, { expireIn: 10 * 1000 }); // 10 second TTL
-        console.log(`📤 Queued ${message.type} from ${sender_id} to ${sigMessage.targetPeerId} (cross-edge)`);
+        console.log(
+          `📤 Queued ${message.type} from ${sender_id} to ${sigMessage.targetPeerId} (cross-edge)`,
+        );
       }
+
+      await sendOrQueue(sigMessage.targetPeerId, payload);
       return;
     }
 
-    // All other messages with targets get queued
+    // All other messages with targets
     if ((message as any).target) {
-      const key = ["messages", (message as any).target, crypto.randomUUID()];
-      await kv.set(key, message, { expireIn: 30 * 1000 });
-      console.log(`📤 Queued ${message.type} from ${sender_id} to ${(message as any).target}`);
-    }
+      const target = connections.get((message as any).target)?.socket;
+      if (target?.readyState === WebSocket.OPEN) {
+        console.log(
+          `📤 Relayed ${message.type} from ${sender_id} to ${
+            (message as any).target
+          } (local)`,
+        );
+      } else {
+        console.log(
+          `📤 Queued ${message.type} from ${sender_id} to ${
+            (message as any).target
+          } (cross-edge)`,
+        );
+      }
 
+      await sendOrQueue((message as any).target, message, 30 * 1000);
+    }
   } catch (error) {
     console.error(`❌ Error handling message: ${error}`);
   }
 }
 
 // Poll KV for messages destined to this client
-async function startPollingForClient(client_id: string, socket: WebSocket): Promise<void> {
+async function startPollingForClient(
+  client_id: string,
+  socket: WebSocket,
+): Promise<void> {
   console.log(`🔄 Starting polling for client: ${client_id}`);
-  
+
   while (socket.readyState === WebSocket.OPEN) {
     try {
       const entries = kv.list({ prefix: ["messages", client_id] });
@@ -255,7 +322,7 @@ async function startPollingForClient(client_id: string, socket: WebSocket): Prom
       for await (const entry of entries) {
         const message = entry.value as Message;
         console.log(`📩 Delivering message to ${client_id}: ${message.type}`);
-        
+
         socket.send(JSON.stringify(message));
         await kv.delete(entry.key);
       }
@@ -263,18 +330,20 @@ async function startPollingForClient(client_id: string, socket: WebSocket): Prom
       console.error(`🔄 Polling error for ${client_id}: ${error}`);
     }
 
-    // Poll every 100ms (faster than before for better signaling performance)  
-    await new Promise(resolve => setTimeout(resolve, 100));
+    // Poll every 100ms (faster than before for better signaling performance)
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  
+
   console.log(`🔄 Stopped polling for client: ${client_id}`);
 }
 
 // Handle HTTP requests
 async function handleRequest(request: Request): Promise<Response> {
   const url = new URL(request.url);
-  
-  console.log(`[${new Date().toISOString()}] [${request.method}] ${url.pathname}`);
+
+  console.log(
+    `[${new Date().toISOString()}] [${request.method}] ${url.pathname}`,
+  );
 
   // Handle CORS
   if (request.method === "OPTIONS") {
@@ -287,8 +356,10 @@ async function handleRequest(request: Request): Promise<Response> {
     });
   }
 
-  // WebSocket upgrade
-  if (request.headers.get("upgrade") === "websocket") {
+  // WebSocket upgrade (only on /ws path)
+  if (
+    request.headers.get("upgrade") === "websocket" && url.pathname === "/ws"
+  ) {
     const { socket, response } = Deno.upgradeWebSocket(request);
     const temp_id = crypto.randomUUID();
     let client_id = temp_id;
@@ -300,44 +371,81 @@ async function handleRequest(request: Request): Promise<Response> {
 
     socket.addEventListener("message", async (event) => {
       const data = JSON.parse(event.data);
-      
+
       // Handle client registration
       if (data.type === "register") {
         const regMessage = data as RegisterMessage;
         const old_id = client_id;
         client_id = regMessage.client_id;
-        const roomId = regMessage.roomId || "voice-assembly-default";
-        
-        console.log(`✅ Peer ${client_id} registered in room ${roomId}`);
-        
+
+        console.log(`✅ Peer ${client_id} registering...`);
+
         connections.delete(old_id);
         connections.set(client_id, { socket, actual_id: client_id });
 
-        // If this is a ctrl, add to KV registry
-        if (client_id.startsWith("ctrl-")) {
-          const key = ["ctrls", roomId, client_id];
+        // --- SINGLE CONTROLLER TAKEOVER LOGIC ---
+        if (client_id.startsWith("ctrl-") && regMessage.force_takeover) {
+          const oldCtrlEntry = await kv.get(["active_ctrl"]);
+
+          // If there was an old controller, notify it that it's been kicked
+          if (oldCtrlEntry && oldCtrlEntry.value) {
+            const oldCtrl = oldCtrlEntry.value as KVCtrlEntry;
+            if (oldCtrl.client_id !== client_id) {
+              const oldCtrlSocket = connections.get(oldCtrl.client_id)?.socket;
+              if (
+                oldCtrlSocket && oldCtrlSocket.readyState === WebSocket.OPEN
+              ) {
+                console.log(`👢 Kicking old controller ${oldCtrl.client_id}`);
+                oldCtrlSocket.send(JSON.stringify({
+                  type: "kicked",
+                  reason: "Another controller has taken over.",
+                }));
+              }
+            }
+          }
+
+          // Set the new controller as the active one
           const value: KVCtrlEntry = {
+            client_id: client_id,
             timestamp: Date.now(),
             ws_id: temp_id,
-            roomId: roomId
           };
-          await kv.set(key, value, { expireIn: 60 * 1000 }); // 60 second TTL
+          await kv.set(["active_ctrl"], value);
+          console.log(`👑 ${client_id} is now the active controller`);
 
-          // Notify all synths in this room about new ctrl
+          // Notify all synths about the new (or re-confirmed) active controller
           const notification: CtrlJoinedMessage = {
             type: "ctrl-joined",
             ctrl_id: client_id,
-            roomId: roomId,
             timestamp: Date.now(),
           };
 
           for (const [conn_id, conn_info] of connections) {
-            if (conn_id.startsWith("synth-") && conn_info.socket.readyState === WebSocket.OPEN) {
-              // Simple approach: notify all synths (they'll filter by room client-side if needed)
+            if (
+              conn_id.startsWith("synth-") &&
+              conn_info.socket.readyState === WebSocket.OPEN
+            ) {
               conn_info.socket.send(JSON.stringify(notification));
             }
           }
+        } else if (client_id.startsWith("synth-")) {
+          // Notify active ctrl about new synth
+          const activeCtrlEntry = await kv.get(["active_ctrl"]);
+          if (activeCtrlEntry && activeCtrlEntry.value) {
+            const activeCtrl = activeCtrlEntry.value as KVCtrlEntry;
+            const ctrlSocket = connections.get(activeCtrl.client_id)?.socket;
+
+            if (ctrlSocket && ctrlSocket.readyState === WebSocket.OPEN) {
+              const notification: SynthJoinedMessage = {
+                type: "synth-joined",
+                synth_id: client_id,
+                timestamp: Date.now(),
+              };
+              ctrlSocket.send(JSON.stringify(notification));
+            }
+          }
         }
+        // --- END OF TAKEOVER LOGIC ---
 
         startPollingForClient(client_id, socket);
         return;
@@ -347,7 +455,9 @@ async function handleRequest(request: Request): Promise<Response> {
       if (client_id && client_id !== temp_id) {
         await handleWebSocketMessage(client_id, event.data);
       } else {
-        console.log(`📨 Ignoring message from unregistered client ${temp_id}: ${data.type}`);
+        console.log(
+          `📨 Ignoring message from unregistered client ${temp_id}: ${data.type}`,
+        );
       }
     });
 
@@ -363,43 +473,48 @@ async function handleRequest(request: Request): Promise<Response> {
         }
       }
 
-      // If this was a ctrl, remove from KV registry and notify synths
+      // If this was the active ctrl, remove from KV and notify synths
       if (client_id && client_id.startsWith("ctrl-")) {
-        // Find and delete ctrl entries (we don't know the room, so check all)
-        const ctrlEntries = kv.list({ prefix: ["ctrls"] });
-        for await (const entry of ctrlEntries) {
-          if (entry.key[2] === client_id) {
-            const roomId = entry.key[1] as string;
-            await kv.delete(entry.key);
+        const activeCtrlEntry = await kv.get(["active_ctrl"]);
+        if (activeCtrlEntry && activeCtrlEntry.value) {
+          const activeCtrl = activeCtrlEntry.value as KVCtrlEntry;
+          if (activeCtrl.client_id === client_id) {
+            await kv.delete(["active_ctrl"]);
+            console.log(`👑 Active controller ${client_id} disconnected`);
 
-            // Notify synths about ctrl leaving
+            // Notify synths that the controller left
             const notification: CtrlLeftMessage = {
-              type: "ctrl-left", 
+              type: "ctrl-left",
               ctrl_id: client_id,
-              roomId: roomId,
               timestamp: Date.now(),
             };
 
             for (const [conn_id, conn_info] of connections) {
-              if (conn_id.startsWith("synth-") && conn_info.socket.readyState === WebSocket.OPEN) {
+              if (
+                conn_id.startsWith("synth-") &&
+                conn_info.socket.readyState === WebSocket.OPEN
+              ) {
                 conn_info.socket.send(JSON.stringify(notification));
               }
             }
           }
         }
       }
-      
-      // If this was a synth, notify all ctrl clients about synth leaving
-      if (client_id && client_id.startsWith("synth-")) {
-        const notification = {
-          type: "synth-left",
-          synth_id: client_id,
-          timestamp: Date.now(),
-        };
 
-        for (const [conn_id, conn_info] of connections) {
-          if (conn_id.startsWith("ctrl-") && conn_info.socket.readyState === WebSocket.OPEN) {
-            conn_info.socket.send(JSON.stringify(notification));
+      // If this was a synth, notify the active ctrl about synth leaving
+      if (client_id && client_id.startsWith("synth-")) {
+        const activeCtrlEntry = await kv.get(["active_ctrl"]);
+        if (activeCtrlEntry && activeCtrlEntry.value) {
+          const activeCtrl = activeCtrlEntry.value as KVCtrlEntry;
+          const ctrlSocket = connections.get(activeCtrl.client_id)?.socket;
+
+          if (ctrlSocket && ctrlSocket.readyState === WebSocket.OPEN) {
+            const notification: SynthLeftMessage = {
+              type: "synth-left",
+              synth_id: client_id,
+              timestamp: Date.now(),
+            };
+            ctrlSocket.send(JSON.stringify(notification));
           }
         }
       }
@@ -410,135 +525,103 @@ async function handleRequest(request: Request): Promise<Response> {
 
   // Handle ICE servers request for TURN credentials
   if (url.pathname === "/ice-servers") {
-    console.log(`[ICE-SERVERS] Request received from ${request.headers.get("user-agent")}`);
-    
+    console.log(
+      `[ICE-SERVERS] Request received from ${
+        request.headers.get("user-agent")
+      }`,
+    );
+
     try {
       const iceServers = await getTurnCredentials("voice-assembly-fm");
 
       if (iceServers) {
-        console.log(`[ICE-SERVERS] Returning ${iceServers.length} ICE servers from Twilio`);
+        console.log(
+          `[ICE-SERVERS] Returning ${iceServers.length} ICE servers from Twilio`,
+        );
         const response: IceServersResponse = { ice_servers: iceServers };
         return new Response(JSON.stringify(response), {
-          headers: { 
+          headers: {
             "content-type": "application/json",
             "access-control-allow-origin": "*",
             "access-control-allow-methods": "GET, POST, OPTIONS",
-            "access-control-allow-headers": "Content-Type"
+            "access-control-allow-headers": "Content-Type",
           },
         });
       } else {
-        console.log(`[ICE-SERVERS] Twilio credentials failed, returning fallback STUN servers`);
-        const response: IceServersResponse = { 
+        console.log(
+          `[ICE-SERVERS] Twilio credentials failed, returning fallback STUN servers`,
+        );
+        const response: IceServersResponse = {
           ice_servers: [
             { urls: "stun:stun.l.google.com:19302" },
-            { urls: "stun:stun1.l.google.com:19302" }
-          ] 
+            { urls: "stun:stun1.l.google.com:19302" },
+          ],
         };
         return new Response(JSON.stringify(response), {
-          headers: { 
+          headers: {
             "content-type": "application/json",
             "access-control-allow-origin": "*",
             "access-control-allow-methods": "GET, POST, OPTIONS",
-            "access-control-allow-headers": "Content-Type"
+            "access-control-allow-headers": "Content-Type",
           },
         });
       }
     } catch (error) {
       console.error(`[ICE-SERVERS] Error processing request:`, error);
-      const response: IceServersResponse = { 
+      const response: IceServersResponse = {
         ice_servers: [
           { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" }
-        ] 
+          { urls: "stun:stun1.l.google.com:19302" },
+        ],
       };
       return new Response(JSON.stringify(response), {
-        headers: { 
+        headers: {
           "content-type": "application/json",
           "access-control-allow-origin": "*",
           "access-control-allow-methods": "GET, POST, OPTIONS",
-          "access-control-allow-headers": "Content-Type"
+          "access-control-allow-headers": "Content-Type",
         },
       });
     }
   }
 
-  // Intercept requests for TypeScript module files
-  const tsModulePaths = [
-    "/ctrl/ctrl-main.js"
-    // Note: synth-main.js is still a .js file, so it doesn't need TypeScript handling
-  ];
-  
-  if (tsModulePaths.includes(url.pathname)) {
-    const tsPath = url.pathname.replace(".js", ".ts");
-    const filePath = `./public${tsPath}`;
-    
-    try {
-      // Use 'deno bundle' command to transpile the TS file
-      const command = new Deno.Command(Deno.execPath(), {
-        args: ["bundle", filePath],
-        stdout: "piped",
-        stderr: "piped",
-      });
-      
-      const { code, stdout, stderr } = await command.output();
-      
-      if (code !== 0) {
-        const error = new TextDecoder().decode(stderr);
-        console.error(`Error bundling ${filePath}:\n${error}`);
-        return new Response(`Error bundling file: ${error}`, { status: 500 });
-      }
-
-      const compiledJs = new TextDecoder().decode(stdout);
-      
-      return new Response(compiledJs, {
-        headers: {
-          "Content-Type": "application/javascript; charset=utf-8",
-          "Access-Control-Allow-Origin": "*",
-        }
-      });
-    } catch (e) {
-      console.error(`Failed to serve ${url.pathname}:`, e);
-      return new Response("Internal Server Error", { status: 500 });
-    }
-  }
-
   // Use serveDir with urlRoot mapping to handle different directories
   let response;
-  
+
   if (url.pathname === "/") {
     response = await serveDir(request, {
       fsRoot: "./public",
       urlRoot: "/",
       index: "index.html",
-      headers: ["access-control-allow-origin: *"]
+      headers: ["access-control-allow-origin: *"],
     });
   } else if (url.pathname === "/ctrl/" || url.pathname === "/ctrl") {
     response = new Response(null, {
       status: 302,
-      headers: { "Location": "/ctrl/index.html" }
+      headers: { "Location": "/ctrl/index.html" },
     });
   } else if (url.pathname === "/synth/" || url.pathname === "/synth") {
     response = new Response(null, {
       status: 302,
-      headers: { "Location": "/synth/index.html" }
+      headers: { "Location": "/synth/index.html" },
     });
   } else if (url.pathname.startsWith("/src/")) {
     // Serve from project root for src files
     response = await serveDir(request, {
       fsRoot: ".",
-      headers: ["access-control-allow-origin: *"]
+      headers: ["access-control-allow-origin: *"],
     });
   } else if (url.pathname.startsWith("/worklets/")) {
     // Serve worklets from public directories
     response = await serveDir(request, {
       fsRoot: "./public",
-      headers: ["access-control-allow-origin: *"]  
+      headers: ["access-control-allow-origin: *"],
     });
   } else {
     // Serve everything else from public
     response = await serveDir(request, {
       fsRoot: "./public",
-      headers: ["access-control-allow-origin: *"]
+      headers: ["access-control-allow-origin: *"],
     });
   }
 
@@ -555,7 +638,7 @@ console.log(`📡 Local:     http://localhost:${port}`);
 
 if (localIPs.length > 0) {
   console.log("📱 Network:");
-  localIPs.forEach(ip => {
+  localIPs.forEach((ip) => {
     console.log(`   http://${ip}:${port}`);
   });
 }
@@ -567,7 +650,7 @@ console.log(`   WebSocket:    ws://localhost:${port}/ws`);
 
 if (localIPs.length > 0) {
   console.log("📱 Network Access:");
-  localIPs.forEach(ip => {
+  localIPs.forEach((ip) => {
     console.log(`   Ctrl:  http://${ip}:${port}/ctrl/`);
     console.log(`   Synth: http://${ip}:${port}/synth/`);
   });
@@ -575,7 +658,7 @@ if (localIPs.length > 0) {
 
 console.log("🎤 Simplified Pattern:");
 console.log("1. Ctrl registers → KV entry created");
-console.log("2. Synths request-ctrls → get list");  
+console.log("2. Synths request-ctrls → get list");
 console.log("3. Synths initiate WebRTC to ctrls");
 
 Deno.serve({ port, hostname: "0.0.0.0" }, handleRequest);

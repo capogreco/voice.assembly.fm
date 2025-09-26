@@ -9,12 +9,15 @@
 export function getLocalIPs() {
   const networkInterfaces = Deno.networkInterfaces();
   const ips = [];
-  
+
   for (const iface of networkInterfaces) {
-    if (iface.family === 'IPv4' && !iface.address.startsWith('127.') && iface.address !== '0.0.0.0') {
+    if (
+      iface.family === "IPv4" && !iface.address.startsWith("127.") &&
+      iface.address !== "0.0.0.0"
+    ) {
       ips.push(iface.address);
     }
   }
-  
+
   return ips;
 }

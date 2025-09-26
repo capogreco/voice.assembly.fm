@@ -6,31 +6,31 @@
 
 export const MessageTypes = {
   // WebRTC Signaling
-  OFFER: 'offer',
-  ANSWER: 'answer',
-  ICE_CANDIDATE: 'ice-candidate',
-  
+  OFFER: "offer",
+  ANSWER: "answer",
+  ICE_CANDIDATE: "ice-candidate",
+
   // Network Coordination
-  PING: 'ping',
-  PONG: 'pong',
-  
+  PING: "ping",
+  PONG: "pong",
+
   // Parameter Control
-  SYNTH_PARAMS: 'synth-params',
-  PROGRAM_UPDATE: 'program-update',
-  DIRECT_PARAM_UPDATE: 'direct-param-update',
-  
+  SYNTH_PARAMS: "synth-params",
+  PROGRAM_UPDATE: "program-update",
+  DIRECT_PARAM_UPDATE: "direct-param-update",
+
   // Timing Control
-  PHASOR_SYNC: 'phasor-sync',
-  
+  PHASOR_SYNC: "phasor-sync",
+
   // System Control
-  CALIBRATION_MODE: 'calibration-mode',
-  SYNTH_READY: 'synth-ready',
-  PROGRAM: 'program',
-  RESEED_RANDOMIZATION: 'reseed-randomization',
-  
+  CALIBRATION_MODE: "calibration-mode",
+  SYNTH_READY: "synth-ready",
+  PROGRAM: "program",
+  RESEED_RANDOMIZATION: "reseed-randomization",
+
   // Scene Memory
-  SAVE_SCENE: 'save-scene',
-  LOAD_SCENE: 'load-scene'
+  SAVE_SCENE: "save-scene",
+  LOAD_SCENE: "load-scene",
 };
 
 export class MessageBuilder {
@@ -38,7 +38,7 @@ export class MessageBuilder {
     return {
       type: MessageTypes.PING,
       timestamp,
-      id: Math.random().toString(36).substring(2)
+      id: Math.random().toString(36).substring(2),
     };
   }
 
@@ -47,10 +47,9 @@ export class MessageBuilder {
       type: MessageTypes.PONG,
       pingId,
       pingTimestamp,
-      timestamp
+      timestamp,
     };
   }
-
 
   static createParameterUpdate(type, params) {
     return {
@@ -64,7 +63,7 @@ export class MessageBuilder {
       amplitude: params.amplitude,
       whiteNoise: params.whiteNoise,
       synthesisActive: params.synthesisActive,
-      timestamp: performance.now()
+      timestamp: performance.now(),
     };
   }
 
@@ -75,7 +74,7 @@ export class MessageBuilder {
       cpm,
       stepsPerCycle,
       cycleLength,
-      timestamp: performance.now()
+      timestamp: performance.now(),
     };
   }
 
@@ -84,14 +83,14 @@ export class MessageBuilder {
       type: MessageTypes.CALIBRATION_MODE,
       enabled,
       amplitude,
-      timestamp: performance.now()
+      timestamp: performance.now(),
     };
   }
 
   static synthReady() {
     return {
       type: MessageTypes.SYNTH_READY,
-      timestamp: performance.now()
+      timestamp: performance.now(),
     };
   }
 
@@ -99,14 +98,14 @@ export class MessageBuilder {
     return {
       type: MessageTypes.PROGRAM,
       config,
-      timestamp: performance.now()
+      timestamp: performance.now(),
     };
   }
 
   static reseedRandomization() {
     return {
       type: MessageTypes.RESEED_RANDOMIZATION,
-      timestamp: performance.now()
+      timestamp: performance.now(),
     };
   }
 
@@ -115,7 +114,7 @@ export class MessageBuilder {
       type: MessageTypes.DIRECT_PARAM_UPDATE,
       param: paramName,
       value: value,
-      timestamp: performance.now()
+      timestamp: performance.now(),
     };
   }
 
@@ -123,7 +122,7 @@ export class MessageBuilder {
     return {
       type: MessageTypes.SAVE_SCENE,
       memoryLocation,
-      timestamp: performance.now()
+      timestamp: performance.now(),
     };
   }
 
@@ -132,18 +131,18 @@ export class MessageBuilder {
       type: MessageTypes.LOAD_SCENE,
       memoryLocation,
       program,
-      timestamp: performance.now()
+      timestamp: performance.now(),
     };
   }
 }
 
 export function validateMessage(message) {
-  if (!message || typeof message !== 'object') {
-    throw new Error('Message must be an object');
+  if (!message || typeof message !== "object") {
+    throw new Error("Message must be an object");
   }
 
-  if (!message.type || typeof message.type !== 'string') {
-    throw new Error('Message must have a type field');
+  if (!message.type || typeof message.type !== "string") {
+    throw new Error("Message must have a type field");
   }
 
   if (!Object.values(MessageTypes).includes(message.type)) {
@@ -153,16 +152,18 @@ export function validateMessage(message) {
   // Type-specific validation
   switch (message.type) {
     case MessageTypes.PING:
-      if (typeof message.timestamp !== 'number') {
-        throw new Error('Ping message must have numeric timestamp');
+      if (typeof message.timestamp !== "number") {
+        throw new Error("Ping message must have numeric timestamp");
       }
       break;
 
     case MessageTypes.PONG:
-      if (typeof message.pingId !== 'string' || 
-          typeof message.pingTimestamp !== 'number' ||
-          typeof message.timestamp !== 'number') {
-        throw new Error('Pong message missing required fields');
+      if (
+        typeof message.pingId !== "string" ||
+        typeof message.pingTimestamp !== "number" ||
+        typeof message.timestamp !== "number"
+      ) {
+        throw new Error("Pong message missing required fields");
       }
       break;
 
@@ -175,17 +176,19 @@ export function validateMessage(message) {
       break;
 
     case MessageTypes.PHASOR_SYNC:
-      if (typeof message.phasor !== 'number' || 
-          typeof message.cpm !== 'number' ||
-          typeof message.stepsPerCycle !== 'number' ||
-          typeof message.cycleLength !== 'number') {
-        throw new Error('Phasor sync message missing required numeric fields');
+      if (
+        typeof message.phasor !== "number" ||
+        typeof message.cpm !== "number" ||
+        typeof message.stepsPerCycle !== "number" ||
+        typeof message.cycleLength !== "number"
+      ) {
+        throw new Error("Phasor sync message missing required numeric fields");
       }
       break;
 
     case MessageTypes.PROGRAM:
-      if (!message.config || typeof message.config !== 'object') {
-        throw new Error('Program message must have config object');
+      if (!message.config || typeof message.config !== "object") {
+        throw new Error("Program message must have config object");
       }
       break;
 
@@ -194,17 +197,23 @@ export function validateMessage(message) {
       break;
 
     case MessageTypes.SAVE_SCENE:
-      if (typeof message.memoryLocation !== 'number' || 
-          message.memoryLocation < 0 || message.memoryLocation > 9) {
-        throw new Error('Save scene message requires memoryLocation (0-9)');
+      if (
+        typeof message.memoryLocation !== "number" ||
+        message.memoryLocation < 0 || message.memoryLocation > 9
+      ) {
+        throw new Error("Save scene message requires memoryLocation (0-9)");
       }
       break;
 
     case MessageTypes.LOAD_SCENE:
-      if (typeof message.memoryLocation !== 'number' || 
-          message.memoryLocation < 0 || message.memoryLocation > 9 ||
-          !message.program || typeof message.program !== 'object') {
-        throw new Error('Load scene message requires memoryLocation (0-9) and program object');
+      if (
+        typeof message.memoryLocation !== "number" ||
+        message.memoryLocation < 0 || message.memoryLocation > 9 ||
+        !message.program || typeof message.program !== "object"
+      ) {
+        throw new Error(
+          "Load scene message requires memoryLocation (0-9) and program object",
+        );
       }
       break;
   }
@@ -221,40 +230,60 @@ function validateSynthParameters(message) {
 
   // A synth parameters message must have a frequency property.
   if (message.frequency === undefined) {
-    throw new Error('Synth parameters message must have a frequency property.');
+    throw new Error("Synth parameters message must have a frequency property.");
   }
 
   // Iterate over all own properties of the message that are parameters.
   for (const paramName of Object.keys(message)) {
     // Skip non-parameter properties.
-    if (['type', 'timestamp', 'synthesisActive', 'isManualMode'].includes(paramName)) continue;
+    if (
+      ["type", "timestamp", "synthesisActive", "isManualMode"].includes(
+        paramName,
+      )
+    ) continue;
 
     const paramState = message[paramName];
-    
+
     // Every parameter must be a number (direct) or an object (program).
-    if (typeof paramState !== 'number' && typeof paramState !== 'object') {
-      throw new Error(`Parameter '${paramName}' has invalid type. Must be number or object.`);
+    if (typeof paramState !== "number" && typeof paramState !== "object") {
+      throw new Error(
+        `Parameter '${paramName}' has invalid type. Must be number or object.`,
+      );
     }
 
-    if (typeof paramState === 'object' && paramState !== null) {
+    if (typeof paramState === "object" && paramState !== null) {
       // If it's an object, it MUST be a programmatic parameter.
       if (!paramState.isProgrammatic) {
-        throw new Error(`Parameter '${paramName}' is an object but is missing 'isProgrammatic' flag.`);
+        throw new Error(
+          `Parameter '${paramName}' is an object but is missing 'isProgrammatic' flag.`,
+        );
       }
 
       // It must have a valid interpolation type.
-      if (!paramState.interpolation || typeof paramState.interpolation !== 'string') {
-        throw new Error(`Programmatic parameter '${paramName}' has invalid interpolation.`);
+      if (
+        !paramState.interpolation ||
+        typeof paramState.interpolation !== "string"
+      ) {
+        throw new Error(
+          `Programmatic parameter '${paramName}' has invalid interpolation.`,
+        );
       }
 
       // It must have a start generator.
-      if (typeof paramState.startValueGenerator !== 'object') {
-        throw new Error(`Programmatic parameter '${paramName}' is missing a valid startValueGenerator.`);
+      if (typeof paramState.startValueGenerator !== "object") {
+        throw new Error(
+          `Programmatic parameter '${paramName}' is missing a valid startValueGenerator.`,
+        );
       }
 
       // If it's not step interpolation, it must have an end generator.
-      if (paramState.interpolation !== 'step' && typeof paramState.endValueGenerator !== 'object') {
-        throw new Error(`Non-step parameter '${paramName}' is missing an endValueGenerator.`);
+      if (
+        paramState.interpolation !== "step" &&
+        typeof paramState.endValueGenerator !== "object"
+      ) {
+        throw new Error(
+          `Non-step parameter '${paramName}' is missing an endValueGenerator.`,
+        );
       }
     }
   }
