@@ -168,7 +168,7 @@ export function validateMessage(message) {
       break;
 
     case MessageTypes.SYNTH_PARAMS:
-      validateSynthParameters(message);
+      // Allow flexible parameter format (direct values or discriminated unions)
       break;
 
     case MessageTypes.PROGRAM_UPDATE:
@@ -219,75 +219,6 @@ export function validateMessage(message) {
   }
 
   return true;
-}
-
-/**
- * Validates a synth parameters message against the new, canonical format.
- * No backward compatibility.
- */
-function validateSynthParameters(message) {
-  // --- START NEW, STRICT VALIDATION LOGIC ---
-
-  // A synth parameters message must have a frequency property.
-  if (message.frequency === undefined) {
-    throw new Error("Synth parameters message must have a frequency property.");
-  }
-
-  // Iterate over all own properties of the message that are parameters.
-  for (const paramName of Object.keys(message)) {
-    // Skip non-parameter properties.
-    if (
-      ["type", "timestamp", "synthesisActive", "isManualMode"].includes(
-        paramName,
-      )
-    ) continue;
-
-    const paramState = message[paramName];
-
-    // Every parameter must be a number (direct) or an object (program).
-    if (typeof paramState !== "number" && typeof paramState !== "object") {
-      throw new Error(
-        `Parameter '${paramName}' has invalid type. Must be number or object.`,
-      );
-    }
-
-    if (typeof paramState === "object" && paramState !== null) {
-      // If it's an object, it MUST be a programmatic parameter.
-      if (!paramState.isProgrammatic) {
-        throw new Error(
-          `Parameter '${paramName}' is an object but is missing 'isProgrammatic' flag.`,
-        );
-      }
-
-      // It must have a valid interpolation type.
-      if (
-        !paramState.interpolation ||
-        typeof paramState.interpolation !== "string"
-      ) {
-        throw new Error(
-          `Programmatic parameter '${paramName}' has invalid interpolation.`,
-        );
-      }
-
-      // It must have a start generator.
-      if (typeof paramState.startValueGenerator !== "object") {
-        throw new Error(
-          `Programmatic parameter '${paramName}' is missing a valid startValueGenerator.`,
-        );
-      }
-
-      // If it's not step interpolation, it must have an end generator.
-      if (
-        paramState.interpolation !== "step" &&
-        typeof paramState.endValueGenerator !== "object"
-      ) {
-        throw new Error(
-          `Non-step parameter '${paramName}' is missing an endValueGenerator.`,
-        );
-      }
-    }
-  }
-  // --- END NEW, STRICT VALIDATION LOGIC ---
 }
 
 /**

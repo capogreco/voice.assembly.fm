@@ -136,7 +136,6 @@ function validateMessage(message) {
       }
       break;
     case MessageTypes.SYNTH_PARAMS:
-      validateSynthParameters(message);
       break;
     case MessageTypes.PROGRAM_UPDATE:
       break;
@@ -164,37 +163,6 @@ function validateMessage(message) {
       break;
   }
   return true;
-}
-function validateSynthParameters(message) {
-  if (message.frequency === void 0) {
-    throw new Error("Synth parameters message must have a frequency property.");
-  }
-  for (const paramName of Object.keys(message)) {
-    if ([
-      "type",
-      "timestamp",
-      "synthesisActive",
-      "isManualMode"
-    ].includes(paramName)) continue;
-    const paramState = message[paramName];
-    if (typeof paramState !== "number" && typeof paramState !== "object") {
-      throw new Error(`Parameter '${paramName}' has invalid type. Must be number or object.`);
-    }
-    if (typeof paramState === "object" && paramState !== null) {
-      if (!paramState.isProgrammatic) {
-        throw new Error(`Parameter '${paramName}' is an object but is missing 'isProgrammatic' flag.`);
-      }
-      if (!paramState.interpolation || typeof paramState.interpolation !== "string") {
-        throw new Error(`Programmatic parameter '${paramName}' has invalid interpolation.`);
-      }
-      if (typeof paramState.startValueGenerator !== "object") {
-        throw new Error(`Programmatic parameter '${paramName}' is missing a valid startValueGenerator.`);
-      }
-      if (paramState.interpolation !== "step" && typeof paramState.endValueGenerator !== "object") {
-        throw new Error(`Non-step parameter '${paramName}' is missing an endValueGenerator.`);
-      }
-    }
-  }
 }
 
 // src/common/webrtc-star.js
@@ -390,19 +358,6 @@ var WebRTCStar = class extends EventTarget {
         }));
         this.signalingSocket.close();
         break;
-    }
-  }
-  /**
-   * Handle initial peer list from signaling server
-   */
-  async handlePeerList(peers) {
-    console.log("\u{1F4CB} Received peer list:", peers.length, "peers");
-    for (const peer of peers) {
-      if (peer.id !== this.peerId && this.shouldConnectToPeer(peer.type)) {
-        const shouldInitiate = this.peerType === "ctrl" && peer.type === "synth";
-        console.log(`\u{1F517} Creating connection to ${peer.id} (initiating: ${shouldInitiate})`);
-        await this.createPeerConnection(peer.id, shouldInitiate);
-      }
     }
   }
   /**
@@ -1188,78 +1143,6 @@ var ControlClient = class {
       this.setParameterState(paramName, this.musicalState[paramName]);
     });
   }
-  setupParameterEnvelopeControls(paramName, suffix, precision) {
-    const staticCheckbox = document.getElementById(`${paramName}-static`);
-    const envelopeSection = document.getElementById(`${paramName}-envelope`);
-    const envelopeControl = staticCheckbox.closest(".envelope-control");
-    const intensitySlider = document.getElementById(`${paramName}-intensity`);
-    const intensityValue = document.getElementById(`${paramName}-intensity-value`);
-    this.setupDualRangeSlider(paramName, "start", precision);
-    this.setupDualRangeSlider(paramName, "end", precision);
-    staticCheckbox.addEventListener("change", () => {
-      const isStatic2 = staticCheckbox.checked;
-      envelopeSection.style.display = isStatic2 ? "none" : "block";
-      const startSlider = document.querySelector(`[data-param="${paramName}"][data-type="start"]`);
-      const endSlider = document.querySelector(`[data-param="${paramName}"][data-type="end"]`);
-      if (isStatic2) {
-        startSlider.dataset.mode = "static";
-        if (endSlider) endSlider.dataset.mode = "static";
-        envelopeControl.classList.remove("envelope-active");
-      } else {
-        const startHasRange = false;
-        const endHasRange = false;
-        startSlider.dataset.mode = startHasRange ? "range" : "static";
-        if (endSlider) {
-          endSlider.dataset.mode = endHasRange ? "range" : "static";
-        }
-        envelopeControl.classList.add("envelope-active");
-      }
-      this.updateDualSliderDisplay(paramName, "start", precision);
-      this.updateDualSliderDisplay(paramName, "end", precision);
-      if (isStatic2) {
-        const startMinHandle = startSlider.querySelector(".range-min");
-        if (startMinHandle) {
-          this.pendingMusicalState[paramName] = parseFloat(startMinHandle.value);
-        }
-      } else {
-        const startMinHandle = startSlider.querySelector(".range-min");
-        const endMinHandle = endSlider?.querySelector(".range-min");
-        const intensitySlider2 = document.getElementById(`${paramName}-intensity`);
-        const envTypeRadio = document.querySelector(`input[name="${paramName}-env-type"]:checked`);
-        this.pendingMusicalState[paramName] = {
-          static: false,
-          startValue: startMinHandle ? parseFloat(startMinHandle.value) : 0,
-          endValue: endMinHandle ? parseFloat(endMinHandle.value) : 0,
-          envType: envTypeRadio ? envTypeRadio.value : "lin",
-          intensity: intensitySlider2 ? parseFloat(intensitySlider2.value) : 0.5
-        };
-      }
-      this.markPendingChanges();
-    });
-    const isStatic = staticCheckbox.checked;
-    envelopeSection.style.display = isStatic ? "none" : "block";
-    if (!isStatic) {
-      envelopeControl.classList.add("envelope-active");
-    }
-    this.updateDualSliderDisplay(paramName, "start", precision);
-    this.updateDualSliderDisplay(paramName, "end", precision);
-    intensitySlider.addEventListener("input", (e) => {
-      const value = parseFloat(e.target.value);
-      intensityValue.textContent = value.toFixed(2);
-      if (!staticCheckbox.checked && typeof this.pendingMusicalState[paramName] === "object") {
-        this.pendingMusicalState[paramName].intensity = value;
-      }
-      this.markPendingChanges();
-    });
-    document.querySelectorAll(`input[name="${paramName}-env-type"]`).forEach((radio) => {
-      radio.addEventListener("change", () => {
-        if (!staticCheckbox.checked && typeof this.pendingMusicalState[paramName] === "object") {
-          this.pendingMusicalState[paramName].envType = radio.value;
-        }
-        this.markPendingChanges();
-      });
-    });
-  }
   setupCompactParameterControls(paramName) {
     const modeSelect = document.getElementById(`${paramName}-mode`);
     const interpSelect = document.getElementById(`${paramName}-interpolation`);
@@ -1711,132 +1594,6 @@ var ControlClient = class {
       freqState.endValueGenerator.denominatorBehavior = endDenBeh ?? freqState.endValueGenerator.denominatorBehavior;
     }
     return true;
-  }
-  setupDualRangeSlider(paramName, valueType, precision) {
-    const container = document.querySelector(`[data-param="${paramName}"][data-type="${valueType}"]`);
-    if (!container) return;
-    const minHandle = container.querySelector(".range-min");
-    const maxHandle = container.querySelector(".range-max");
-    const rangeBar = container.querySelector(".slider-range");
-    const display = document.getElementById(`${paramName}-${valueType}-display`);
-    minHandle.addEventListener("input", (e) => {
-      const isStatic = container.dataset.mode === "static";
-      const minVal = parseFloat(e.target.value);
-      if (isStatic) {
-        maxHandle.value = minVal;
-        this.updateSliderRange(container);
-        this.updateDualSliderDisplay(paramName, valueType, precision);
-        const staticCheckbox = document.getElementById(`${paramName}-static`);
-      } else {
-        const maxVal = parseFloat(maxHandle.value);
-        if (minVal > maxVal) {
-          maxHandle.value = minVal;
-        }
-        this.updateSliderRange(container);
-        this.updateDualSliderDisplay(paramName, valueType, precision);
-        const staticCheckbox = document.getElementById(`${paramName}-static`);
-        if (!staticCheckbox.checked && container.dataset.mode === "static" && typeof this.pendingMusicalState[paramName] === "object") {
-          if (valueType === "start") {
-            this.pendingMusicalState[paramName].startValue = minVal;
-          } else if (valueType === "end") {
-            this.pendingMusicalState[paramName].endValue = minVal;
-          }
-        }
-      }
-      this.markPendingChanges();
-    });
-    maxHandle.addEventListener("input", (e) => {
-      const isStatic = container.dataset.mode === "static";
-      const maxVal = parseFloat(e.target.value);
-      if (isStatic) {
-        minHandle.value = maxVal;
-        this.updateSliderRange(container);
-        this.updateDualSliderDisplay(paramName, valueType, precision);
-        const staticCheckbox = document.getElementById(`${paramName}-static`);
-        if (staticCheckbox && staticCheckbox.checked) {
-          this.pendingMusicalState[paramName] = maxVal;
-          this.broadcastDirectParameters();
-        }
-      } else {
-        const minVal = parseFloat(minHandle.value);
-        if (maxVal < minVal) {
-          minHandle.value = maxVal;
-        }
-        this.updateSliderRange(container);
-        this.updateDualSliderDisplay(paramName, valueType, precision);
-        const staticCheckbox = document.getElementById(`${paramName}-static`);
-        if (!staticCheckbox.checked && container.dataset.mode === "static" && typeof this.pendingMusicalState[paramName] === "object") {
-          if (valueType === "start") {
-            this.pendingMusicalState[paramName].startValue = maxVal;
-          } else if (valueType === "end") {
-            this.pendingMusicalState[paramName].endValue = maxVal;
-          }
-        }
-      }
-      this.markPendingChanges();
-    });
-    container.addEventListener("dblclick", () => {
-      const staticCheckbox = document.getElementById(`${paramName}-static`);
-      if (!staticCheckbox.checked) {
-        this.toggleSliderMode(paramName, valueType, precision);
-      }
-    });
-    this.updateSliderRange(container);
-    this.updateDualSliderDisplay(paramName, valueType, precision);
-  }
-  updateSliderRange(container) {
-    const minHandle = container.querySelector(".range-min");
-    const maxHandle = container.querySelector(".range-max");
-    const rangeBar = container.querySelector(".slider-range");
-    const min = parseFloat(minHandle.min);
-    const max = parseFloat(minHandle.max);
-    const minVal = parseFloat(minHandle.value);
-    const maxVal = parseFloat(maxHandle.value);
-    const minPercent = (minVal - min) / (max - min) * 100;
-    const maxPercent = (maxVal - min) / (max - min) * 100;
-    rangeBar.style.left = `${minPercent}%`;
-    rangeBar.style.width = `${maxPercent - minPercent}%`;
-  }
-  updateDualSliderDisplay(paramName, valueType, precision) {
-    const container = document.querySelector(`[data-param="${paramName}"][data-type="${valueType}"]`);
-    const display = document.getElementById(`${paramName}-${valueType}-display`);
-    if (!container || !display) return;
-    const minHandle = container.querySelector(".range-min");
-    const maxHandle = container.querySelector(".range-max");
-    const isStatic = container.dataset.mode === "static";
-    const minVal = parseFloat(minHandle.value);
-    const maxVal = parseFloat(maxHandle.value);
-    if (isStatic || minVal === maxVal) {
-      display.textContent = precision === 0 ? minVal.toString() : minVal.toFixed(precision);
-    } else {
-      const minText = precision === 0 ? minVal.toString() : minVal.toFixed(precision);
-      const maxText = precision === 0 ? maxVal.toString() : maxVal.toFixed(precision);
-      display.textContent = `[${minText}-${maxText}]`;
-    }
-    this.updateSliderRange(container);
-  }
-  toggleSliderMode(paramName, valueType, precision) {
-    const container = document.querySelector(`[data-param="${paramName}"][data-type="${valueType}"]`);
-    const currentMode = container.dataset.mode;
-    const newMode = currentMode === "static" ? "range" : "static";
-    container.dataset.mode = newMode;
-    if (newMode === "static") {
-      const minHandle = container.querySelector(".range-min");
-      const maxHandle = container.querySelector(".range-max");
-      const avgValue = (parseFloat(minHandle.value) + parseFloat(maxHandle.value)) / 2;
-      minHandle.value = avgValue;
-      maxHandle.value = avgValue;
-    } else {
-      const minHandle = container.querySelector(".range-min");
-      const maxHandle = container.querySelector(".range-max");
-      const currentVal = parseFloat(minHandle.value);
-      const range = 0.1;
-      minHandle.value = Math.max(parseFloat(minHandle.min), currentVal - range / 2);
-      maxHandle.value = Math.min(parseFloat(minHandle.max), currentVal + range / 2);
-      this.updateSliderRange(container);
-    }
-    this.updateDualSliderDisplay(paramName, valueType, precision);
-    this.log(`${paramName} ${valueType} switched to ${newMode} mode`, "info");
   }
   markPendingChanges() {
     console.log("markPendingChanges called, button:", this.elements.applyParamsBtn);

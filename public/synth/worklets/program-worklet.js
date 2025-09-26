@@ -18,6 +18,10 @@ class ProgramWorklet extends AudioWorkletProcessor {
     this.shuffledSequences = new Map(); // Store shuffled sequences
     this.lastProgramConfig = new Map(); // Detect config changes
 
+    // Program staging for EOC application
+    this.pendingProgramState = null;
+    this.programDirty = false;
+
     // Output parameter mapping
     this.parameterOutputs = {
       frequency: 0,
@@ -54,11 +58,12 @@ class ProgramWorklet extends AudioWorkletProcessor {
 
     switch (message.type) {
       case "SET_PROGRAM":
-        this.programState = message.config;
         if (message.synthId) {
           this.synthId = message.synthId;
         }
-        this.initializeEnvelopes();
+        this.pendingProgramState = message.config;
+        this.programDirty = true;
+        // Do NOT call initializeEnvelopes() here - defer to EOC
         break;
 
       case "SET_DIRECT_VALUE":
@@ -301,7 +306,7 @@ class ProgramWorklet extends AudioWorkletProcessor {
           case "cosine":
             shapedProgress = 0.5 - Math.cos(rawProgress * Math.PI) * 0.5;
             break;
-          case "parabolic":
+          case "parabolic": {
             // Use intensity to control curve shape
             const intensity = Math.max(
               0.1,
@@ -309,6 +314,7 @@ class ProgramWorklet extends AudioWorkletProcessor {
             ); // Map 0-1 to 0.1-10
             shapedProgress = Math.pow(rawProgress, intensity);
             break;
+          }
           default:
             shapedProgress = rawProgress;
         }
@@ -354,7 +360,7 @@ class ProgramWorklet extends AudioWorkletProcessor {
     }
   }
 
-  process(inputs, outputs, parameters) {
+  process(_inputs, outputs, parameters) {
     const output = outputs[0];
     const blockSize = output[0].length;
     const phaseValues = parameters.phase; // Read the phase AudioParam
@@ -377,6 +383,21 @@ class ProgramWorklet extends AudioWorkletProcessor {
       this.lastPhase = currentPhase;
 
       if (eoc) {
+        // Apply pending program changes at cycle boundary
+        if (this.programDirty && this.pendingProgramState) {
+          this.programState = this.pendingProgramState;
+          this.pendingProgramState = null;
+          this.programDirty = false;
+          
+          // Clear all caches for fresh generation
+          this.staticSelections.clear();
+          this.programCounters.clear();
+          this.shuffledSequences.clear();
+          
+          // Reinitialize envelopes with new program
+          this.initializeEnvelopes();
+        }
+        
         // EOC detected - trigger envelope updates
         this.triggerEnvelopes();
       }

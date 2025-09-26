@@ -176,7 +176,7 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
   updateFormantCarriers(fundamentalFreq = this.fundamentalFreq) {
     if (fundamentalFreq <= 0) return;
 
-    this.formants.forEach((formant, formantIndex) => {
+    this.formants.forEach((formant, _formantIndex) => {
       const targetRatio = formant.targetFreq / fundamentalFreq;
 
       // Find bracketing harmonics

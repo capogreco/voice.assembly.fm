@@ -95,7 +95,7 @@ export class XYOscilloscope {
       if (this.channelSplitter) {
         this.channelSplitter.disconnect();
       }
-    } catch (e) {
+    } catch (_e) {
       // Ignore if already disconnected
     }
   }
@@ -121,8 +121,8 @@ export class XYOscilloscope {
     const framePoints = [];
 
     for (let i = 0; i < Math.min(samplesPerFrame, this.bufferLength); i++) {
-      let xSample = this.leftData[i];
-      let ySample = this.rightData[i];
+      const xSample = this.leftData[i];
+      const ySample = this.rightData[i];
 
       // Clamp samples to avoid extreme values
 

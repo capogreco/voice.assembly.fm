@@ -384,48 +384,67 @@ async function handleRequest(request: Request): Promise<Response> {
         connections.set(client_id, { socket, actual_id: client_id });
 
         // --- SINGLE CONTROLLER TAKEOVER LOGIC ---
-        if (client_id.startsWith("ctrl-") && regMessage.force_takeover) {
+        if (client_id.startsWith("ctrl-")) {
           const oldCtrlEntry = await kv.get(["active_ctrl"]);
-
-          // If there was an old controller, notify it that it's been kicked
-          if (oldCtrlEntry && oldCtrlEntry.value) {
-            const oldCtrl = oldCtrlEntry.value as KVCtrlEntry;
-            if (oldCtrl.client_id !== client_id) {
+          let shouldBecomeActive = false;
+          
+          if (regMessage.force_takeover) {
+            // Explicit takeover - kick existing controller if different
+            if (oldCtrlEntry && oldCtrlEntry.value) {
+              const oldCtrl = oldCtrlEntry.value as KVCtrlEntry;
+              if (oldCtrl.client_id !== client_id) {
+                const oldCtrlSocket = connections.get(oldCtrl.client_id)?.socket;
+                if (
+                  oldCtrlSocket && oldCtrlSocket.readyState === WebSocket.OPEN
+                ) {
+                  console.log(`👢 Kicking old controller ${oldCtrl.client_id}`);
+                  oldCtrlSocket.send(JSON.stringify({
+                    type: "kicked",
+                    reason: "Another controller has taken over.",
+                  }));
+                }
+              }
+            }
+            shouldBecomeActive = true;
+          } else {
+            // Auto-activate if no active controller or it's disconnected
+            if (!oldCtrlEntry || !oldCtrlEntry.value) {
+              shouldBecomeActive = true;
+              console.log(`🔄 Auto-activating ${client_id} (no active controller)`);
+            } else {
+              const oldCtrl = oldCtrlEntry.value as KVCtrlEntry;
               const oldCtrlSocket = connections.get(oldCtrl.client_id)?.socket;
-              if (
-                oldCtrlSocket && oldCtrlSocket.readyState === WebSocket.OPEN
-              ) {
-                console.log(`👢 Kicking old controller ${oldCtrl.client_id}`);
-                oldCtrlSocket.send(JSON.stringify({
-                  type: "kicked",
-                  reason: "Another controller has taken over.",
-                }));
+              if (!oldCtrlSocket || oldCtrlSocket.readyState !== WebSocket.OPEN) {
+                shouldBecomeActive = true;
+                console.log(`🔄 Auto-activating ${client_id} (previous controller disconnected)`);
               }
             }
           }
 
-          // Set the new controller as the active one
-          const value: KVCtrlEntry = {
-            client_id: client_id,
-            timestamp: Date.now(),
-            ws_id: temp_id,
-          };
-          await kv.set(["active_ctrl"], value);
-          console.log(`👑 ${client_id} is now the active controller`);
+          if (shouldBecomeActive) {
+            // Set the new controller as the active one
+            const value: KVCtrlEntry = {
+              client_id: client_id,
+              timestamp: Date.now(),
+              ws_id: temp_id,
+            };
+            await kv.set(["active_ctrl"], value);
+            console.log(`👑 ${client_id} is now the active controller`);
 
-          // Notify all synths about the new (or re-confirmed) active controller
-          const notification: CtrlJoinedMessage = {
-            type: "ctrl-joined",
-            ctrl_id: client_id,
-            timestamp: Date.now(),
-          };
+            // Notify all synths about the new (or re-confirmed) active controller
+            const notification: CtrlJoinedMessage = {
+              type: "ctrl-joined",
+              ctrl_id: client_id,
+              timestamp: Date.now(),
+            };
 
-          for (const [conn_id, conn_info] of connections) {
-            if (
-              conn_id.startsWith("synth-") &&
-              conn_info.socket.readyState === WebSocket.OPEN
-            ) {
-              conn_info.socket.send(JSON.stringify(notification));
+            for (const [conn_id, conn_info] of connections) {
+              if (
+                conn_id.startsWith("synth-") &&
+                conn_info.socket.readyState === WebSocket.OPEN
+              ) {
+                conn_info.socket.send(JSON.stringify(notification));
+              }
             }
           }
         } else if (client_id.startsWith("synth-")) {

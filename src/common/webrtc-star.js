@@ -26,6 +26,11 @@ export class WebRTCStar extends EventTarget {
     this.pingInterval = null;
     this.pingTimeouts = new Map();
 
+    // Ctrl list retry mechanism (for synths)
+    this.ctrlRetryCount = 0;
+    this.maxCtrlRetries = 3;
+    this.ctrlRetryTimeout = null;
+
     // ICE servers configuration
     this.iceServers = [
       { urls: "stun:stun.l.google.com:19302" },
@@ -164,11 +169,43 @@ export class WebRTCStar extends EventTarget {
           if (this.verbose) {
             console.log("📋 Received ctrls list:", message.ctrls);
           }
-          // Synths initiate connections to all available ctrls
-          for (const ctrlId of message.ctrls) {
-            if (!this.peers.has(ctrlId)) {
-              if (this.verbose) console.log(`🎛️ Connecting to ctrl: ${ctrlId}`);
-              await this.createPeerConnection(ctrlId, true); // Synth initiates
+          
+          // Clear any pending retry
+          if (this.ctrlRetryTimeout) {
+            clearTimeout(this.ctrlRetryTimeout);
+            this.ctrlRetryTimeout = null;
+          }
+          
+          if (message.ctrls.length === 0) {
+            // Empty controller list - schedule retry if we haven't exceeded max attempts
+            if (this.ctrlRetryCount < this.maxCtrlRetries) {
+              this.ctrlRetryCount++;
+              const retryDelay = 1000 + Math.random() * 500; // 1-1.5s with jitter
+              
+              if (this.verbose) {
+                console.log(`🔄 No controllers found, retrying in ${Math.round(retryDelay)}ms (attempt ${this.ctrlRetryCount}/${this.maxCtrlRetries})`);
+              }
+              
+              this.ctrlRetryTimeout = setTimeout(() => {
+                if (this.signalingSocket && this.signalingSocket.readyState === WebSocket.OPEN) {
+                  this.signalingSocket.send(JSON.stringify({ type: "request-ctrls" }));
+                }
+              }, retryDelay);
+            } else {
+              if (this.verbose) {
+                console.log(`⚠️ No controllers found after ${this.maxCtrlRetries} attempts, giving up`);
+              }
+            }
+          } else {
+            // Reset retry counter on successful response
+            this.ctrlRetryCount = 0;
+            
+            // Synths initiate connections to all available ctrls
+            for (const ctrlId of message.ctrls) {
+              if (!this.peers.has(ctrlId)) {
+                if (this.verbose) console.log(`🎛️ Connecting to ctrl: ${ctrlId}`);
+                await this.createPeerConnection(ctrlId, true); // Synth initiates
+              }
             }
           }
         }
@@ -176,6 +213,13 @@ export class WebRTCStar extends EventTarget {
 
       case "ctrl-joined":
         if (this.peerType === "synth") {
+          // Reset retry counter since a controller is now available
+          this.ctrlRetryCount = 0;
+          if (this.ctrlRetryTimeout) {
+            clearTimeout(this.ctrlRetryTimeout);
+            this.ctrlRetryTimeout = null;
+          }
+          
           if (this.verbose) {
             console.log(`🎛️ New ctrl joined: ${message.ctrl_id}`);
           }
@@ -247,26 +291,6 @@ export class WebRTCStar extends EventTarget {
         );
         this.signalingSocket.close();
         break;
-    }
-  }
-
-  /**
-   * Handle initial peer list from signaling server
-   */
-  async handlePeerList(peers) {
-    console.log("📋 Received peer list:", peers.length, "peers");
-
-    // Star topology: only connect to appropriate peer types
-    for (const peer of peers) {
-      if (peer.id !== this.peerId && this.shouldConnectToPeer(peer.type)) {
-        // In star topology: ctrl always initiates connections to synths
-        const shouldInitiate = this.peerType === "ctrl" &&
-          peer.type === "synth";
-        console.log(
-          `🔗 Creating connection to ${peer.id} (initiating: ${shouldInitiate})`,
-        );
-        await this.createPeerConnection(peer.id, shouldInitiate);
-      }
     }
   }
 
@@ -870,6 +894,12 @@ export class WebRTCStar extends EventTarget {
     if (this.pingInterval) {
       clearInterval(this.pingInterval);
       this.pingInterval = null;
+    }
+
+    // Clear ctrl retry timeout
+    if (this.ctrlRetryTimeout) {
+      clearTimeout(this.ctrlRetryTimeout);
+      this.ctrlRetryTimeout = null;
     }
 
     // Clear ping timeouts
