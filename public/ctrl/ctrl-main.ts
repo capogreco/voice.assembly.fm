@@ -316,7 +316,6 @@ class ControlClient {
       
       // Transport controls
       playBtn: document.getElementById("play-btn"),
-      pauseBtn: document.getElementById("pause-btn"),
       stopBtn: document.getElementById("stop-btn"),
       resetBtn: document.getElementById("reset-btn"),
       stepsPerCycleSlider: document.getElementById("steps-per-cycle-slider"),
@@ -347,6 +346,7 @@ class ControlClient {
     this.setupEventHandlers();
     this.calculateCycleLength();
     this.initializePhasor();
+    this.updatePlayPauseButton(); // Set initial button text
     this.log("Control client initialized", "info");
 
     // Auto-connect on page load
@@ -453,13 +453,12 @@ class ControlClient {
     // Transport controls
     if (this.elements.playBtn) {
       this.elements.playBtn.addEventListener("click", () => {
-        this.handleTransport("play");
-      });
-    }
-
-    if (this.elements.pauseBtn) {
-      this.elements.pauseBtn.addEventListener("click", () => {
-        this.handleTransport("pause");
+        // Toggle between play and pause based on current state
+        if (this.isPlaying) {
+          this.handleTransport("pause");
+        } else {
+          this.handleTransport("play");
+        }
       });
     }
 
@@ -1669,6 +1668,9 @@ class ControlClient {
         break;
     }
     
+    // Update play/pause button text
+    this.updatePlayPauseButton();
+    
     // Send immediate transport message to synths for instant response
     if (this.star) {
       const transportMessage = MessageBuilder.transport(action);
@@ -1678,6 +1680,12 @@ class ControlClient {
     // Broadcast current phasor state immediately with new playing state
     this.broadcastPhasor(performance.now() / 1000.0);
   }
+  
+  updatePlayPauseButton() {
+    if (this.elements.playBtn) {
+      this.elements.playBtn.textContent = this.isPlaying ? "pause" : "play";
+    }
+  }
 
   handleReset() {
     console.log("Reset phasor");
@@ -1685,6 +1693,10 @@ class ControlClient {
     this.phasor = 0.0;
     this.lastPhasorTime = performance.now() / 1000.0;
     this.updatePhasorDisplay();
+    
+    // Reset stops playback
+    this.isPlaying = false;
+    this.updatePlayPauseButton();
     
     // Broadcast reset to synths
     if (this.star) {

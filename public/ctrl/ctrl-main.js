@@ -1157,7 +1157,6 @@ var ControlClient = class {
       stepsInput: document.getElementById("steps-per-cycle"),
       // Transport controls
       playBtn: document.getElementById("play-btn"),
-      pauseBtn: document.getElementById("pause-btn"),
       stopBtn: document.getElementById("stop-btn"),
       resetBtn: document.getElementById("reset-btn"),
       stepsPerCycleSlider: document.getElementById("steps-per-cycle-slider"),
@@ -1182,6 +1181,7 @@ var ControlClient = class {
     this.setupEventHandlers();
     this.calculateCycleLength();
     this.initializePhasor();
+    this.updatePlayPauseButton();
     this.log("Control client initialized", "info");
     this.connectToNetwork();
   }
@@ -1248,12 +1248,11 @@ var ControlClient = class {
     }
     if (this.elements.playBtn) {
       this.elements.playBtn.addEventListener("click", () => {
-        this.handleTransport("play");
-      });
-    }
-    if (this.elements.pauseBtn) {
-      this.elements.pauseBtn.addEventListener("click", () => {
-        this.handleTransport("pause");
+        if (this.isPlaying) {
+          this.handleTransport("pause");
+        } else {
+          this.handleTransport("play");
+        }
       });
     }
     if (this.elements.stopBtn) {
@@ -2102,17 +2101,25 @@ var ControlClient = class {
         this.log("Global phasor stopped and reset", "info");
         break;
     }
+    this.updatePlayPauseButton();
     if (this.star) {
       const transportMessage = MessageBuilder.transport(action);
       this.star.broadcastToType("synth", transportMessage, "control");
     }
     this.broadcastPhasor(performance.now() / 1e3);
   }
+  updatePlayPauseButton() {
+    if (this.elements.playBtn) {
+      this.elements.playBtn.textContent = this.isPlaying ? "pause" : "play";
+    }
+  }
   handleReset() {
     console.log("Reset phasor");
     this.phasor = 0;
     this.lastPhasorTime = performance.now() / 1e3;
     this.updatePhasorDisplay();
+    this.isPlaying = false;
+    this.updatePlayPauseButton();
     if (this.star) {
       const message = MessageBuilder.jumpToEOC();
       this.star.broadcastToType("synth", message, "control");
