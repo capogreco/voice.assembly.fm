@@ -27,22 +27,16 @@ export interface GeneratorConfig {
 }
 
 /**
- * A discriminated union representing all possible states for a single parameter.
- * The 'interpolation' property acts as the discriminant for program mode.
+ * Unified parameter state - no more direct/program distinction.
+ * Parameters are applied immediately when paused, at EOC when playing.
  */
 export type ParameterState =
   | {
-    scope: "direct";
-    directValue: number;
-  }
-  | {
-    scope: "program";
     interpolation: "step"; // Values held constant between events
     startValueGenerator: GeneratorConfig;
     directValue?: number; // Used as baseValue for HRG
   }
   | {
-    scope: "program";
     interpolation: "cosine"; // Values that glide between events
     startValueGenerator: GeneratorConfig;
     endValueGenerator: GeneratorConfig;

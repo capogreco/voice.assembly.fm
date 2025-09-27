@@ -598,14 +598,9 @@
               value="220"
               placeholder="220 or 200-240"
             >
-            <select class="mode-select" id="frequency-mode">
-              <option value="direct">direct</option>
-              <option value="program">program</option>
-            </select>
             <select
               class="interp-select"
               id="frequency-interpolation"
-              style="display: none"
             >
               <option value="step">step</option>
               <option value="cosine">cos</option>
@@ -613,7 +608,6 @@
             <span
               class="hrg-fraction"
               id="frequency-start-hrg"
-              style="display: none"
             >
               <input
                 type="text"
@@ -707,7 +701,6 @@
               id="frequency-end-value"
               value="220"
               placeholder="220 or 200-240"
-              style="display: none"
               title="End value"
             >
           </div>
@@ -723,14 +716,9 @@
               value="0.5"
               placeholder="0.5 or 0.2-0.8"
             >
-            <select class="mode-select" id="vowelX-mode">
-              <option value="direct">direct</option>
-              <option value="program">program</option>
-            </select>
             <select
               class="interp-select"
               id="vowelX-interpolation"
-              style="display: none"
             >
               <option value="step">step</option>
               <option value="cosine">cos</option>
@@ -741,7 +729,6 @@
               id="vowelX-end-value"
               value="0.5"
               placeholder="0.5 or 0.2-0.8"
-              style="display: none"
               title="End value"
             >
           </div>
@@ -757,14 +744,9 @@
               value="0.5"
               placeholder="0.5 or 0.2-0.8"
             >
-            <select class="mode-select" id="vowelY-mode">
-              <option value="direct">direct</option>
-              <option value="program">program</option>
-            </select>
             <select
               class="interp-select"
               id="vowelY-interpolation"
-              style="display: none"
             >
               <option value="step">step</option>
               <option value="cosine">cos</option>
@@ -775,7 +757,6 @@
               id="vowelY-end-value"
               value="0.5"
               placeholder="0.5 or 0.2-0.8"
-              style="display: none"
               title="End value"
             >
           </div>
@@ -791,14 +772,9 @@
               value="0.5"
               placeholder="0.5 or 0.2-0.8"
             >
-            <select class="mode-select" id="symmetry-mode">
-              <option value="direct">direct</option>
-              <option value="program">program</option>
-            </select>
             <select
               class="interp-select"
               id="symmetry-interpolation"
-              style="display: none"
             >
               <option value="step">step</option>
               <option value="cosine">cos</option>
@@ -809,7 +785,6 @@
               id="symmetry-end-value"
               value="0.5"
               placeholder="0.5 or 0.2-0.8"
-              style="display: none"
               title="End value"
             >
           </div>
@@ -825,14 +800,9 @@
               value="0"
               placeholder="0 or 0-0.5"
             >
-            <select class="mode-select" id="zingAmount-mode">
-              <option value="direct">direct</option>
-              <option value="program">program</option>
-            </select>
             <select
               class="interp-select"
               id="zingAmount-interpolation"
-              style="display: none"
             >
               <option value="step">step</option>
               <option value="cosine">cos</option>
@@ -843,7 +813,6 @@
               id="zingAmount-end-value"
               value="0"
               placeholder="0 or 0-0.5"
-              style="display: none"
               title="End value"
             >
           </div>
@@ -859,14 +828,9 @@
               value="0.5"
               placeholder="0.5 or 0.2-0.8"
             >
-            <select class="mode-select" id="zingMorph-mode">
-              <option value="direct">direct</option>
-              <option value="program">program</option>
-            </select>
             <select
               class="interp-select"
               id="zingMorph-interpolation"
-              style="display: none"
             >
               <option value="step">step</option>
               <option value="cosine">cos</option>
@@ -877,7 +841,6 @@
               id="zingMorph-end-value"
               value="0.5"
               placeholder="0.5 or 0.2-0.8"
-              style="display: none"
               title="End value"
             >
           </div>
@@ -893,14 +856,9 @@
               value="1.0"
               placeholder="1.0 or 0.5-1.0"
             >
-            <select class="mode-select" id="amplitude-mode">
-              <option value="direct">direct</option>
-              <option value="program">program</option>
-            </select>
             <select
               class="interp-select"
               id="amplitude-interpolation"
-              style="display: none"
             >
               <option value="step">step</option>
               <option value="cosine">cos</option>
@@ -911,7 +869,6 @@
               id="amplitude-end-value"
               value="1.0"
               placeholder="1.0 or 0.5-1.0"
-              style="display: none"
               title="End value"
             >
           </div>
@@ -927,14 +884,9 @@
               value="0"
               placeholder="0 or 0-0.5"
             >
-            <select class="mode-select" id="whiteNoise-mode">
-              <option value="direct">direct</option>
-              <option value="program">program</option>
-            </select>
             <select
               class="interp-select"
               id="whiteNoise-interpolation"
-              style="display: none"
             >
               <option value="step">step</option>
               <option value="cosine">cos</option>
@@ -945,14 +897,17 @@
               id="whiteNoise-end-value"
               value="0"
               placeholder="0 or 0-0.5"
-              style="display: none"
               title="End value"
             >
           </div>
         <!-- Parameter Control Actions -->
         <div class="param-actions">
           <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-            <button class="button" id="apply-params-btn" disabled>send program</button>
+            <div class="portamento-control">
+              <label for="portamento-time">portamento</label>
+              <input id="portamento-time" type="range" min="0" max="500" value="100" style="width: 80px;">
+              <span id="portamento-value">100ms</span>
+            </div>
             <button class="button" id="reresolve-btn">re-resolve</button>
             <button class="button manual-mode-btn" id="manual-mode-btn">enable synthesis</button>
           </div>

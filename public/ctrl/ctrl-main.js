@@ -11,6 +11,7 @@ var MessageTypes = {
   SYNTH_PARAMS: "synth-params",
   PROGRAM_UPDATE: "program-update",
   DIRECT_PARAM_UPDATE: "direct-param-update",
+  UNIFIED_PARAM_UPDATE: "unified-param-update",
   // Timing Control
   PHASOR_SYNC: "phasor-sync",
   TRANSPORT: "transport",
@@ -169,6 +170,19 @@ var MessageBuilder = class {
       timestamp: performance.now()
     };
   }
+  static unifiedParamUpdate(param, startValue, endValue, interpolation, isPlaying, portamentoTime, currentPhase) {
+    return {
+      type: MessageTypes.UNIFIED_PARAM_UPDATE,
+      param,
+      startValue,
+      endValue,
+      interpolation,
+      isPlaying,
+      portamentoTime,
+      currentPhase,
+      timestamp: performance.now()
+    };
+  }
 };
 function validateMessage(message) {
   if (!message || typeof message !== "object") {
@@ -244,6 +258,11 @@ function validateMessage(message) {
     case MessageTypes.CLEAR_SCENE:
       if (typeof message.memoryLocation !== "number" || message.memoryLocation < 0 || message.memoryLocation > 9) {
         throw new Error("Clear scene message requires memoryLocation (0-9)");
+      }
+      break;
+    case MessageTypes.UNIFIED_PARAM_UPDATE:
+      if (typeof message.param !== "string" || typeof message.startValue !== "number" || message.endValue !== void 0 && typeof message.endValue !== "number" || typeof message.interpolation !== "string" || typeof message.isPlaying !== "boolean" || typeof message.portamentoTime !== "number" || typeof message.currentPhase !== "number") {
+        throw new Error("Unified param update message missing required fields");
       }
       break;
   }
@@ -955,26 +974,21 @@ var ControlClient = class {
   es8Enabled;
   es8Node;
   hasPendingChanges;
+  pendingParameterChanges;
   elements;
   synthesisActive;
   _createDefaultState() {
-    const defaultNormalisedGenerator = () => ({
-      type: "normalised",
-      range: 0.5,
-      sequenceBehavior: "static"
+    const defaultFrequencyState = () => ({
+      interpolation: "step",
+      directValue: 220,
+      startValueGenerator: {
+        type: "periodic",
+        numerators: "1",
+        denominators: "1",
+        sequenceBehavior: "static"
+      }
     });
-    const defaultPeriodicGenerator = () => ({
-      type: "periodic",
-      numerators: "1",
-      denominators: "1",
-      sequenceBehavior: "static"
-    });
-    const defaultDirectState = (value) => ({
-      scope: "direct",
-      directValue: value
-    });
-    const defaultProgramState = () => ({
-      scope: "program",
+    const defaultNormalizedState = () => ({
       interpolation: "cosine",
       startValueGenerator: {
         type: "normalised",
@@ -993,102 +1007,78 @@ var ControlClient = class {
         sequenceBehavior: "static"
       }
     });
+    const defaultConstantState = (value) => ({
+      interpolation: "step",
+      directValue: value,
+      startValueGenerator: {
+        type: "normalised",
+        range: value,
+        sequenceBehavior: "static"
+      }
+    });
     return {
-      frequency: {
-        scope: "direct",
-        directValue: 220
-      },
-      vowelX: defaultProgramState(),
-      vowelY: defaultProgramState(),
-      zingAmount: defaultProgramState(),
-      zingMorph: defaultProgramState(),
-      symmetry: defaultProgramState(),
-      amplitude: defaultDirectState(0.8),
-      whiteNoise: defaultDirectState(0)
+      frequency: defaultFrequencyState(),
+      vowelX: defaultNormalizedState(),
+      vowelY: defaultNormalizedState(),
+      zingAmount: defaultNormalizedState(),
+      zingMorph: defaultNormalizedState(),
+      symmetry: defaultNormalizedState(),
+      amplitude: defaultConstantState(0.8),
+      whiteNoise: defaultConstantState(0)
     };
   }
   _updatePendingState(action) {
     console.log("Action dispatched:", action);
     const newState = JSON.parse(JSON.stringify(this.pendingMusicalState));
     switch (action.type) {
-      case "SET_SCOPE": {
-        if (action.scope === "direct") {
-          newState[action.param] = {
-            scope: "direct",
-            directValue: null
-          };
-        } else {
-          const currentParam = newState[action.param];
-          const directValue = currentParam.scope === "direct" ? currentParam.directValue : action.param === "frequency" ? 220 : 0.5;
-          newState[action.param] = {
-            scope: "program",
-            interpolation: "step",
-            directValue,
-            startValueGenerator: action.param === "frequency" ? {
-              type: "periodic",
-              numerators: "1",
-              denominators: "1",
-              sequenceBehavior: "static",
-              baseValue: directValue
-            } : {
-              type: "normalised",
-              range: 0.5,
-              sequenceBehavior: "static"
-            }
-          };
-        }
-        break;
-      }
       case "SET_DIRECT_VALUE": {
         const param = newState[action.param];
-        if (param.scope === "direct") {
-          param.directValue = action.value;
+        param.directValue = action.value;
+        if (param.startValueGenerator?.type === "periodic") {
+          param.startValueGenerator.baseValue = action.value;
+        }
+        if (param.endValueGenerator?.type === "periodic") {
+          param.endValueGenerator.baseValue = action.value;
         }
         break;
       }
       case "SET_INTERPOLATION": {
         const param = newState[action.param];
-        if (param.scope === "program") {
-          if (action.interpolation === "step") {
-            newState[action.param] = {
-              scope: "program",
-              interpolation: "step",
-              directValue: param.directValue,
-              startValueGenerator: param.startValueGenerator
-            };
-          } else {
-            newState[action.param] = {
-              scope: "program",
-              interpolation: action.interpolation,
-              directValue: param.directValue,
-              startValueGenerator: param.startValueGenerator,
-              endValueGenerator: param.endValueGenerator || {
-                ...param.startValueGenerator
-              }
-            };
-          }
+        if (action.interpolation === "step") {
+          newState[action.param] = {
+            interpolation: "step",
+            directValue: param.directValue,
+            startValueGenerator: param.startValueGenerator
+          };
+        } else {
+          newState[action.param] = {
+            interpolation: action.interpolation,
+            directValue: param.directValue,
+            startValueGenerator: param.startValueGenerator,
+            endValueGenerator: param.endValueGenerator || {
+              ...param.startValueGenerator
+            }
+          };
         }
         break;
       }
       case "SET_GENERATOR_CONFIG": {
         const param = newState[action.param];
-        if (param.scope === "program") {
-          if (action.position === "start") {
-            param.startValueGenerator = {
-              ...param.startValueGenerator,
-              ...action.config
-            };
-            if (param.startValueGenerator.type === "periodic") {
-              param.startValueGenerator.baseValue = param.directValue;
-            }
-          } else if (action.position === "end" && param.interpolation !== "step" && param.endValueGenerator) {
-            param.endValueGenerator = {
-              ...param.endValueGenerator,
-              ...action.config
-            };
-            if (param.endValueGenerator.type === "periodic") {
-              param.endValueGenerator.baseValue = param.directValue;
-            }
+        if (action.position === "start") {
+          param.startValueGenerator = {
+            ...param.startValueGenerator,
+            ...action.config
+          };
+          if (param.startValueGenerator.type === "periodic") {
+            param.startValueGenerator.baseValue = param.directValue;
+          }
+        } else if (action.position === "end" && param.interpolation !== "step" && param.endValueGenerator) {
+          param.endValueGenerator = {
+            ...param.endValueGenerator,
+            ...action.config
+          };
+          if (param.endValueGenerator.type === "periodic") {
+            param.endValueGenerator.baseValue = param.directValue;
           }
         }
         break;
@@ -1099,6 +1089,72 @@ var ControlClient = class {
       this._updateUIFromState(action.param);
     }
     this.markPendingChanges();
+  }
+  /**
+   * Update the active musical state directly (bypassing pending state)
+   * Used when transport is paused for immediate parameter updates
+   */
+  _updateActiveState(action) {
+    const newState = JSON.parse(JSON.stringify(this.musicalState));
+    switch (action.type) {
+      case "SET_DIRECT_VALUE": {
+        const param = newState[action.param];
+        param.directValue = action.value;
+        if (param.startValueGenerator?.type === "periodic") {
+          param.startValueGenerator.baseValue = action.value;
+        }
+        if (param.endValueGenerator?.type === "periodic") {
+          param.endValueGenerator.baseValue = action.value;
+        }
+        break;
+      }
+      case "SET_INTERPOLATION": {
+        const param = newState[action.param];
+        if (action.interpolation === "step") {
+          newState[action.param] = {
+            interpolation: "step",
+            directValue: param.directValue,
+            startValueGenerator: param.startValueGenerator
+          };
+        } else {
+          newState[action.param] = {
+            interpolation: action.interpolation,
+            directValue: param.directValue,
+            startValueGenerator: param.startValueGenerator,
+            endValueGenerator: param.endValueGenerator || {
+              ...param.startValueGenerator
+            }
+          };
+        }
+        break;
+      }
+      case "SET_GENERATOR_CONFIG": {
+        const param = newState[action.param];
+        if (action.position === "start") {
+          param.startValueGenerator = {
+            ...param.startValueGenerator,
+            ...action.config
+          };
+          if (param.startValueGenerator.type === "periodic") {
+            param.startValueGenerator.baseValue = param.directValue;
+          }
+        } else if (action.position === "end" && param.interpolation !== "step" && param.endValueGenerator) {
+          param.endValueGenerator = {
+            ...param.endValueGenerator,
+            ...action.config
+          };
+          if (param.endValueGenerator.type === "periodic") {
+            param.endValueGenerator.baseValue = param.directValue;
+          }
+        }
+        break;
+      }
+    }
+    this.musicalState = newState;
+    this.pendingMusicalState = JSON.parse(JSON.stringify(newState));
+    if (action.param) {
+      this._updateUIFromState(action.param);
+    }
   }
   /**
    * Apply a single direct parameter immediately and broadcast it
@@ -1138,6 +1194,7 @@ var ControlClient = class {
     this.es8Enabled = false;
     this.es8Node = null;
     this.hasPendingChanges = false;
+    this.pendingParameterChanges = /* @__PURE__ */ new Set();
     this.synthesisActive = false;
     this.musicalState = this._createDefaultState();
     this.pendingMusicalState = this._createDefaultState();
@@ -1167,7 +1224,8 @@ var ControlClient = class {
       // ES-8 controls
       es8EnableBtn: document.getElementById("es8-enable-btn"),
       // Parameter controls
-      applyParamsBtn: document.getElementById("apply-params-btn"),
+      portamentoTime: document.getElementById("portamento-time"),
+      portamentoValue: document.getElementById("portamento-value"),
       reresolveBtn: document.getElementById("reresolve-btn"),
       peerList: document.getElementById("peer-list"),
       synthCount: document.getElementById("synth-count"),
@@ -1176,17 +1234,20 @@ var ControlClient = class {
       // Scene memory
       clearBanksBtn: document.getElementById("clear-banks-btn")
     };
-    console.log("applyParamsBtn element:", this.elements.applyParamsBtn);
     console.log("reresolveBtn element:", this.elements.reresolveBtn);
+    console.log("portamentoTime element:", this.elements.portamentoTime);
     this.setupEventHandlers();
     this.calculateCycleLength();
     this.initializePhasor();
     this.updatePlayPauseButton();
+    Object.keys(this.musicalState).forEach((paramName) => {
+      this._updateUIFromState(paramName);
+    });
     this.log("Control client initialized", "info");
     this.connectToNetwork();
   }
   setupEventHandlers() {
-    console.log("Setting up handlers, button exists:", !!this.elements.applyParamsBtn);
+    console.log("Setting up event handlers...");
     if (this.elements.manualModeBtn) {
       this.elements.manualModeBtn.addEventListener("click", () => this.toggleSynthesis());
     }
@@ -1202,10 +1263,12 @@ var ControlClient = class {
     if (this.elements.clearBanksBtn) {
       this.elements.clearBanksBtn.addEventListener("click", () => this.clearSceneBanks());
     }
-    this.elements.applyParamsBtn.addEventListener("click", () => {
-      console.log("Apply Parameter Changes button clicked!");
-      this.applyParameterChanges();
-    });
+    if (this.elements.portamentoTime) {
+      this.elements.portamentoTime.addEventListener("input", (e) => {
+        const value = e.target.value;
+        this.elements.portamentoValue.textContent = `${value}ms`;
+      });
+    }
     if (this.elements.reresolveBtn) {
       console.log("\u2705 Re-resolve button found, adding click handler");
       this.elements.reresolveBtn.addEventListener("click", () => {
@@ -1279,15 +1342,7 @@ var ControlClient = class {
     document.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
         this.log("\u2328\uFE0F Cmd+Enter pressed", "info");
-        this.log(`  applyParamsBtn exists: ${!!this.elements.applyParamsBtn}`, "info");
-        this.log(`  applyParamsBtn disabled: ${this.elements.applyParamsBtn?.disabled}`, "info");
-        if (this.elements.applyParamsBtn && !this.elements.applyParamsBtn.disabled) {
-          e.preventDefault();
-          this.log("\u2328\uFE0F Calling applyParameterChanges()", "info");
-          this.applyParameterChanges();
-        } else {
-          this.log("\u2328\uFE0F Button check failed - not calling applyParameterChanges()", "info");
-        }
+        this.log("\u2328\uFE0F Cmd+Enter no longer triggers Apply Changes (unified system)", "info");
       }
       if (/^[0-9]$/.test(e.key) && e.target?.tagName !== "INPUT") {
         e.preventDefault();
@@ -1314,21 +1369,15 @@ var ControlClient = class {
     });
   }
   setupCompactParameterControls(paramName) {
-    const modeSelect = document.getElementById(`${paramName}-mode`);
     const interpSelect = document.getElementById(`${paramName}-interpolation`);
     const textInput = document.getElementById(`${paramName}-value`);
     const startHrg = document.getElementById(`${paramName}-start-hrg`);
     const endHrg = document.getElementById(`${paramName}-end-hrg`);
     const hrgArrow = document.getElementById(`${paramName}-hrg-arrow`);
     const endValueInput = document.getElementById(`${paramName}-end-value`);
-    if (!modeSelect) return;
-    modeSelect.addEventListener("change", () => {
-      const isDirect = modeSelect.value === "direct";
-      this._updatePendingState({
-        type: "SET_SCOPE",
-        param: paramName,
-        scope: isDirect ? "direct" : "program"
-      });
+    if (!textInput) return;
+    textInput.addEventListener("blur", () => {
+      this.handleUnifiedParameterUpdate(paramName, textInput.value);
     });
     if (interpSelect) {
       interpSelect.addEventListener("change", () => {
@@ -1357,7 +1406,7 @@ var ControlClient = class {
         this.markPendingChanges();
       });
       textInput.addEventListener("blur", () => {
-        if (modeSelect && modeSelect.value === "direct") {
+        if (false) {
           if (textInput.value.trim() === "") {
             let defaultValue;
             switch (paramName) {
@@ -1403,56 +1452,130 @@ var ControlClient = class {
         startNumeratorsInput.addEventListener("input", () => {
           const { ok } = this._validateSINString(startNumeratorsInput.value);
           startNumeratorsInput.classList.toggle("invalid-input", !ok);
-          this._updatePendingState({
-            type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
-            position: "start",
-            config: {
-              numerators: startNumeratorsInput.value
-            }
-          });
-          this.markPendingChanges();
+          if (this.isPlaying) {
+            this._updatePendingState({
+              type: "SET_GENERATOR_CONFIG",
+              param: "frequency",
+              position: "start",
+              config: {
+                numerators: startNumeratorsInput.value
+              }
+            });
+            this.markPendingChanges();
+          }
+        });
+        startNumeratorsInput.addEventListener("blur", () => {
+          if (!this.isPlaying) {
+            this._updateActiveState({
+              type: "SET_GENERATOR_CONFIG",
+              param: "frequency",
+              position: "start",
+              config: {
+                numerators: startNumeratorsInput.value
+              }
+            });
+            this.broadcastMusicalParameters();
+          } else {
+            this._updatePendingState({
+              type: "SET_GENERATOR_CONFIG",
+              param: "frequency",
+              position: "start",
+              config: {
+                numerators: startNumeratorsInput.value
+              }
+            });
+            this.markPendingChanges();
+          }
         });
       }
       if (startDenominatorsInput) {
         startDenominatorsInput.addEventListener("input", () => {
           const { ok } = this._validateSINString(startDenominatorsInput.value);
           startDenominatorsInput.classList.toggle("invalid-input", !ok);
-          this._updatePendingState({
-            type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
-            position: "start",
-            config: {
-              denominators: startDenominatorsInput.value
-            }
-          });
-          this.markPendingChanges();
+          if (this.isPlaying) {
+            this._updatePendingState({
+              type: "SET_GENERATOR_CONFIG",
+              param: "frequency",
+              position: "start",
+              config: {
+                denominators: startDenominatorsInput.value
+              }
+            });
+            this.markPendingChanges();
+          }
+        });
+        startDenominatorsInput.addEventListener("blur", () => {
+          if (!this.isPlaying) {
+            this._updateActiveState({
+              type: "SET_GENERATOR_CONFIG",
+              param: "frequency",
+              position: "start",
+              config: {
+                denominators: startDenominatorsInput.value
+              }
+            });
+            this.broadcastMusicalParameters();
+          } else {
+            this._updatePendingState({
+              type: "SET_GENERATOR_CONFIG",
+              param: "frequency",
+              position: "start",
+              config: {
+                denominators: startDenominatorsInput.value
+              }
+            });
+            this.markPendingChanges();
+          }
         });
       }
       if (startNumBehaviorSelect) {
         startNumBehaviorSelect.addEventListener("change", () => {
-          this._updatePendingState({
-            type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
-            position: "start",
-            config: {
-              numeratorBehavior: startNumBehaviorSelect.value
-            }
-          });
-          this.markPendingChanges();
+          if (!this.isPlaying) {
+            this._updateActiveState({
+              type: "SET_GENERATOR_CONFIG",
+              param: "frequency",
+              position: "start",
+              config: {
+                numeratorBehavior: startNumBehaviorSelect.value
+              }
+            });
+            this.broadcastMusicalParameters();
+          } else {
+            this._updatePendingState({
+              type: "SET_GENERATOR_CONFIG",
+              param: "frequency",
+              position: "start",
+              config: {
+                numeratorBehavior: startNumBehaviorSelect.value
+              }
+            });
+            this.markPendingChanges();
+          }
         });
       }
       if (startDenBehaviorSelect) {
         startDenBehaviorSelect.addEventListener("change", () => {
-          this._updatePendingState({
-            type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
-            position: "start",
-            config: {
-              denominatorBehavior: startDenBehaviorSelect.value
-            }
-          });
-          this.markPendingChanges();
+          if (!this.isPlaying) {
+            this._updateActiveState({
+              type: "SET_GENERATOR_CONFIG",
+              param: "frequency",
+              position: "start",
+              config: {
+                denominatorBehavior: startDenBehaviorSelect.value
+              }
+            });
+            this.broadcastMusicalParameters();
+          } else {
+            this._updatePendingState({
+              type: "SET_GENERATOR_CONFIG",
+              param: "frequency",
+              position: "start",
+              config: {
+                denominatorBehavior: startDenBehaviorSelect.value
+              }
+            });
+            this.markPendingChanges();
+          }
         });
       }
       const endNumeratorsInput = document.getElementById("frequency-end-numerators");
@@ -1463,56 +1586,130 @@ var ControlClient = class {
         endNumeratorsInput.addEventListener("input", () => {
           const { ok } = this._validateSINString(endNumeratorsInput.value);
           endNumeratorsInput.classList.toggle("invalid-input", !ok);
-          this._updatePendingState({
-            type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
-            position: "end",
-            config: {
-              numerators: endNumeratorsInput.value
-            }
-          });
-          this.markPendingChanges();
+          if (this.isPlaying) {
+            this._updatePendingState({
+              type: "SET_GENERATOR_CONFIG",
+              param: "frequency",
+              position: "end",
+              config: {
+                numerators: endNumeratorsInput.value
+              }
+            });
+            this.markPendingChanges();
+          }
+        });
+        endNumeratorsInput.addEventListener("blur", () => {
+          if (!this.isPlaying) {
+            this._updateActiveState({
+              type: "SET_GENERATOR_CONFIG",
+              param: "frequency",
+              position: "end",
+              config: {
+                numerators: endNumeratorsInput.value
+              }
+            });
+            this.broadcastMusicalParameters();
+          } else {
+            this._updatePendingState({
+              type: "SET_GENERATOR_CONFIG",
+              param: "frequency",
+              position: "end",
+              config: {
+                numerators: endNumeratorsInput.value
+              }
+            });
+            this.markPendingChanges();
+          }
         });
       }
       if (endDenominatorsInput) {
         endDenominatorsInput.addEventListener("input", () => {
           const { ok } = this._validateSINString(endDenominatorsInput.value);
           endDenominatorsInput.classList.toggle("invalid-input", !ok);
-          this._updatePendingState({
-            type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
-            position: "end",
-            config: {
-              denominators: endDenominatorsInput.value
-            }
-          });
-          this.markPendingChanges();
+          if (this.isPlaying) {
+            this._updatePendingState({
+              type: "SET_GENERATOR_CONFIG",
+              param: "frequency",
+              position: "end",
+              config: {
+                denominators: endDenominatorsInput.value
+              }
+            });
+            this.markPendingChanges();
+          }
+        });
+        endDenominatorsInput.addEventListener("blur", () => {
+          if (!this.isPlaying) {
+            this._updateActiveState({
+              type: "SET_GENERATOR_CONFIG",
+              param: "frequency",
+              position: "end",
+              config: {
+                denominators: endDenominatorsInput.value
+              }
+            });
+            this.broadcastMusicalParameters();
+          } else {
+            this._updatePendingState({
+              type: "SET_GENERATOR_CONFIG",
+              param: "frequency",
+              position: "end",
+              config: {
+                denominators: endDenominatorsInput.value
+              }
+            });
+            this.markPendingChanges();
+          }
         });
       }
       if (endNumBehaviorSelect) {
         endNumBehaviorSelect.addEventListener("change", () => {
-          this._updatePendingState({
-            type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
-            position: "end",
-            config: {
-              numeratorBehavior: endNumBehaviorSelect.value
-            }
-          });
-          this.markPendingChanges();
+          if (!this.isPlaying) {
+            this._updateActiveState({
+              type: "SET_GENERATOR_CONFIG",
+              param: "frequency",
+              position: "end",
+              config: {
+                numeratorBehavior: endNumBehaviorSelect.value
+              }
+            });
+            this.broadcastMusicalParameters();
+          } else {
+            this._updatePendingState({
+              type: "SET_GENERATOR_CONFIG",
+              param: "frequency",
+              position: "end",
+              config: {
+                numeratorBehavior: endNumBehaviorSelect.value
+              }
+            });
+            this.markPendingChanges();
+          }
         });
       }
       if (endDenBehaviorSelect) {
         endDenBehaviorSelect.addEventListener("change", () => {
-          this._updatePendingState({
-            type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
-            position: "end",
-            config: {
-              denominatorBehavior: endDenBehaviorSelect.value
-            }
-          });
-          this.markPendingChanges();
+          if (!this.isPlaying) {
+            this._updateActiveState({
+              type: "SET_GENERATOR_CONFIG",
+              param: "frequency",
+              position: "end",
+              config: {
+                denominatorBehavior: endDenBehaviorSelect.value
+              }
+            });
+            this.broadcastMusicalParameters();
+          } else {
+            this._updatePendingState({
+              type: "SET_GENERATOR_CONFIG",
+              param: "frequency",
+              position: "end",
+              config: {
+                denominatorBehavior: endDenBehaviorSelect.value
+              }
+            });
+            this.markPendingChanges();
+          }
         });
       }
     }
@@ -1522,13 +1719,9 @@ var ControlClient = class {
    * Handle value input changes with smart range detection
    */
   _handleValueInput(paramName, inputValue, position) {
-    const modeSelect = document.getElementById(`${paramName}-mode`);
-    const currentMode = modeSelect?.value || "direct";
+    const currentMode = "program";
     const trimmedValue = inputValue.trim();
-    if (trimmedValue.includes("-") && currentMode === "direct") {
-      modeSelect.value = "program";
-      modeSelect.dispatchEvent(new Event("change"));
-      return;
+    if (trimmedValue.includes("-")) {
     }
     if (currentMode === "direct") {
       let directValue;
@@ -1601,14 +1794,13 @@ var ControlClient = class {
   */
   _updateUIFromState(paramName) {
     const paramState = this.pendingMusicalState[paramName];
-    const modeSelect = document.getElementById(`${paramName}-mode`);
     const valueInput = document.getElementById(`${paramName}-value`);
     const interpSelect = document.getElementById(`${paramName}-interpolation`);
     const hrgStartControls = document.getElementById(`${paramName}-start-hrg`);
     const hrgEndControls = document.getElementById(`${paramName}-end-hrg`);
     const hrgArrow = document.getElementById(`${paramName}-hrg-arrow`);
     const endValueInput = document.getElementById(`${paramName}-end-value`);
-    if (!modeSelect) return;
+    if (!valueInput) return;
     if (valueInput) {
       valueInput.style.display = "inline-block";
       if (paramState.scope === "direct" && paramState.directValue !== null) {
@@ -1629,72 +1821,62 @@ var ControlClient = class {
         valueInput.focus();
       }
     }
-    modeSelect.value = paramState.scope;
-    const isProgramMode = paramState.scope === "program";
     if (interpSelect) {
-      interpSelect.style.display = isProgramMode ? "inline-block" : "none";
+      interpSelect.style.display = "inline-block";
+      interpSelect.value = paramState.interpolation;
     }
     if (hrgStartControls) {
-      hrgStartControls.style.display = isProgramMode ? "inline" : "none";
+      hrgStartControls.style.display = "inline";
     }
-    if (isProgramMode) {
-      if (interpSelect) {
-        interpSelect.value = paramState.interpolation;
+    const isEnvelope = paramState.interpolation !== "step";
+    if (hrgEndControls) {
+      hrgEndControls.style.display = isEnvelope ? "inline" : "none";
+    }
+    if (hrgArrow) hrgArrow.style.display = isEnvelope ? "inline" : "none";
+    if (endValueInput) {
+      endValueInput.style.display = isEnvelope ? "inline" : "none";
+    }
+    if (endValueInput && isEnvelope && paramState.endValueGenerator && paramState.endValueGenerator.type === "normalised") {
+      const endGen = paramState.endValueGenerator;
+      if (typeof endGen.range === "number") {
+        endValueInput.value = endGen.range.toString();
+      } else if (typeof endGen.range === "object") {
+        endValueInput.value = `${endGen.range.min}-${endGen.range.max}`;
       }
-      const isEnvelope = paramState.interpolation !== "step";
-      if (hrgEndControls) {
-        hrgEndControls.style.display = isEnvelope ? "inline" : "none";
+    }
+    if (paramName === "frequency") {
+      const startGen = paramState.startValueGenerator;
+      if (startGen && startGen.type === "periodic") {
+        const startNums = document.getElementById("frequency-start-numerators");
+        const startDens = document.getElementById("frequency-start-denominators");
+        const startNumBeh = document.getElementById("frequency-start-numerators-behavior");
+        const startDenBeh = document.getElementById("frequency-start-denominators-behavior");
+        if (startNums) startNums.value = startGen.numerators ?? "1";
+        if (startDens) startDens.value = startGen.denominators ?? "1";
+        if (startNumBeh) {
+          startNumBeh.value = startGen.numeratorBehavior ?? "static";
+        }
+        if (startDenBeh) {
+          startDenBeh.value = startGen.denominatorBehavior ?? "static";
+        }
       }
-      if (hrgArrow) hrgArrow.style.display = isEnvelope ? "inline" : "none";
-      if (endValueInput) {
-        endValueInput.style.display = isEnvelope ? "inline" : "none";
-      }
-      if (endValueInput && isEnvelope && paramState.endValueGenerator && paramState.endValueGenerator.type === "normalised") {
+      if (isEnvelope) {
         const endGen = paramState.endValueGenerator;
-        if (typeof endGen.range === "number") {
-          endValueInput.value = endGen.range.toString();
-        } else if (typeof endGen.range === "object") {
-          endValueInput.value = `${endGen.range.min}-${endGen.range.max}`;
-        }
-      }
-      if (paramName === "frequency") {
-        const startGen = paramState.startValueGenerator;
-        if (startGen && startGen.type === "periodic") {
-          const startNums = document.getElementById("frequency-start-numerators");
-          const startDens = document.getElementById("frequency-start-denominators");
-          const startNumBeh = document.getElementById("frequency-start-numerators-behavior");
-          const startDenBeh = document.getElementById("frequency-start-denominators-behavior");
-          if (startNums) startNums.value = startGen.numerators ?? "1";
-          if (startDens) startDens.value = startGen.denominators ?? "1";
-          if (startNumBeh) {
-            startNumBeh.value = startGen.numeratorBehavior ?? "static";
+        if (endGen && endGen.type === "periodic") {
+          const endNums = document.getElementById("frequency-end-numerators");
+          const endDens = document.getElementById("frequency-end-denominators");
+          const endNumBeh = document.getElementById("frequency-end-numerators-behavior");
+          const endDenBeh = document.getElementById("frequency-end-denominators-behavior");
+          if (endNums) endNums.value = endGen.numerators ?? "1";
+          if (endDens) endDens.value = endGen.denominators ?? "1";
+          if (endNumBeh) {
+            endNumBeh.value = endGen.numeratorBehavior ?? "static";
           }
-          if (startDenBeh) {
-            startDenBeh.value = startGen.denominatorBehavior ?? "static";
-          }
-        }
-        if (isEnvelope) {
-          const endGen = paramState.endValueGenerator;
-          if (endGen && endGen.type === "periodic") {
-            const endNums = document.getElementById("frequency-end-numerators");
-            const endDens = document.getElementById("frequency-end-denominators");
-            const endNumBeh = document.getElementById("frequency-end-numerators-behavior");
-            const endDenBeh = document.getElementById("frequency-end-denominators-behavior");
-            if (endNums) endNums.value = endGen.numerators ?? "1";
-            if (endDens) endDens.value = endGen.denominators ?? "1";
-            if (endNumBeh) {
-              endNumBeh.value = endGen.numeratorBehavior ?? "static";
-            }
-            if (endDenBeh) {
-              endDenBeh.value = endGen.denominatorBehavior ?? "static";
-            }
+          if (endDenBeh) {
+            endDenBeh.value = endGen.denominatorBehavior ?? "static";
           }
         }
       }
-    } else {
-      if (hrgEndControls) hrgEndControls.style.display = "none";
-      if (hrgArrow) hrgArrow.style.display = "none";
-      if (endValueInput) endValueInput.style.display = "none";
     }
   }
   // Capture current HRG inputs into pending state before apply
@@ -1742,19 +1924,11 @@ var ControlClient = class {
     return true;
   }
   markPendingChanges() {
-    console.log("markPendingChanges called, button:", this.elements.applyParamsBtn);
+    console.log("markPendingChanges called");
     this.hasPendingChanges = true;
-    if (this.elements.applyParamsBtn) {
-      this.elements.applyParamsBtn.disabled = false;
-      this.elements.applyParamsBtn.textContent = "apply changes*";
-    }
   }
   clearPendingChanges() {
     this.hasPendingChanges = false;
-    if (this.elements.applyParamsBtn) {
-      this.elements.applyParamsBtn.disabled = true;
-      this.elements.applyParamsBtn.textContent = "apply changes";
-    }
   }
   /**
    * Unified method to set parameter state and update UI
@@ -1944,6 +2118,7 @@ var ControlClient = class {
       if (this.phasor >= 1) {
         this.phasor -= 1;
         this.applyPendingTimingChanges();
+        this.clearAllPendingChanges();
       }
     }
     this.lastPhasorTime = currentTime;
@@ -2091,12 +2266,14 @@ var ControlClient = class {
         break;
       case "pause":
         this.isPlaying = false;
+        this.clearAllPendingChanges();
         this.log("Global phasor paused", "info");
         break;
       case "stop":
         this.isPlaying = false;
         this.phasor = 0;
         this.lastPhasorTime = performance.now() / 1e3;
+        this.clearAllPendingChanges();
         this.updatePhasorDisplay();
         this.log("Global phasor stopped and reset", "info");
         break;
@@ -2112,6 +2289,121 @@ var ControlClient = class {
     if (this.elements.playBtn) {
       this.elements.playBtn.textContent = this.isPlaying ? "pause" : "play";
     }
+  }
+  handleUnifiedParameterUpdate(paramName, value) {
+    console.log(`\u{1F39B}\uFE0F Unified parameter update: ${paramName} = ${value}`);
+    this._updatePendingState({
+      type: "SET_DIRECT_VALUE",
+      param: paramName,
+      value: parseFloat(value) || 0
+    });
+    const paramState = this.pendingMusicalState[paramName];
+    const resolvedValues = this.resolveParameterValues(paramName, paramState);
+    const portamentoTime = this.elements.portamentoTime ? parseInt(this.elements.portamentoTime.value) : 100;
+    const message = MessageBuilder.unifiedParamUpdate(
+      paramName,
+      resolvedValues.start,
+      resolvedValues.end,
+      paramState.interpolation,
+      this.isPlaying,
+      portamentoTime,
+      this.phasor
+      // Include current phase for interpolation
+    );
+    if (this.star) {
+      this.star.broadcastToType("synth", message, "control");
+    }
+    if (this.isPlaying) {
+      this.pendingParameterChanges.add(paramName);
+      this.updateParameterVisualFeedback(paramName);
+    } else {
+      this.pendingParameterChanges.delete(paramName);
+      this.updateParameterVisualFeedback(paramName);
+    }
+    const statusIcon = this.isPlaying ? "\u{1F4CB}*" : "\u26A1";
+    this.log(`${statusIcon} ${paramName}: ${resolvedValues.start}${resolvedValues.end !== void 0 ? ` \u2192 ${resolvedValues.end}` : ""} (${this.isPlaying ? "staged for EOC" : `immediate +${portamentoTime}ms`})`, "info");
+  }
+  updateParameterVisualFeedback(paramName) {
+    const paramLabels = document.querySelectorAll(".param-label");
+    for (const label of paramLabels) {
+      const labelElement = label;
+      const labelText = labelElement.textContent || "";
+      const cleanText = labelText.replace("*", "").trim();
+      const paramDisplayNames = {
+        frequency: "freq",
+        vowelX: "vowel x",
+        vowelY: "vowel y",
+        symmetry: "symmetry",
+        zingAmount: "z amount",
+        zingMorph: "z morph",
+        amplitude: "amp",
+        whiteNoise: "noise"
+      };
+      if (cleanText === paramDisplayNames[paramName]) {
+        const hasPendingChanges = this.pendingParameterChanges.has(paramName);
+        const shouldShowAsterisk = hasPendingChanges && this.isPlaying;
+        if (shouldShowAsterisk && !labelText.includes("*")) {
+          labelElement.textContent = cleanText + "*";
+        } else if (!shouldShowAsterisk && labelText.includes("*")) {
+          labelElement.textContent = cleanText;
+        }
+        break;
+      }
+    }
+  }
+  clearAllPendingChanges() {
+    for (const paramName of this.pendingParameterChanges) {
+      this.updateParameterVisualFeedback(paramName);
+    }
+    this.pendingParameterChanges.clear();
+  }
+  resolveParameterValues(paramName, paramState) {
+    if (paramState.interpolation === "step") {
+      return {
+        start: this.resolveGeneratorValue(paramState.startValueGenerator, paramState.directValue),
+        end: void 0
+      };
+    }
+    return {
+      start: this.resolveGeneratorValue(paramState.startValueGenerator, paramState.directValue),
+      end: this.resolveGeneratorValue(paramState.endValueGenerator, paramState.directValue)
+    };
+  }
+  resolveGeneratorValue(generator, baseValue) {
+    if (generator.type === "periodic") {
+      const numerators = this.parseHRGString(generator.numerators || "1");
+      const denominators = this.parseHRGString(generator.denominators || "1");
+      const numerator = this.selectHRGValue(numerators, generator.sequenceBehavior);
+      const denominator = this.selectHRGValue(denominators, generator.sequenceBehavior);
+      return (baseValue || 220) * (numerator / denominator);
+    } else {
+      if (typeof generator.range === "number") {
+        return generator.range;
+      } else {
+        const min = generator.range?.min || 0;
+        const max = generator.range?.max || 1;
+        return Math.random() * (max - min) + min;
+      }
+    }
+  }
+  parseHRGString(input) {
+    const result = [];
+    const parts = input.split(",");
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (trimmed.includes("-")) {
+        const [start, end] = trimmed.split("-").map(Number);
+        for (let i = start; i <= end; i++) {
+          result.push(i);
+        }
+      } else {
+        result.push(Number(trimmed));
+      }
+    }
+    return result;
+  }
+  selectHRGValue(values, behavior) {
+    return values[Math.floor(Math.random() * values.length)];
   }
   handleReset() {
     console.log("Reset phasor");
@@ -2218,6 +2510,7 @@ var ControlClient = class {
     }
     this.broadcastDirectParameters();
     this.broadcastMusicalParameters();
+    this.broadcastPhasor(performance.now() / 1e3);
   }
   // Deprecated - use toggleSynthesis instead
   toggleManualMode() {

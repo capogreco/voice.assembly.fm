@@ -18,6 +18,7 @@ export const MessageTypes = {
   SYNTH_PARAMS: "synth-params",
   PROGRAM_UPDATE: "program-update",
   DIRECT_PARAM_UPDATE: "direct-param-update",
+  UNIFIED_PARAM_UPDATE: "unified-param-update",
 
   // Timing Control
   PHASOR_SYNC: "phasor-sync",
@@ -198,6 +199,20 @@ export class MessageBuilder {
       timestamp: performance.now(),
     };
   }
+
+  static unifiedParamUpdate(param, startValue, endValue, interpolation, isPlaying, portamentoTime, currentPhase) {
+    return {
+      type: MessageTypes.UNIFIED_PARAM_UPDATE,
+      param,
+      startValue,
+      endValue,
+      interpolation,
+      isPlaying,
+      portamentoTime,
+      currentPhase,
+      timestamp: performance.now(),
+    };
+  }
 }
 
 export function validateMessage(message) {
@@ -317,6 +332,20 @@ export function validateMessage(message) {
         message.memoryLocation < 0 || message.memoryLocation > 9
       ) {
         throw new Error("Clear scene message requires memoryLocation (0-9)");
+      }
+      break;
+
+    case MessageTypes.UNIFIED_PARAM_UPDATE:
+      if (
+        typeof message.param !== "string" ||
+        typeof message.startValue !== "number" ||
+        (message.endValue !== undefined && typeof message.endValue !== "number") ||
+        typeof message.interpolation !== "string" ||
+        typeof message.isPlaying !== "boolean" ||
+        typeof message.portamentoTime !== "number" ||
+        typeof message.currentPhase !== "number"
+      ) {
+        throw new Error("Unified param update message missing required fields");
       }
       break;
   }

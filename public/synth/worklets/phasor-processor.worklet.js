@@ -117,42 +117,40 @@ class PhasorProcessor extends AudioWorkletProcessor {
     const stepsPerCycle = parameters.stepsPerCycle[0];
     const enableRhythm = parameters.enableRhythm[0] > 0.5;
 
-    if (!this.isRunning) {
-      return true;
-    }
-
-    // Calculate phase increment per sample
-    const phaseIncrement = 1.0 / (cycleLength * sampleRate);
+    // Calculate phase increment per sample (0 when not running)
+    const phaseIncrement = this.isRunning ? 1.0 / (cycleLength * sampleRate) : 0.0;
 
     for (let i = 0; i < bufferSize; i++) {
-      // Update phase
-      this.phase += phaseIncrement;
+      // Update phase only when running
+      if (this.isRunning) {
+        this.phase += phaseIncrement;
 
-      // Wrap around at 1.0 and send cycle reset
-      if (this.phase >= 1.0) {
-        this.phase -= 1.0;
+        // Wrap around at 1.0 and send cycle reset
+        if (this.phase >= 1.0) {
+          this.phase -= 1.0;
 
-        // Send cycle reset message immediately
-        this.port.postMessage({
-          type: "cycle-reset",
-          sampleIndex: i,
-          blockSize: bufferSize,
-          cycleLength: cycleLength,
-        });
-      }
+          // Send cycle reset message immediately
+          this.port.postMessage({
+            type: "cycle-reset",
+            sampleIndex: i,
+            blockSize: bufferSize,
+            cycleLength: cycleLength,
+          });
+        }
 
-      // Step boundary detection
-      if (enableRhythm) {
-        this.currentStep = Math.floor(this.phase * stepsPerCycle);
+        // Step boundary detection
+        if (enableRhythm) {
+          this.currentStep = Math.floor(this.phase * stepsPerCycle);
 
-        // Trigger on step boundary
-        if (this.currentStep !== this.lastStep) {
-          this.onStepTrigger(this.currentStep, stepsPerCycle);
-          this.lastStep = this.currentStep;
+          // Trigger on step boundary
+          if (this.currentStep !== this.lastStep) {
+            this.onStepTrigger(this.currentStep, stepsPerCycle);
+            this.lastStep = this.currentStep;
+          }
         }
       }
 
-      // Output phasor (optional - can be used for audio-rate modulation)
+      // Always output current phase (frozen when not running, advancing when running)
       if (outputs[0][0]) {
         outputs[0][0][i] = this.phase;
       }

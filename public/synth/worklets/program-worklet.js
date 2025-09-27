@@ -60,6 +60,16 @@ class ProgramWorklet extends AudioWorkletProcessor {
           this.currentValues[message.param] = message.value;
         }
         break;
+
+      case "SET_INTERPOLATED_VALUE":
+        // Set a parameter to a specific interpolated value from current phase
+        if (message.param && Number.isFinite(message.value)) {
+          this.currentValues[message.param] = message.value;
+          // Remove from step and cos segments so it uses the direct value
+          delete this.stepValues[message.param];
+          delete this.cosSegments[message.param];
+        }
+        break;
     }
   }
 

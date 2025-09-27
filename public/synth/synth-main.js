@@ -468,6 +468,12 @@ class SynthClient {
       // Connect mixer to master gain
       this.mixer.connect(this.masterGain);
 
+      // Connect phasor worklet to program worklet if both exist
+      if (this.phasorWorklet && this.programNode) {
+        this.phasorWorklet.connect(this.programNode.parameters.get("phase"));
+        if (this.verbose) console.log("🔗 Phasor worklet connected to program worklet phase parameter");
+      }
+
       // Apply any stored state that was received before audio was ready
       this.applyStoredState();
     } catch (error) {
@@ -542,6 +548,10 @@ class SynthClient {
 
       case MessageTypes.DIRECT_PARAM_UPDATE:
         this.handleDirectParamUpdate(message);
+        break;
+
+      case MessageTypes.UNIFIED_PARAM_UPDATE:
+        this.handleUnifiedParamUpdate(message);
         break;
 
       case MessageTypes.PHASOR_SYNC:
@@ -664,6 +674,11 @@ class SynthClient {
       return;
     }
 
+    // If synthesis was just enabled, ensure immediate audio output
+    if (!wasSynthesisActive && this.synthesisActive) {
+      this.activateImmediateSynthesis();
+    }
+
     // If not in manual mode, don't apply parameters
     if (!this.synthesisActive) {
       return;
@@ -699,6 +714,89 @@ class SynthClient {
   // applyParameterWithEnvelope(paramName, paramValue) {
   //   // Method removed - parameters now handled by direct routing or program worklet
   // }
+
+  /**
+   * Activate synthesis immediately when enabled while paused
+   * Ensures audio output starts right away regardless of transport state
+   */
+  activateImmediateSynthesis() {
+    console.log("🎵 Activating immediate synthesis...");
+    
+    // Ensure voice worklet is active
+    if (this.voiceNode && this.voiceNode.parameters.has("active")) {
+      this.voiceNode.parameters.get("active").value = 1;
+    }
+    
+    // Extract current parameter values from program config and send to worklet
+    if (this.programConfig && this.programNode) {
+      console.log("🎼 Sending immediate parameter values to program worklet");
+      
+      // Default parameter values
+      const immediateValues = {
+        frequency: 440,
+        amplitude: 0.1,
+        vowelX: 0.5,
+        vowelY: 0.5,
+        zingMorph: 0.0,
+        zingAmount: 0.0,
+        symmetry: 0.5,
+        whiteNoise: 0.0
+      };
+      
+      // Extract values from program config based on parameter scope
+      for (const [paramName, paramConfig] of Object.entries(this.programConfig)) {
+        if (immediateValues.hasOwnProperty(paramName)) {
+          if (paramConfig.scope === "direct") {
+            // Use direct value for direct parameters
+            immediateValues[paramName] = paramConfig.directValue;
+          } else if (paramConfig.scope === "program") {
+            // Resolve program parameter values using same logic as handleCycleReset
+            let resolvedValue;
+            
+            if (paramConfig.startValueGenerator?.type === 'periodic') {
+              // HRG - use sequence state
+              resolvedValue = this._resolveHRG(paramName, 'start');
+            } else if (paramConfig.startValueGenerator?.type === 'normalised') {
+              // RBG - resolve scalar
+              resolvedValue = this._resolveRBG(paramConfig.startValueGenerator);
+            } else if (paramConfig.startValueGenerator?.value !== undefined) {
+              // Direct value
+              resolvedValue = paramConfig.startValueGenerator.value;
+            } else {
+              // Fallback to default value
+              resolvedValue = immediateValues[paramName]; // Keep the default
+            }
+            
+            immediateValues[paramName] = resolvedValue;
+          }
+        }
+      }
+      
+      // Send immediate step values to program worklet
+      this.programNode.port.postMessage({
+        type: "SET_STEP_VALUES",
+        params: immediateValues
+      });
+      
+      // Immediately update routing for program parameters to bypass EOC staging
+      for (const [paramName, paramConfig] of Object.entries(this.programConfig)) {
+        if (paramConfig.scope === "program" && immediateValues.hasOwnProperty(paramName)) {
+          // Immediately route to program mode
+          this._updateParameterRouting(paramName, 'program');
+          this.currentRouting[paramName] = 'program';
+          
+          // Clear any pending routing for this parameter
+          delete this.pendingRouting[paramName];
+          
+          console.log(`🔗 Immediate routing: ${paramName} → program`);
+        }
+      }
+      
+      console.log("🎛️ Immediate synthesis values:", immediateValues);
+    } else {
+      console.log("⚠️ No program config available for immediate synthesis");
+    }
+  }
 
   handleProgramUpdate(message) {
     if (this.verbose) console.log("📨 PROGRAM_UPDATE received:", message);
@@ -769,6 +867,11 @@ class SynthClient {
     }
 
     console.log("✅ Program config stored in main thread, HRG states initialized");
+    
+    // If synthesis is active, ensure immediate audio output
+    if (this.synthesisActive) {
+      this.activateImmediateSynthesis();
+    }
   }
 
   // OBSOLETE - These methods were used by the old monolithic worklet
@@ -948,6 +1051,12 @@ class SynthClient {
           this.onStepTrigger(event.data.step, event.data.stepsPerCycle);
         }
       };
+
+      // Connect phasor worklet output to program worklet phase parameter
+      if (this.programNode) {
+        this.phasorWorklet.connect(this.programNode.parameters.get("phase"));
+        if (this.verbose) console.log("🔗 Phasor worklet connected to program worklet phase parameter");
+      }
 
       // Start the worklet phasor
       this.phasorWorklet.port.postMessage({ type: "start" });
@@ -1605,9 +1714,21 @@ class SynthClient {
         }
       }
       
-      // Stage scalar values for next EOC (both direct and RBG stat)
+      // Handle scalar values - apply immediately if paused, stage if playing
       if (Object.keys(snapshot).length > 0) {
-        this.pendingSceneState = snapshot;
+        if (this.isPlaying) {
+          // Playing: stage for next EOC
+          this.pendingSceneState = snapshot;
+          console.log(`📋 Staged scene snapshot for next EOC:`, snapshot);
+        } else {
+          // Paused: apply immediately with portamento
+          console.log(`⚡ Applying scene snapshot immediately (paused):`, snapshot);
+          for (const [param, value] of Object.entries(snapshot)) {
+            // Use portamento for smooth transitions when paused
+            const portamentoTime = 100; // Default portamento time
+            this.applyWithPortamento(param, value, portamentoTime);
+          }
+        }
       }
     } else {
       console.log(`[SCENE] load, no data in memory slot ${memoryLocation} - initializing fresh`);
@@ -1698,6 +1819,139 @@ class SynthClient {
     
     // Call handleCycleReset to start envelopes immediately
     this.handleCycleReset(resetData);
+  }
+
+  handleUnifiedParamUpdate(message) {
+    const statusIcon = message.isPlaying ? "📋*" : "⚡";
+    console.log(`${statusIcon} Unified param update: ${message.param} = ${message.startValue}${message.endValue !== undefined ? ` → ${message.endValue}` : ''}`);
+    
+    if (message.isPlaying) {
+      // Playing: Stage for EOC application
+      console.log(`📋 Staging ${message.param} for EOC`);
+      this.stagedParamUpdates = this.stagedParamUpdates || {};
+      this.stagedParamUpdates[message.param] = {
+        startValue: message.startValue,
+        endValue: message.endValue,
+        interpolation: message.interpolation,
+        portamentoTime: message.portamentoTime,
+      };
+    } else {
+      // Paused/stopped: Apply immediately at current phase with portamento
+      console.log(`⚡ Applying ${message.param} immediately with ${message.portamentoTime}ms portamento`);
+      this.applyParameterUpdate(
+        message.param, 
+        message.startValue, 
+        message.endValue, 
+        message.interpolation, 
+        message.portamentoTime,
+        message.currentPhase
+      );
+    }
+  }
+
+  applyParameterUpdate(param, startValue, endValue, interpolation, portamentoTime = 0, currentPhase = null) {
+    if (!this.programNode) return;
+
+    const phaseParam = this.programNode.parameters.get("phase");
+    const phase = currentPhase !== null ? currentPhase : phaseParam.value;
+    
+    if (interpolation === "step") {
+      // Step interpolation - use constant value with portamento
+      if (portamentoTime > 0) {
+        this.applyWithPortamento(param, startValue, portamentoTime);
+      } else {
+        this.programNode.port.postMessage({
+          type: "SET_STEP_VALUES",
+          params: { [param]: startValue }
+        });
+      }
+    } else if (!this.isPlaying && endValue !== undefined) {
+      // Paused with cosine interpolation - calculate interpolated value at current phase
+      const shapedProgress = 0.5 - Math.cos(phase * Math.PI) * 0.5;
+      const interpolatedValue = startValue + (endValue - startValue) * shapedProgress;
+      
+      console.log(`🎯 Interpolating ${param} at phase ${phase.toFixed(3)}: ${startValue} → ${endValue} = ${interpolatedValue.toFixed(3)}`);
+      
+      if (portamentoTime > 0) {
+        this.applyWithPortamento(param, interpolatedValue, portamentoTime);
+      } else {
+        this.programNode.port.postMessage({
+          type: "SET_INTERPOLATED_VALUE",
+          param: param,
+          value: interpolatedValue
+        });
+      }
+    } else {
+      // Playing with cosine interpolation - set up envelope for next cycle
+      if (endValue !== undefined) {
+        this.programNode.port.postMessage({
+          type: "SET_COS_SEGMENTS", 
+          params: { 
+            [param]: { 
+              start: startValue, 
+              end: endValue 
+            } 
+          }
+        });
+      }
+    }
+  }
+
+  applyWithPortamento(param, targetValue, portamentoTime) {
+    // Find the current output value for this parameter
+    const outputIndex = this.programNode.parameterOutputs?.[param];
+    if (outputIndex === undefined) {
+      console.warn(`No output index found for parameter ${param}`);
+      return;
+    }
+
+    // Get current value from worklet
+    const currentValue = this.programNode.currentValues?.[param] || 0;
+    
+    console.log(`🎵 Portamento ${param}: ${currentValue.toFixed(3)} → ${targetValue.toFixed(3)} over ${portamentoTime}ms`);
+
+    if (portamentoTime <= 0 || Math.abs(currentValue - targetValue) < 0.001) {
+      // No portamento needed or values are too close
+      this.programNode.port.postMessage({
+        type: "SET_INTERPOLATED_VALUE",
+        param: param,
+        value: targetValue
+      });
+      return;
+    }
+
+    // Implement smooth transition using requestAnimationFrame
+    const startTime = performance.now();
+    const startValue = currentValue;
+    const valueRange = targetValue - startValue;
+    
+    const smoothTransition = (currentTime) => {
+      const elapsed = currentTime - startTime;
+      const progress = Math.min(elapsed / portamentoTime, 1.0);
+      
+      // Use exponential easing for more musical portamento
+      const easedProgress = 1 - Math.exp(-4 * progress);
+      const currentVal = startValue + (valueRange * easedProgress);
+      
+      this.programNode.port.postMessage({
+        type: "SET_INTERPOLATED_VALUE",
+        param: param,
+        value: currentVal
+      });
+      
+      if (progress < 1.0) {
+        requestAnimationFrame(smoothTransition);
+      } else {
+        // Ensure final value is exact
+        this.programNode.port.postMessage({
+          type: "SET_INTERPOLATED_VALUE",
+          param: param,
+          value: targetValue
+        });
+      }
+    };
+    
+    requestAnimationFrame(smoothTransition);
   }
   
   pauseEnvelopes() {
