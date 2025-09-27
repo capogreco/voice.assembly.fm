@@ -56,6 +56,8 @@ class PhasorProcessor extends AudioWorkletProcessor {
 
         case "reset":
           this.phase = 0.0;
+          // Only reset phase - don't automatically trigger cycle-reset
+          // Cycle resets are now handled explicitly by transport controls
           break;
 
         case "set-phase":

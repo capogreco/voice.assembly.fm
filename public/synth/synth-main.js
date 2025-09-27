@@ -70,6 +70,10 @@ class SynthClient {
     this.phasorRate = 0.5; // Phasor increment per second (1.0 / cycleLength)
     this.interpolatedPhasor = 0.0; // Current interpolated phasor value
     this.phasorUpdateId = null; // RequestAnimationFrame ID for interpolation
+    
+    // Envelope control state
+    this.isPaused = false;
+    this.pausedPhase = 0;
 
     // AudioWorklet phasor
     this.phasorWorklet = null; // AudioWorkletNode for sample-accurate phasor
@@ -1637,22 +1641,97 @@ class SynthClient {
     switch (message.action) {
       case 'play':
         this.phasorWorklet.port.postMessage({ type: 'start' });
+        
+        if (this.isPaused) {
+          // Resume from paused position
+          console.log(`🎯 Resuming from paused phase: ${this.pausedPhase}`);
+          const phaseParam = this.programNode.parameters.get("phase");
+          const currentTime = this.audioContext.currentTime;
+          const remainingCycleTime = (1.0 - this.pausedPhase) * this.receivedCycleLength;
+          
+          phaseParam.cancelScheduledValues(currentTime);
+          phaseParam.setValueAtTime(this.pausedPhase, currentTime);
+          phaseParam.linearRampToValueAtTime(1.0, currentTime + remainingCycleTime);
+          
+          this.isPaused = false;
+        } else if (this.receivedPhasor === 0.0 || this.receivedPhasor === undefined) {
+          // Starting from beginning
+          console.log("🎯 Starting from phase 0.0 - triggering immediate cycle reset");
+          this.triggerImmediateCycleReset();
+        }
         break;
+        
       case 'pause':
         this.phasorWorklet.port.postMessage({ type: 'stop' });
+        this.pauseEnvelopes();
         break;
+        
       case 'stop':
         this.phasorWorklet.port.postMessage({ type: 'stop' });
         this.phasorWorklet.port.postMessage({ type: 'reset' });
+        this.stopEnvelopes();
         break;
     }
   }
 
   handleJumpToEOC(message) {
-    console.log("🎮 Jump to EOC");
+    console.log("🎮 Jump to EOC / Reset");
     if (this.phasorWorklet) {
       this.phasorWorklet.port.postMessage({ type: 'reset' });
     }
+    
+    // Immediately trigger cycle reset to start envelopes
+    this.triggerImmediateCycleReset();
+  }
+  
+  triggerImmediateCycleReset() {
+    if (!this.programNode) return;
+    
+    console.log("🔄 Triggering immediate cycle reset for envelope restart");
+    
+    // Create synthetic reset data
+    const resetData = {
+      cycleLength: this.receivedCycleLength || 2.0,
+      sampleIndex: 0,
+      blockSize: 128
+    };
+    
+    // Call handleCycleReset to start envelopes immediately
+    this.handleCycleReset(resetData);
+  }
+  
+  pauseEnvelopes() {
+    if (!this.programNode) return;
+    
+    console.log("⏸️ Pausing envelopes at current phase");
+    
+    const phaseParam = this.programNode.parameters.get("phase");
+    const currentTime = this.audioContext.currentTime;
+    
+    // Store current phase value for resume
+    this.pausedPhase = phaseParam.value;
+    this.isPaused = true;
+    
+    // Cancel all scheduled automation and hold at current value
+    phaseParam.cancelScheduledValues(currentTime);
+    phaseParam.setValueAtTime(this.pausedPhase, currentTime);
+  }
+  
+  stopEnvelopes() {
+    if (!this.programNode) return;
+    
+    console.log("⏹️ Stopping envelopes and resetting to phase 0");
+    
+    const phaseParam = this.programNode.parameters.get("phase");
+    const currentTime = this.audioContext.currentTime;
+    
+    // Reset state
+    this.isPaused = false;
+    this.pausedPhase = 0;
+    
+    // Cancel all scheduled automation and set to 0
+    phaseParam.cancelScheduledValues(currentTime);
+    phaseParam.setValueAtTime(0, currentTime);
   }
 
   applyResolvedState(resolvedState) {

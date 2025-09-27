@@ -1134,7 +1134,6 @@ var ControlClient = class {
     this.phasorBroadcastRate = 30;
     this.pendingPeriodSec = null;
     this.pendingStepsPerCycle = null;
-    this.applyTimingAtEOC = true;
     this.audioContext = null;
     this.es8Enabled = false;
     this.es8Node = null;
@@ -1156,12 +1155,11 @@ var ControlClient = class {
       // Phasor controls
       periodInput: document.getElementById("period-seconds"),
       stepsInput: document.getElementById("steps-per-cycle"),
-      applyTempoAtEOCCheckbox: document.getElementById("apply-tempo-at-eoc"),
       // Transport controls
       playBtn: document.getElementById("play-btn"),
       pauseBtn: document.getElementById("pause-btn"),
       stopBtn: document.getElementById("stop-btn"),
-      jumpEOCBtn: document.getElementById("jump-eoc-btn"),
+      resetBtn: document.getElementById("reset-btn"),
       stepsPerCycleSlider: document.getElementById("steps-per-cycle-slider"),
       stepsPerCycleValue: document.getElementById("steps-per-cycle-value"),
       phasorDisplay: document.getElementById("phasor-display"),
@@ -1237,33 +1235,15 @@ var ControlClient = class {
     if (this.elements.periodInput) {
       this.elements.periodInput.addEventListener("input", (e) => {
         const newPeriod = parseFloat(e.target.value);
-        if (this.applyTimingAtEOC) {
-          this.pendingPeriodSec = newPeriod;
-          this.log(`Period staged for EOC: ${newPeriod}s (pending)`, "info");
-        } else {
-          this.periodSec = newPeriod;
-          this.cycleLength = this.periodSec;
-          this.log(`Period changed to ${this.periodSec}s (immediate)`, "info");
-        }
+        this.pendingPeriodSec = newPeriod;
+        this.log(`Period staged for EOC: ${newPeriod}s (pending)`, "info");
       });
     }
     if (this.elements.stepsInput) {
       this.elements.stepsInput.addEventListener("input", (e) => {
         const newSteps = parseInt(e.target.value);
-        if (this.applyTimingAtEOC) {
-          this.pendingStepsPerCycle = newSteps;
-          this.log(`Steps staged for EOC: ${newSteps} (pending)`, "info");
-        } else {
-          this.stepsPerCycle = newSteps;
-          this.updatePhasorTicks();
-          this.log(`Steps per cycle changed to ${this.stepsPerCycle} (immediate)`, "info");
-        }
-      });
-    }
-    if (this.elements.applyTempoAtEOCCheckbox) {
-      this.elements.applyTempoAtEOCCheckbox.addEventListener("change", (e) => {
-        this.applyTimingAtEOC = e.target.checked;
-        this.log(`Apply timing at EOC: ${this.applyTimingAtEOC}`, "info");
+        this.pendingStepsPerCycle = newSteps;
+        this.log(`Steps staged for EOC: ${newSteps} (pending)`, "info");
       });
     }
     if (this.elements.playBtn) {
@@ -1281,9 +1261,9 @@ var ControlClient = class {
         this.handleTransport("stop");
       });
     }
-    if (this.elements.jumpEOCBtn) {
-      this.elements.jumpEOCBtn.addEventListener("click", () => {
-        this.handleJumpToEOC();
+    if (this.elements.resetBtn) {
+      this.elements.resetBtn.addEventListener("click", () => {
+        this.handleReset();
       });
     }
     if (this.elements.stepsPerCycleSlider) {
@@ -2098,11 +2078,17 @@ var ControlClient = class {
   // Transport control methods
   handleTransport(action) {
     console.log(`Transport: ${action}`);
+    const wasAtZero = this.phasor === 0;
     switch (action) {
       case "play":
         this.isPlaying = true;
         this.lastPhasorTime = performance.now() / 1e3;
         this.log("Global phasor started", "info");
+        if (wasAtZero && this.star) {
+          console.log("\u{1F504} Triggering EOC event - playing from reset position");
+          const eocMessage = MessageBuilder.jumpToEOC();
+          this.star.broadcastToType("synth", eocMessage, "control");
+        }
         break;
       case "pause":
         this.isPlaying = false;
@@ -2116,14 +2102,23 @@ var ControlClient = class {
         this.log("Global phasor stopped and reset", "info");
         break;
     }
+    if (this.star) {
+      const transportMessage = MessageBuilder.transport(action);
+      this.star.broadcastToType("synth", transportMessage, "control");
+    }
     this.broadcastPhasor(performance.now() / 1e3);
   }
-  handleJumpToEOC() {
-    console.log("Jump to EOC");
+  handleReset() {
+    console.log("Reset phasor");
+    this.phasor = 0;
+    this.lastPhasorTime = performance.now() / 1e3;
+    this.updatePhasorDisplay();
     if (this.star) {
       const message = MessageBuilder.jumpToEOC();
       this.star.broadcastToType("synth", message, "control");
     }
+    this.broadcastPhasor(performance.now() / 1e3);
+    this.log("Global phasor reset to 0.0", "info");
   }
   async connectToNetwork() {
     try {
