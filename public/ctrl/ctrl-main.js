@@ -1093,12 +1093,12 @@ var ControlClient = class {
   }
   /**
    * Apply HRG changes when paused
-   * Updates active state directly and broadcasts program configuration for synths to resolve with portamento
+   * Updates active state directly and broadcasts only the changed parameter with portamento
    */
   _applyHRGChangeWithPortamento(action) {
     this._updateActiveState(action);
     const portamentoTime = this.elements.portamentoTime ? parseInt(this.elements.portamentoTime.value) : 100;
-    this.broadcastMusicalParameters(portamentoTime);
+    this.broadcastSingleParameterUpdate(action.param, portamentoTime);
   }
   /**
    * Update the active musical state directly (bypassing pending state)
@@ -2047,6 +2047,47 @@ var ControlClient = class {
     const message = MessageBuilder.createParameterUpdate(MessageTypes.PROGRAM_UPDATE, wirePayload);
     this.star.broadcast(message);
     this.log(`\u{1F4E1} Broadcasted musical parameters${portamentoTime ? ` with ${portamentoTime}ms portamento` : ""}`, "info");
+  }
+  /**
+   * Broadcast update for a single parameter with portamento
+   * More efficient than broadcasting entire state when only one parameter changed
+   */
+  broadcastSingleParameterUpdate(paramName, portamentoTime) {
+    if (!this.star) return;
+    const paramState = this.musicalState[paramName];
+    const wirePayload = {
+      synthesisActive: this.synthesisActive,
+      portamentoTime
+    };
+    if (paramState.scope === "direct") {
+      wirePayload[paramName] = paramState;
+    } else {
+      const startGen = {
+        ...paramState.startValueGenerator
+      };
+      if (startGen.type === "periodic") {
+        startGen.baseValue = paramState.directValue;
+      }
+      let endGen = void 0;
+      if (paramState.interpolation !== "step" && paramState.endValueGenerator) {
+        endGen = {
+          ...paramState.endValueGenerator
+        };
+        if (endGen.type === "periodic") {
+          endGen.baseValue = paramState.directValue;
+        }
+      }
+      wirePayload[paramName] = {
+        scope: "program",
+        interpolation: paramState.interpolation,
+        startValueGenerator: startGen,
+        endValueGenerator: endGen,
+        directValue: paramState.directValue
+      };
+    }
+    const message = MessageBuilder.createParameterUpdate(MessageTypes.PROGRAM_UPDATE, wirePayload);
+    this.star.broadcast(message);
+    this.log(`\u{1F4E1} Broadcasted ${paramName} update with ${portamentoTime}ms portamento`, "info");
   }
   // Removed splitParametersByMode - no longer needed with separated state
   broadcastDirectParameters() {

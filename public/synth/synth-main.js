@@ -757,9 +757,7 @@ class SynthClient {
     const targetTime = this.audioContext.currentTime + portamentoDurationSec;
     
     // For each parameter, resolve new values and apply with AudioParam ramping
-    console.log(`🔍 Debug: Processing ${Object.keys(this.programConfig).length} parameters from programConfig`);
     for (const [paramName, paramData] of Object.entries(this.programConfig)) {
-      console.log(`🔍 Debug: Processing parameter: ${paramName}, scope: ${paramData.scope}`);
       if (this.lastResolvedValues.hasOwnProperty(paramName)) {
         let startValue, endValue;
         
@@ -784,11 +782,6 @@ class SynthClient {
         if (startValue !== undefined) {
           const startParam = this.unifiedSynthNode.parameters.get(`${paramName}_start`);
           const endParam = this.unifiedSynthNode.parameters.get(`${paramName}_end`);
-          
-          // Debug: Log available parameters and what we're trying to access
-          console.log(`🔍 Debug: Trying to access ${paramName}_start parameter`);
-          console.log(`🔍 Available parameters:`, Array.from(this.unifiedSynthNode.parameters.keys()));
-          console.log(`🔍 startParam exists:`, !!startParam, `endParam exists:`, !!endParam);
           
           if (startParam) {
             // Get current value as starting point for ramping
@@ -840,11 +833,6 @@ class SynthClient {
 
     // Check if this update includes portamento time for paused parameter changes
     const hasPortamento = message.portamentoTime !== undefined;
-    
-    // Debug: Log the message and portamento detection
-    console.log(`🔍 Debug: handleProgramUpdate message:`, message);
-    console.log(`🔍 Debug: message.portamentoTime =`, message.portamentoTime);
-    console.log(`🔍 Debug: hasPortamento =`, hasPortamento);
 
     // Store program config in main thread (we are the musical brain now)
     this.programConfig = {};
@@ -907,7 +895,6 @@ class SynthClient {
     console.log("✅ Program config stored in main thread, HRG states initialized");
     
     // If synthesis is active, handle audio output based on whether portamento is requested
-    console.log(`🔍 Debug: this.synthesisActive =`, this.synthesisActive, `hasPortamento =`, hasPortamento);
     if (this.synthesisActive) {
       if (hasPortamento) {
         // Apply program parameters with portamento (for paused updates)
@@ -915,11 +902,8 @@ class SynthClient {
         this.applyProgramWithPortamento(message.portamentoTime);
       } else {
         // Immediate synthesis (for initial activation or when playing)
-        console.log(`🔍 Debug: Taking immediate synthesis path (no portamento)`);
         this.activateImmediateSynthesis();
       }
-    } else {
-      console.log(`🔍 Debug: Skipping synthesis (synthesisActive = false)`);
     }
   }
 

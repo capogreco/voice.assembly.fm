@@ -192,7 +192,7 @@ class ControlClient {
 
   /**
    * Apply HRG changes when paused
-   * Updates active state directly and broadcasts program configuration for synths to resolve with portamento
+   * Updates active state directly and broadcasts only the changed parameter with portamento
    */
   private _applyHRGChangeWithPortamento(action: any) {
     // Update active state with the HRG change (no pending state when paused)
@@ -202,9 +202,9 @@ class ControlClient {
     const portamentoTime = this.elements.portamentoTime ? 
       parseInt(this.elements.portamentoTime.value) : 100;
     
-    // Broadcast the complete program configuration with portamento time
-    // Synths will resolve values using current phase and apply portamento
-    this.broadcastMusicalParameters(portamentoTime);
+    // Use targeted parameter update instead of broadcasting entire program
+    // This avoids re-randomizing unchanged parameters
+    this.broadcastSingleParameterUpdate(action.param, portamentoTime);
   }
 
   /**
@@ -1521,6 +1521,56 @@ class ControlClient {
     );
     this.star.broadcast(message);
     this.log(`📡 Broadcasted musical parameters${portamentoTime ? ` with ${portamentoTime}ms portamento` : ''}`, "info");
+  }
+
+  /**
+   * Broadcast update for a single parameter with portamento
+   * More efficient than broadcasting entire state when only one parameter changed
+   */
+  broadcastSingleParameterUpdate(paramName: keyof IMusicalState, portamentoTime: number) {
+    if (!this.star) return;
+
+    const paramState = this.musicalState[paramName];
+    
+    // Create minimal payload with only the changed parameter
+    const wirePayload: any = {
+      synthesisActive: this.synthesisActive,
+      portamentoTime: portamentoTime,
+    };
+
+    // Add the single parameter in discriminated union format
+    if (paramState.scope === "direct") {
+      wirePayload[paramName] = paramState;
+    } else { // scope is 'program'
+      // Prepare generator with proper baseValue for program parameters
+      const startGen = { ...paramState.startValueGenerator };
+      if (startGen.type === "periodic") {
+        startGen.baseValue = paramState.directValue;
+      }
+
+      let endGen = undefined;
+      if (paramState.interpolation !== "step" && paramState.endValueGenerator) {
+        endGen = { ...paramState.endValueGenerator };
+        if (endGen.type === "periodic") {
+          endGen.baseValue = paramState.directValue;
+        }
+      }
+
+      wirePayload[paramName] = {
+        scope: "program",
+        interpolation: paramState.interpolation,
+        startValueGenerator: startGen,
+        endValueGenerator: endGen,
+        directValue: paramState.directValue,
+      };
+    }
+
+    const message = MessageBuilder.createParameterUpdate(
+      MessageTypes.PROGRAM_UPDATE,
+      wirePayload,
+    );
+    this.star.broadcast(message);
+    this.log(`📡 Broadcasted ${paramName} update with ${portamentoTime}ms portamento`, "info");
   }
 
   // Removed splitParametersByMode - no longer needed with separated state
