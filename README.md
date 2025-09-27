@@ -32,6 +32,8 @@ timing synchronization system.
   notation and temporal behaviors
 - ✅ **Deferred Parameter Application**: Changes batched and applied via "Apply
   Changes" button in control panel
+- ✅ **Scene Memory System**: In-memory save/load system with per-synth state
+  preservation and re-resolve functionality
 
 ### Quick Start
 
@@ -87,6 +89,12 @@ refresh.
    - HRG values change at phasor cycle boundaries (EOC)
 8. **New synths automatically receive current state** - no need to retoggle
    modes
+9. **Scene Memory System**:
+   - **Save**: Click numbered save buttons (0-9) to capture current state
+   - **Load**: Click numbered load buttons to restore saved state  
+   - **Re-resolve**: Click "re-resolve" button to randomize HRG indices across all synths
+   - **Per-synth memory**: Each synth maintains its own 10-slot scene memory
+   - **Ephemeral storage**: Scene memory lost on page refresh (by design)
 
 ### Architecture Overview
 
@@ -212,6 +220,45 @@ temporal behaviors.
 **Musical Effect**: Each synth client receives unique but harmonically-related
 frequency values, creating rich ensemble textures while maintaining rhythmic
 synchronization.
+
+### Scene Memory System
+
+**Overview**: The scene memory system allows performers to save and recall
+different musical states during performance, enabling dynamic transitions
+between pre-configured ensemble textures.
+
+**Architecture**: 
+- **Per-synth storage**: Each synth client maintains its own independent 10-slot memory
+- **In-memory only**: Scenes are stored in browser memory (lost on page refresh)
+- **State preservation**: Saves HRG indices, sequence orders, and direct parameter values
+- **No conflicts**: Each browser tab has its own isolated scene memory
+
+**Save Process**:
+1. **Controller saves program**: Program configuration stored in controller's localStorage
+2. **Synths save state independently**: Each synth captures its current:
+   - HRG sequence state (indices and shuffle orders)
+   - Direct parameter values (amplitude, white noise, etc.)
+   - Generator configurations
+
+**Load Process**:
+1. **Controller loads program**: Updates UI and broadcasts program to synths  
+2. **Synths restore individual state**: Each synth:
+   - Checks its own memory slot for saved state
+   - Restores saved HRG indices and sequences (preserving unique frequencies)
+   - Applies saved direct parameter values
+   - Falls back to fresh initialization if no saved state exists
+
+**Re-resolve Functionality**:
+- **Purpose**: Instantly randomize static HRG indices across all synths
+- **Trigger**: "re-resolve" button in controller interface
+- **Effect**: Each synth generates new random indices at next End-of-Cycle
+- **Use case**: Create new ensemble texture variations during performance
+
+**Benefits**:
+- **No ID conflicts**: Eliminates issues with shared localStorage between browser tabs
+- **True per-synth uniqueness**: Each synth maintains its own musical state
+- **Simple architecture**: No complex synchronization or conflict resolution
+- **Performance-friendly**: Instant scene transitions with preserved timing
 
 ### Envelope System
 
