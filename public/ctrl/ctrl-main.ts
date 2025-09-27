@@ -41,7 +41,7 @@ class ControlClient {
   forceTakeover: boolean;
   peerId: string;
   phasor: number;
-  cpm: number;
+  periodSec: number;
   stepsPerCycle: number;
   cycleLength: number;
   lastPhasorTime: number;
@@ -264,13 +264,19 @@ class ControlClient {
 
     // Phasor state
     this.phasor = 0.0; // Current phasor position (0.0 to 1.0)
-    this.cpm = 30; // Cycles per minute
+    this.isPlaying = false; // Global transport state - starts paused
+    this.periodSec = 2.0; // Period in seconds (default 2.0)
     this.stepsPerCycle = 16; // Number of steps per cycle
-    this.cycleLength = 2.0; // Seconds per cycle (calculated from CPM)
+    this.cycleLength = 2.0; // Seconds per cycle (same as periodSec)
     this.lastPhasorTime = 0; // For delta time calculation
     this.phasorUpdateId = null; // RequestAnimationFrame ID
     this.lastBroadcastTime = 0; // For phasor broadcast rate limiting
     this.phasorBroadcastRate = 30; // Hz - how often to broadcast phasor
+
+    // EOC-staged timing changes
+    this.pendingPeriodSec = null; // Pending period change
+    this.pendingStepsPerCycle = null; // Pending steps change
+    this.applyTimingAtEOC = true; // Apply timing changes at EOC flag
 
     // ES-8 Integration
     this.audioContext = null; // AudioContext for ES-8 CV output
@@ -292,12 +298,12 @@ class ControlClient {
     // UI Elements
     this.elements = {
       connectionStatus: document.getElementById("connection-status"),
-      connectionValue: document.getElementById("connection-value"),
-      peersStatus: document.getElementById("peers-status"),
-      peersValue: document.getElementById("peers-value"),
+      connectionValue: document.getElementById("connection-status"), // Same element as connectionStatus
+      synthesisStatus: document.getElementById("synthesis-status"),
+      // Removed peers status - now using synth count in connected synths panel
 
       takeoverSection: document.getElementById("takeover-section"),
-      takeoverBtn: document.getElementById("takeover-btn"),
+      takeoverBtn: document.getElementById("force-takeover-btn"),
 
       manualModeBtn: document.getElementById("manual-mode-btn"),
 
@@ -306,12 +312,20 @@ class ControlClient {
       frequencyValue: document.getElementById("frequency-value"),
 
       // Phasor controls
-      cpmSlider: document.getElementById("cpm-slider"),
-      cpmValue: document.getElementById("cpm-value"),
+      periodInput: document.getElementById("period-seconds"),
+      stepsInput: document.getElementById("steps-per-cycle"),
+      applyTempoAtEOCCheckbox: document.getElementById("apply-tempo-at-eoc"),
+      
+      // Transport controls
+      playBtn: document.getElementById("play-btn"),
+      pauseBtn: document.getElementById("pause-btn"),
+      stopBtn: document.getElementById("stop-btn"),
+      jumpEOCBtn: document.getElementById("jump-eoc-btn"),
       stepsPerCycleSlider: document.getElementById("steps-per-cycle-slider"),
       stepsPerCycleValue: document.getElementById("steps-per-cycle-value"),
       phasorDisplay: document.getElementById("phasor-display"),
       phasorBar: document.getElementById("phasor-bar"),
+      phasorTicks: document.getElementById("phasor-ticks"),
 
       // ES-8 controls
       es8EnableBtn: document.getElementById("es8-enable-btn"),
@@ -321,8 +335,9 @@ class ControlClient {
       reresolveBtn: document.getElementById("reresolve-btn"),
 
       peerList: document.getElementById("peer-list"),
+      synthCount: document.getElementById("synth-count"),
       debugLog: document.getElementById("debug-log"),
-      clearLogBtn: document.getElementById("clear-log-btn"),
+      clearLogBtn: document.getElementById("clear-log-btn"), // Note: removed from layout
       
       // Scene memory
       clearBanksBtn: document.getElementById("clear-banks-btn"),
@@ -346,11 +361,13 @@ class ControlClient {
       !!this.elements.applyParamsBtn,
     );
 
-    // Manual mode
-    this.elements.manualModeBtn.addEventListener(
-      "click",
-      () => this.toggleSynthesis(),
-    );
+    // Manual mode (button doesn't exist in current layout)
+    if (this.elements.manualModeBtn) {
+      this.elements.manualModeBtn.addEventListener(
+        "click",
+        () => this.toggleSynthesis(),
+      );
+    }
 
     // Takeover button
     this.elements.takeoverBtn.addEventListener("click", () => {
@@ -361,7 +378,10 @@ class ControlClient {
     });
 
     // Debug log
-    this.elements.clearLogBtn.addEventListener("click", () => this.clearLog());
+    // Clear log button (removed from layout)
+    if (this.elements.clearLogBtn) {
+      this.elements.clearLogBtn.addEventListener("click", () => this.clearLog());
+    }
     
     // Clear banks button
     if (this.elements.clearBanksBtn) {
@@ -412,13 +432,65 @@ class ControlClient {
     // Envelope controls for all parameters that support them
     this.setupEnvelopeControls();
 
-    // CPM slider
-    if (this.elements.cpmSlider) {
-      this.elements.cpmSlider.addEventListener("input", (e) => {
-        this.cpm = parseFloat(e.target.value);
-        this.elements.cpmValue.textContent = `${this.cpm} CPM`;
-        this.calculateCycleLength();
-        this.log(`CPM changed to ${this.cpm}`, "info");
+    // Period and steps inputs
+    if (this.elements.periodInput) {
+      this.elements.periodInput.addEventListener("input", (e) => {
+        const newPeriod = parseFloat(e.target.value);
+        if (this.applyTimingAtEOC) {
+          this.pendingPeriodSec = newPeriod;
+          this.log(`Period staged for EOC: ${newPeriod}s (pending)`, "info");
+        } else {
+          this.periodSec = newPeriod;
+          this.cycleLength = this.periodSec;
+          this.log(`Period changed to ${this.periodSec}s (immediate)`, "info");
+        }
+      });
+    }
+
+    if (this.elements.stepsInput) {
+      this.elements.stepsInput.addEventListener("input", (e) => {
+        const newSteps = parseInt(e.target.value);
+        if (this.applyTimingAtEOC) {
+          this.pendingStepsPerCycle = newSteps;
+          this.log(`Steps staged for EOC: ${newSteps} (pending)`, "info");
+        } else {
+          this.stepsPerCycle = newSteps;
+          this.updatePhasorTicks();
+          this.log(`Steps per cycle changed to ${this.stepsPerCycle} (immediate)`, "info");
+        }
+      });
+    }
+
+    // Apply at EOC checkbox
+    if (this.elements.applyTempoAtEOCCheckbox) {
+      this.elements.applyTempoAtEOCCheckbox.addEventListener("change", (e) => {
+        this.applyTimingAtEOC = e.target.checked;
+        this.log(`Apply timing at EOC: ${this.applyTimingAtEOC}`, "info");
+      });
+    }
+
+    // Transport controls
+    if (this.elements.playBtn) {
+      this.elements.playBtn.addEventListener("click", () => {
+        this.handleTransport("play");
+      });
+    }
+
+    if (this.elements.pauseBtn) {
+      this.elements.pauseBtn.addEventListener("click", () => {
+        this.handleTransport("pause");
+      });
+    }
+
+    if (this.elements.stopBtn) {
+      this.elements.stopBtn.addEventListener("click", () => {
+        this.handleTransport("stop");
+      });
+    }
+
+    if (this.elements.jumpEOCBtn) {
+      this.elements.jumpEOCBtn.addEventListener("click", () => {
+        this.handleJumpToEOC();
       });
     }
 
@@ -1328,29 +1400,84 @@ class ControlClient {
 
   // Phasor Management Methods
   calculateCycleLength() {
-    // Calculate cycle length: 60 seconds/minute / CPM
-    // Example: 30 CPM = 60/30 = 2.0 seconds per cycle
-    this.cycleLength = 60.0 / this.cpm;
+    // Period-based: cycle length equals period in seconds
+    this.cycleLength = this.periodSec;
+  }
+
+  applyPendingTimingChanges() {
+    let changed = false;
+    
+    if (this.pendingPeriodSec !== null) {
+      this.periodSec = this.pendingPeriodSec;
+      this.cycleLength = this.periodSec;
+      this.log(`Applied period change: ${this.periodSec}s`, "info");
+      this.pendingPeriodSec = null;
+      changed = true;
+    }
+    
+    if (this.pendingStepsPerCycle !== null) {
+      this.stepsPerCycle = this.pendingStepsPerCycle;
+      this.updatePhasorTicks();
+      this.log(`Applied steps change: ${this.stepsPerCycle}`, "info");
+      this.pendingStepsPerCycle = null;
+      changed = true;
+    }
+    
+    if (changed) {
+      // Update UI to reflect changes
+      if (this.elements.periodInput) {
+        this.elements.periodInput.value = this.periodSec.toString();
+      }
+      if (this.elements.stepsInput) {
+        this.elements.stepsInput.value = this.stepsPerCycle.toString();
+      }
+    }
   }
 
   initializePhasor() {
     this.phasor = 0.0;
     this.lastPhasorTime = performance.now() / 1000.0;
+    this.updatePhasorTicks();
     this.startPhasorUpdate();
     this.updatePhasorDisplay();
+  }
+
+  updatePhasorTicks() {
+    if (!this.elements.phasorTicks) return;
+
+    // Clear existing ticks
+    this.elements.phasorTicks.innerHTML = '';
+
+    // Generate new ticks based on stepsPerCycle
+    for (let i = 0; i < this.stepsPerCycle; i++) {
+      const tick = document.createElement('div');
+      tick.className = 'phasor-tick';
+      tick.style.left = `${(i / this.stepsPerCycle) * 100}%`;
+      this.elements.phasorTicks.appendChild(tick);
+    }
   }
 
   updatePhasor() {
     const currentTime = performance.now() / 1000.0;
     const deltaTime = currentTime - this.lastPhasorTime;
 
-    // Update phasor
-    const phasorIncrement = deltaTime / this.cycleLength;
-    this.phasor += phasorIncrement;
+    // Only advance phasor when playing
+    if (this.isPlaying) {
+      // Update phasor
+      const phasorIncrement = deltaTime / this.cycleLength;
+      const previousPhasor = this.phasor;
+      this.phasor += phasorIncrement;
 
-    // Wrap around at 1.0
-    if (this.phasor >= 1.0) {
-      this.phasor -= 1.0;
+      // Detect EOC (End of Cycle)
+      const eocCrossed = this.phasor >= 1.0;
+
+      // Wrap around at 1.0
+      if (this.phasor >= 1.0) {
+        this.phasor -= 1.0;
+        
+        // Apply pending timing changes at EOC
+        this.applyPendingTimingChanges();
+      }
     }
 
     this.lastPhasorTime = currentTime;
@@ -1399,9 +1526,10 @@ class ControlClient {
     if (timeSinceLastBroadcast >= broadcastInterval) {
       const message = MessageBuilder.phasorSync(
         this.phasor,
-        this.cpm,
+        null, // cpm omitted (legacy)
         this.stepsPerCycle,
         this.cycleLength,
+        this.isPlaying,
       );
 
       const sent = this.star.broadcastToType("synth", message, "sync");
@@ -1489,7 +1617,7 @@ class ControlClient {
     this.es8Node.port.postMessage({
       type: "phasor-update",
       phasor: this.phasor,
-      cpm: this.cpm,
+      periodSec: this.periodSec,
       stepsPerCycle: this.stepsPerCycle,
       cycleLength: this.cycleLength,
     });
@@ -1525,6 +1653,41 @@ class ControlClient {
     if (this.audioContext) {
       this.audioContext.close();
       this.audioContext = null;
+    }
+  }
+
+  // Transport control methods
+  handleTransport(action) {
+    console.log(`Transport: ${action}`);
+    
+    switch (action) {
+      case 'play':
+        this.isPlaying = true;
+        this.lastPhasorTime = performance.now() / 1000.0; // Reset time tracking
+        this.log("Global phasor started", "info");
+        break;
+      case 'pause':
+        this.isPlaying = false;
+        this.log("Global phasor paused", "info");
+        break;
+      case 'stop':
+        this.isPlaying = false;
+        this.phasor = 0.0;
+        this.lastPhasorTime = performance.now() / 1000.0;
+        this.updatePhasorDisplay();
+        this.log("Global phasor stopped and reset", "info");
+        break;
+    }
+    
+    // Broadcast current phasor state immediately with new playing state
+    this.broadcastPhasor(performance.now() / 1000.0);
+  }
+
+  handleJumpToEOC() {
+    console.log("Jump to EOC");
+    if (this.star) {
+      const message = MessageBuilder.jumpToEOC();
+      this.star.broadcastToType("synth", message, "control");
     }
   }
 
@@ -1648,6 +1811,9 @@ class ControlClient {
     if (this.synthesisActive) {
       this.elements.manualModeBtn.textContent = "Disable Synthesis";
       this.elements.manualModeBtn.classList.add("active");
+      if (this.elements.synthesisStatus) {
+        this.elements.synthesisStatus.textContent = "active";
+      }
       this.log(
         "Synthesis enabled - real-time parameter control active",
         "info",
@@ -1655,6 +1821,9 @@ class ControlClient {
     } else {
       this.elements.manualModeBtn.textContent = "Enable Synthesis";
       this.elements.manualModeBtn.classList.remove("active");
+      if (this.elements.synthesisStatus) {
+        this.elements.synthesisStatus.textContent = "inactive";
+      }
       this.log("Synthesis disabled", "info");
     }
 
@@ -1703,8 +1872,10 @@ class ControlClient {
       "error",
     );
 
-    // Hide takeover section by default
-    takeoverSection.style.display = "none";
+    // Hide takeover section by default (if it exists)
+    if (takeoverSection) {
+      takeoverSection.style.display = "none";
+    }
 
     switch (status) {
       case "active":
@@ -1739,13 +1910,17 @@ class ControlClient {
   }
 
   updatePeerCount(count) {
-    this.elements.peersValue.textContent = count.toString();
+    if (this.elements.synthCount) {
+      this.elements.synthCount.textContent = count.toString();
+    }
 
-    // Update peers status color
-    if (count > 0) {
-      this.elements.peersStatus.classList.add("connected");
-    } else {
-      this.elements.peersStatus.classList.remove("connected");
+    // Update synth count color
+    if (this.elements.synthCount) {
+      if (count > 0) {
+        this.elements.synthCount.classList.add("good");
+      } else {
+        this.elements.synthCount.classList.remove("good");
+      }
     }
   }
 
@@ -1822,14 +1997,20 @@ class ControlClient {
     }[level] || "ℹ️";
 
     const logEntry = `[${timestamp}] ${prefix} ${message}\n`;
-    this.elements.debugLog.textContent += logEntry;
-    this.elements.debugLog.scrollTop = this.elements.debugLog.scrollHeight;
-
-    // Also log to console
+    
+    if (this.elements.debugLog) {
+      this.elements.debugLog.textContent += logEntry;
+      this.elements.debugLog.scrollTop = this.elements.debugLog.scrollHeight;
+    }
+    
+    // Also log to console since debug panel was removed
+    console.log(`[CTRL] ${message}`);
   }
 
   clearLog() {
-    this.elements.debugLog.textContent = "";
+    if (this.elements.debugLog) {
+      this.elements.debugLog.textContent = "";
+    }
   }
 
   setupSceneMemoryUI() {

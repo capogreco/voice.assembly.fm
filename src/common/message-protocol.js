@@ -21,6 +21,8 @@ export const MessageTypes = {
 
   // Timing Control
   PHASOR_SYNC: "phasor-sync",
+  TRANSPORT: "transport",
+  JUMP_TO_EOC: "jump-to-eoc",
 
   // System Control
   CALIBRATION_MODE: "calibration-mode",
@@ -74,13 +76,29 @@ export class MessageBuilder {
     };
   }
 
-  static phasorSync(phasor, cpm, stepsPerCycle, cycleLength) {
+  static phasorSync(phasor, cpm, stepsPerCycle, cycleLength, isPlaying = true) {
     return {
       type: MessageTypes.PHASOR_SYNC,
       phasor,
       cpm,
       stepsPerCycle,
       cycleLength,
+      isPlaying,
+      timestamp: performance.now(),
+    };
+  }
+
+  static transport(action) {
+    return {
+      type: MessageTypes.TRANSPORT,
+      action,
+      timestamp: performance.now(),
+    };
+  }
+
+  static jumpToEOC() {
+    return {
+      type: MessageTypes.JUMP_TO_EOC,
       timestamp: performance.now(),
     };
   }
@@ -224,12 +242,25 @@ export function validateMessage(message) {
     case MessageTypes.PHASOR_SYNC:
       if (
         typeof message.phasor !== "number" ||
-        typeof message.cpm !== "number" ||
+        (message.cpm !== null && typeof message.cpm !== "number") ||
         typeof message.stepsPerCycle !== "number" ||
         typeof message.cycleLength !== "number"
       ) {
         throw new Error("Phasor sync message missing required numeric fields");
       }
+      break;
+
+    case MessageTypes.TRANSPORT:
+      if (
+        typeof message.action !== "string" ||
+        !["play", "pause", "stop"].includes(message.action)
+      ) {
+        throw new Error("Transport message must have action: play, pause, or stop");
+      }
+      break;
+
+    case MessageTypes.JUMP_TO_EOC:
+      // No additional fields required
       break;
 
     case MessageTypes.PROGRAM:

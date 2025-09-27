@@ -10,7 +10,7 @@ class PhasorProcessor extends AudioWorkletProcessor {
         name: "cycleLength",
         defaultValue: 2.0,
         minValue: 0.1,
-        maxValue: 60.0,
+        maxValue: 300.0, // 5 minutes for slow cycles
         automationRate: "k-rate",
       },
       {

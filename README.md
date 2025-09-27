@@ -77,19 +77,24 @@ refresh.
 2. **Click "Connect to Network"** - should become leader automatically
 3. **Open synth client(s)** in other tabs/windows or devices
 4. **Click "Tap to Join the Choir"** on each synth client
-5. **In ctrl client, click "Start Timing"** to begin phasor synchronization
-6. **Test calibration mode** - enables white noise XY oscilloscope on all synth
+5. **Configure timing in ctrl client**:
+   - Set Period (seconds): Controls cycle duration (default 2.0s)
+   - Set Steps: Number of rhythmic divisions per cycle (default 16)  
+   - Transport controls: play, pause, stop, jump to EOC
+   - Apply at EOC toggle: Changes timing immediately or at End-of-Cycle
+6. **Click "play"** to begin phasor synchronization
+7. **Test calibration mode** - enables white noise XY oscilloscope on all synth
    clients
-7. **Test HRG system** (optional):
+8. **Test HRG system** (optional):
    - Click [H] button next to frequency parameters to enable HRG
    - Set numerators and denominators (e.g., "1,2,3" and "1,2")
    - Choose behaviors from dropdown (S=Static, A=Ascending, D=Descending,
      Sh=Shuffle, R=Random)
    - Click "Apply Changes" in control panel to send parameters to synths
    - HRG values change at phasor cycle boundaries (EOC)
-8. **New synths automatically receive current state** - no need to retoggle
+9. **New synths automatically receive current state** - no need to retoggle
    modes
-9. **Scene Memory System**:
+10. **Scene Memory System**:
    - **Save**: Click numbered save buttons (0-9) to capture current state
    - **Load**: Click numbered load buttons to restore saved state  
    - **Re-resolve**: Click "re-resolve" button to randomize HRG indices across all synths
@@ -124,7 +129,9 @@ Data Channels                 │  Data Channels
 
 **Timing Synchronization:**
 
-- `phasor-sync`: Master broadcasts current phasor position (0.0-1.0)
+- `phasor-sync`: Master broadcasts current phasor position (0.0-1.0), cycle length in seconds, and steps per cycle
+- `transport`: Transport control commands (play, pause, stop)  
+- `jump-to-eoc`: Instantly jump all synths to End-of-Cycle
 - `ping`/`pong`: RTT measurement and network health monitoring
 
 **System Control:**

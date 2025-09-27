@@ -569,6 +569,14 @@ class SynthClient {
         this.clearBank(message.memoryLocation);
         break;
 
+      case MessageTypes.TRANSPORT:
+        this.handleTransport(message);
+        break;
+
+      case MessageTypes.JUMP_TO_EOC:
+        this.handleJumpToEOC(message);
+        break;
+
       default:
         break;
     }
@@ -770,17 +778,32 @@ class SynthClient {
 
   handlePhasorSync(message) {
     this.receivedPhasor = message.phasor;
-    this.receivedCpm = message.cpm;
+    this.receivedCpm = message.cpm; // Legacy, may be null
     this.receivedStepsPerCycle = message.stepsPerCycle;
     this.receivedCycleLength = message.cycleLength;
+    this.receivedIsPlaying = message.isPlaying !== undefined ? message.isPlaying : true; // Default to true for backward compatibility
     this.lastPhasorMessage = performance.now();
 
     // Calculate phasor rate
     this.phasorRate = 1.0 / this.receivedCycleLength;
 
+    // Update phasor worklet parameters
+    if (this.phasorWorklet) {
+      this.phasorWorklet.parameters.get('cycleLength').value = this.receivedCycleLength;
+      this.phasorWorklet.parameters.get('stepsPerCycle').value = this.receivedStepsPerCycle;
+      
+      // Control phasor playback based on global playing state
+      if (this.receivedIsPlaying) {
+        this.phasorWorklet.port.postMessage({ type: "start" });
+      } else {
+        this.phasorWorklet.port.postMessage({ type: "stop" });
+      }
+    }
+
     // Store official timing and start look-ahead scheduler if needed
     if (this.programNode) {
-      console.log(`⏰ Received phasor sync: ${message.cpm} CPM`);
+      const periodDisplay = message.cpm ? `${message.cpm} CPM` : `${this.receivedCycleLength}s period`;
+      console.log(`⏰ Received phasor sync: ${periodDisplay}`);
 
       // Check if timing has changed significantly
       const newTimingConfig = {
@@ -791,8 +814,8 @@ class SynthClient {
       };
 
       const timingChanged = !this.timingConfig ||
-        this.timingConfig.cpm !== newTimingConfig.cpm ||
-        this.timingConfig.cycleLength !== newTimingConfig.cycleLength;
+        this.timingConfig.cycleLength !== newTimingConfig.cycleLength ||
+        this.timingConfig.stepsPerCycle !== newTimingConfig.stepsPerCycle;
 
       // Store the new timing config
       this.timingConfig = newTimingConfig;
@@ -1603,6 +1626,32 @@ class SynthClient {
     if (this.sceneSnapshots[bank]) {
       delete this.sceneSnapshots[bank];
       console.log(`🧹 Cleared synth scene bank ${bank} from memory`);
+    }
+  }
+
+  // Transport control methods
+  handleTransport(message) {
+    console.log(`🎮 Transport: ${message.action}`);
+    if (!this.phasorWorklet) return;
+
+    switch (message.action) {
+      case 'play':
+        this.phasorWorklet.port.postMessage({ type: 'start' });
+        break;
+      case 'pause':
+        this.phasorWorklet.port.postMessage({ type: 'stop' });
+        break;
+      case 'stop':
+        this.phasorWorklet.port.postMessage({ type: 'stop' });
+        this.phasorWorklet.port.postMessage({ type: 'reset' });
+        break;
+    }
+  }
+
+  handleJumpToEOC(message) {
+    console.log("🎮 Jump to EOC");
+    if (this.phasorWorklet) {
+      this.phasorWorklet.port.postMessage({ type: 'reset' });
     }
   }
 
