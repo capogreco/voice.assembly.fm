@@ -149,14 +149,17 @@ class SynthClient {
     this.setupEventHandlers();
     this.setupKeyboardShortcuts();
 
-    // Scene Memory: Track resolved parameter state
+    // Scene Memory: Simple in-memory snapshots (ephemeral)
+    this.sceneSnapshots = []; // Array of 10 scene slots, lost on refresh
     this.currentResolvedState = {};
     this.pendingCaptureBank = null;  // Bank to capture on next EOC
-    this.lastEocReport = null;       // Latest EOC report
-    this.stableSynthId = this.getStableSynthId(); // Persistent ID for scene storage
 
-    // Display synth ID (but it won't be visible until after joinChoir)
-    this.updateSynthIdDisplay();
+    // Musical brain state (main thread owns resolution)
+    this.programConfig = {}; // Current program configuration from controller
+    this.hrgState = {}; // HRG sequence state per parameter
+    this.reresolveAtNextEOC = false; // Flag to re-randomize static HRG indices
+
+    // Note: No persistent synth ID - using ephemeral session
 
     // Auto-connect to network on page load
     this.autoConnect();
@@ -323,18 +326,7 @@ class SynthClient {
         },
       );
       
-      // Set up worklet message listener for EOC reports
-      this.programNode.port.onmessage = (event) => {
-        if (event.data.type === 'EOC_REPORT') {
-          this.lastEocReport = event.data;
-          
-          // Capture if pending
-          if (this.pendingCaptureBank !== null) {
-            this.captureScene(this.pendingCaptureBank);
-            this.pendingCaptureBank = null;
-          }
-        }
-      };
+      // Program worklet is now a simple envelope generator - no EOC reports needed
 
       // Create voice worklet with 5 channels output (main + duplicate + F1 + F2 + F3)
       this.voiceNode = new AudioWorkletNode(
@@ -556,14 +548,9 @@ class SynthClient {
         this.handleProgramConfig(message);
         break;
 
-      case MessageTypes.RESEED_RANDOMIZATION:
-        if (this.programNode) {
-          // Ask program worklet to re-resolve stochastic values at next EOC
-          this.programNode.port.postMessage({ type: "RESEED_RANDOMIZATION" });
-          console.log(
-            "🔀 Received reseed request; forwarded to program worklet",
-          );
-        }
+      case MessageTypes.RERESOLVE_AT_EOC:
+        console.log("🔀 RERESOLVE_AT_EOC received - will re-randomize static HRG indices at next EOC");
+        this.reresolveAtNextEOC = true;
         break;
 
       case MessageTypes.SAVE_SCENE:
@@ -703,17 +690,17 @@ class SynthClient {
 
   handleProgramUpdate(message) {
     if (this.verbose) console.log("📨 PROGRAM_UPDATE received:", message);
-    // Keep last full program for scene snapshots
-    this.lastProgramUpdate = message;
+    
     if (!this.voiceNode || !this.programNode) {
       // Cache and apply after audio/worklets are initialized
       console.warn("⚠️ Worklets not ready; caching PROGRAM_UPDATE for later");
+      this.lastProgramUpdate = message;
       return;
     }
 
-    const program = message;
-    const programmaticConfigs = {};
-
+    // Store program config in main thread (we are the musical brain now)
+    this.programConfig = {};
+    
     // Handle synthesis active state
     if (message.synthesisActive !== undefined) {
       if (this.voiceNode && this.voiceNode.parameters.has("active")) {
@@ -727,7 +714,7 @@ class SynthClient {
       }
     }
 
-    for (const paramName in program) {
+    for (const paramName in message) {
       // Skip non-parameter fields
       if (
         ["type", "timestamp", "synthesisActive", "isManualMode"].includes(
@@ -735,16 +722,10 @@ class SynthClient {
         )
       ) continue;
 
-      const paramData = program[paramName];
+      const paramData = message[paramName];
 
-      // Debug: Check if white noise is in the program update
-      if (paramName === "whiteNoise") {
-        if (this.verbose) {
-          console.log(
-            `🔍 WHITE NOISE found in program update: scope=${paramData.scope}, interpolation=${paramData.interpolation}`,
-          );
-        }
-      }
+      // Store parameter config
+      this.programConfig[paramName] = paramData;
 
       // Handle discriminated union format based on scope
       if (paramData.scope === "direct") {
@@ -755,98 +736,27 @@ class SynthClient {
           console.log(`📋 Staging routing change: ${paramName} → ${desiredMode} (at next EOC)`);
         }
 
-        if (paramName === "whiteNoise") {
-          // White noise controls both audio and visualization gain
-          if (this.whiteNoiseAudioGain) {
-            this.whiteNoiseAudioGain.gain.setTargetAtTime(
-              paramData.directValue,
-              this.audioContext.currentTime,
-              0.015,
-            );
-          }
-          if (this.whiteNoiseVizGain) {
-            this.whiteNoiseVizGain.gain.setTargetAtTime(
-              paramData.directValue,
-              this.audioContext.currentTime,
-              0.015,
-            );
-          }
-          console.log(
-            `🎚️ Applied direct parameter: ${paramName} = ${paramData.directValue}`,
-          );
-        } else if (this.voiceNode.parameters.has(`${paramName}_in`)) {
-          const audioParam = this.voiceNode.parameters.get(`${paramName}_in`);
-          audioParam.setTargetAtTime(
-            paramData.directValue,
-            this.audioContext.currentTime,
-            0.015,
-          );
-          console.log(
-            `🎚️ Applied direct parameter: ${paramName} = ${paramData.directValue}`,
-          );
-        }
+        // Apply direct value immediately
+        this._setDirectValue(paramName, paramData.directValue);
+        
       } else if (paramData.scope === "program") {
-        // Don't stage program routing if a snapshot is pending for this param
-        if (this.pendingSceneState && Object.prototype.hasOwnProperty.call(this.pendingSceneState, paramName)) {
-          // Snapshot will control this param at EOC - skip program routing
-          console.log(`⏭️ Skipping program routing for ${paramName} - snapshot pending`);
-        } else {
-          // Stage routing change if different from current
-          const desiredMode = 'program';
-          if (this.currentRouting[paramName] !== desiredMode) {
-            this.pendingRouting[paramName] = desiredMode;
-            console.log(`📋 Staging routing change: ${paramName} → ${desiredMode} (at next EOC)`);
-          }
+        // Stage routing change if different from current
+        const desiredMode = 'program';
+        if (this.currentRouting[paramName] !== desiredMode) {
+          this.pendingRouting[paramName] = desiredMode;
+          console.log(`📋 Staging routing change: ${paramName} → ${desiredMode} (at next EOC)`);
         }
 
-        // Convert discriminated union to program worklet format
-        if (paramData.interpolation === "step") {
-          // Step interpolation - constant values between EOCs
-          programmaticConfigs[paramName] = {
-            interpolationType: "step",
-            startValueGenerator: paramData.startValueGenerator,
-          };
-          if (this.verbose) {
-            console.log(`🎯 Step interpolation for ${paramName}`);
-          }
-        } else {
-          // Cosine interpolation - envelope behavior
-          programmaticConfigs[paramName] = {
-            interpolationType: paramData.interpolation,
-            startValueGenerator: paramData.startValueGenerator,
-            endValueGenerator: paramData.endValueGenerator,
-          };
-          if (paramName === "whiteNoise") {
-            if (this.verbose) {
-              console.log(
-                `🎵 WHITE NOISE ${paramData.interpolation} interpolation for ${paramName}`,
-              );
-            }
-          } else {
-            if (this.verbose) {
-              console.log(
-                `📈 ${paramData.interpolation} interpolation for ${paramName}`,
-              );
-            }
-          }
+        // Initialize HRG state for periodic generators
+        this._initializeHRGState(paramName, paramData);
+        
+        if (this.verbose) {
+          console.log(`🎼 ${paramData.interpolation} interpolation for ${paramName}`);
         }
       }
     }
 
-    // Send programmatic configs to program worklet
-    if (Object.keys(programmaticConfigs).length > 0) {
-      this.programNode.port.postMessage({
-        type: "SET_PROGRAM",
-        config: programmaticConfigs,
-        synthId: this.peerId,
-      });
-      if (this.verbose) {
-        console.log(
-          "✅ Forwarded programmatic configs to program worklet:",
-          programmaticConfigs,
-        );
-      }
-    }
+    console.log("✅ Program config stored in main thread, HRG states initialized");
   }
 
   // OBSOLETE - These methods were used by the old monolithic worklet
@@ -1090,44 +1000,117 @@ class SynthClient {
     phaseParam.setValueAtTime(0, resetTime);
     phaseParam.linearRampToValueAtTime(1.0, rampEndTime);
 
-    // Compute snapshot keys that must be forced to direct
-    const snapshotParams = this.pendingSceneState ? new Set(Object.keys(this.pendingSceneState)) : new Set();
-
-    // Apply routing in two passes for correct priority
-    if (Object.keys(this.pendingRouting).length > 0 || snapshotParams.size > 0) {
-      const finalRouting = {};
-      
-      // Pass 1: Apply non-snapshot routes from pendingRouting
-      for (const [paramName, mode] of Object.entries(this.pendingRouting)) {
-        if (!snapshotParams.has(paramName)) {
-          finalRouting[paramName] = mode;
+    // Handle re-resolve request (re-randomize static HRG indices)
+    if (this.reresolveAtNextEOC) {
+      console.log(`🔀 Re-randomizing static HRG indices at EOC`);
+      for (const [param, hrgData] of Object.entries(this.hrgState)) {
+        if (hrgData.start?.numeratorBehavior === 'static') {
+          const numerators = hrgData.start.numerators;
+          hrgData.start.indexN = Math.floor(Math.random() * numerators.length);
+          console.log(`🎲 ${param} numerator: new static index ${hrgData.start.indexN} (value: ${numerators[hrgData.start.indexN]})`);
+        }
+        if (hrgData.start?.denominatorBehavior === 'static') {
+          const denominators = hrgData.start.denominators;
+          hrgData.start.indexD = Math.floor(Math.random() * denominators.length);
+          console.log(`🎲 ${param} denominator: new static index ${hrgData.start.indexD} (value: ${denominators[hrgData.start.indexD]})`);
         }
       }
-      
-      // Pass 2: Force direct for all snapshot params (override any conflicting routes)
-      for (const paramName of snapshotParams) {
-        finalRouting[paramName] = 'direct';
-      }
-      
-      // Apply all routing changes
-      if (Object.keys(finalRouting).length > 0) {
-        console.log(`🔄 Applying routing changes at EOC:`, finalRouting);
-        
-        for (const [paramName, mode] of Object.entries(finalRouting)) {
-          this._updateParameterRouting(paramName, mode);
-          this.currentRouting[paramName] = mode;
+      this.reresolveAtNextEOC = false;
+    }
+
+    // Resolve values for this cycle (main thread is the musical brain)
+    const stepValues = {};
+    const cosSegments = {};
+
+    for (const [param, config] of Object.entries(this.programConfig)) {
+      if (config.scope === 'program') {
+        if (config.interpolation === 'step') {
+          // Step interpolation - resolve single value
+          if (config.startValueGenerator?.type === 'periodic') {
+            // HRG - use sequence state
+            stepValues[param] = this._resolveHRG(param, 'start');
+          } else if (config.startValueGenerator?.type === 'normalised') {
+            // RBG - resolve scalar
+            stepValues[param] = this._resolveRBG(config.startValueGenerator);
+          }
+        } else if (config.interpolation === 'cosine') {
+          // Cosine interpolation - resolve start and end values
+          let startValue, endValue;
+          
+          if (config.startValueGenerator?.type === 'periodic') {
+            startValue = this._resolveHRG(param, 'start');
+          } else if (config.startValueGenerator?.type === 'normalised') {
+            startValue = this._resolveRBG(config.startValueGenerator);
+          } else {
+            startValue = config.startValueGenerator?.value || 0;
+          }
+
+          if (config.endValueGenerator?.type === 'periodic') {
+            endValue = this._resolveHRG(param, 'end');
+          } else if (config.endValueGenerator?.type === 'normalised') {
+            endValue = this._resolveRBG(config.endValueGenerator);
+          } else {
+            endValue = config.endValueGenerator?.value || startValue;
+          }
+
+          cosSegments[param] = { start: startValue, end: endValue };
         }
       }
     }
 
-    // Clear pending routing
-    this.pendingRouting = {};
+    // Log resolved values for debugging
+    if (Object.keys(stepValues).length > 0) {
+      console.log(`[EOC] stepValues:`, stepValues);
+      // Specific frequency step scalar logging
+      if ('frequency' in stepValues) {
+        console.log(`[EOC] frequency step scalar: ${stepValues.frequency}`);
+      }
+    }
+    if (Object.keys(cosSegments).length > 0) {
+      console.log(`[EOC] cosSegments:`, cosSegments);
+    }
 
-    // Now apply scene values (routing is already in place with snapshot params forced to direct)
+    // Send values to worklet
+    if (Object.keys(stepValues).length > 0) {
+      this.programNode.port.postMessage({
+        type: 'SET_STEP_VALUES',
+        params: stepValues
+      });
+    }
+
+    if (Object.keys(cosSegments).length > 0) {
+      this.programNode.port.postMessage({
+        type: 'SET_COS_SEGMENTS',
+        params: cosSegments
+      });
+    }
+
+    // Handle scene loading and routing (simplified)
     if (this.pendingSceneState) {
       const snapshot = this.pendingSceneState;
       this.pendingSceneState = null;
-      this.applyResolvedStateValues(snapshot);
+      
+      // Apply direct values for snapshot params
+      for (const [param, value] of Object.entries(snapshot)) {
+        this._setDirectValue(param, value);
+      }
+      
+      console.log(`📋 Applied scene snapshot:`, snapshot);
+    }
+
+    // Apply any pending routing changes
+    if (Object.keys(this.pendingRouting).length > 0) {
+      for (const [paramName, mode] of Object.entries(this.pendingRouting)) {
+        this._updateParameterRouting(paramName, mode);
+        this.currentRouting[paramName] = mode;
+      }
+      this.pendingRouting = {};
+    }
+
+    // Capture scene if requested
+    if (this.pendingCaptureBank !== null) {
+      this.captureScene(this.pendingCaptureBank);
+      this.pendingCaptureBank = null;
     }
   }
 
@@ -1491,16 +1474,6 @@ class SynthClient {
   }
 
   // Scene Memory Methods
-  getStableSynthId() {
-    let synthId = localStorage.getItem("synth_unique_id");
-    if (!synthId) {
-      synthId = `synth_${Date.now()}_${
-        Math.random().toString(36).substring(2)
-      }`;
-      localStorage.setItem("synth_unique_id", synthId);
-    }
-    return synthId;
-  }
 
   handleSaveScene(payload) {
     console.log(`💾 Will capture scene ${payload.memoryLocation} at next EOC`);
@@ -1509,14 +1482,15 @@ class SynthClient {
 
   captureScene(bank) {
     const snapshot = {};
+    const sequences = {};
     
-    // Capture state objects based on their mode AND generator type
+    // Capture minimal scene state based on parameter mode and generator type
     for (const param of ['frequency', 'vowelX', 'vowelY', 'zingAmount', 
                           'zingMorph', 'symmetry', 'amplitude', 'whiteNoise']) {
-      const paramConfig = this.lastProgramUpdate?.[param];
+      const paramConfig = this.programConfig[param];
       
-      if (!paramConfig || paramConfig?.scope === 'direct') {
-        // Direct mode - store scalar value
+      if (!paramConfig || paramConfig.scope === 'direct') {
+        // Direct mode - capture scalar value
         let value;
         if (param === 'whiteNoise') {
           value = this.whiteNoiseAudioGain?.gain.value || 0;
@@ -1528,142 +1502,108 @@ class SynthClient {
         }
         
         if (value !== undefined) {
-          snapshot[param] = { type: 'direct', value };
+          snapshot[param] = value;
         }
         
-      } else if (paramConfig?.scope === 'program') {
-        // Skip cosine parameters - they regenerate from program
-        if (paramConfig.interpolation !== 'step') {
-          console.log(`🔄 Skipping ${param} (${paramConfig.interpolation} interpolation regenerates from program)`);
-          continue;
-        }
+      } else if (paramConfig.scope === 'program' && paramConfig.interpolation === 'step') {
         // Program step mode - check generator type
         if (paramConfig.startValueGenerator?.type === 'periodic') {
-          // HRG - store sequence state
-          const sequences = this.lastEocReport?.sequences?.[param];
-          if (sequences) {
-            snapshot[param] = {
-              type: 'hrg',
-              numeratorIndex: sequences.numeratorIndex,
-              denominatorIndex: sequences.denominatorIndex,
-              numeratorShuffle: sequences.numeratorShuffle,
-              denominatorShuffle: sequences.denominatorShuffle
+          // HRG - save sequence state (not values)
+          const hrgState = this.hrgState[param]?.start;
+          if (hrgState) {
+            sequences[param] = {
+              numeratorBehavior: hrgState.numeratorBehavior,
+              denominatorBehavior: hrgState.denominatorBehavior,
+              indexN: hrgState.indexN,
+              indexD: hrgState.indexD,
+              orderN: hrgState.orderN,
+              orderD: hrgState.orderD
             };
           }
         } else if (paramConfig.startValueGenerator?.type === 'normalised') {
           // RBG - determine if stat or rand mode
           const generator = paramConfig.startValueGenerator;
           if (typeof generator.range === 'number') {
-            // Stat mode - store scalar
-            snapshot[param] = { type: 'rbg_stat', value: generator.range };
-          } else if (generator.range && typeof generator.range === 'object') {
-            // Rand mode - store range
-            snapshot[param] = { 
-              type: 'rbg_rand', 
-              min: generator.range.min, 
-              max: generator.range.max 
-            };
+            // Stat mode - save scalar value
+            snapshot[param] = generator.range;
           }
+          // Rand mode - save nothing, let it re-randomize
         }
       }
       // Skip cosine parameters - they regenerate from program
     }
     
-    // Save snapshot (sequences are now embedded in HRG state objects)
-    const key = `scene_${bank}_synth_${this.stableSynthId}`;
-    localStorage.setItem(key, JSON.stringify({ snapshot }));
+    // Save to in-memory array (ephemeral)
+    this.sceneSnapshots[bank] = { snapshot, sequences };
     
-    console.log(`✅ Captured scene ${bank}`, snapshot);
+    console.log(`[SCENE] saved to memory slot ${bank}, sequences.frequency:`, sequences.frequency, `snapshot.frequency:`, snapshot.frequency);
   }
 
   handleLoadScene(payload) {
     const { memoryLocation, program } = payload;
-    const key = `scene_${memoryLocation}_synth_${this.stableSynthId}`;
-    const saved = localStorage.getItem(key);
+    
+    // Check if we have a saved snapshot in memory first
+    const saved = this.sceneSnapshots[memoryLocation];
+    
+    // Only update program config if we don't have saved state
+    // (If we have saved state, we want to keep using the config that was active when we saved)
+    if (!saved) {
+      this.programConfig = {};
+      for (const paramName in program) {
+        if (!["type", "timestamp", "synthesisActive", "isManualMode"].includes(paramName)) {
+          this.programConfig[paramName] = program[paramName];
+        }
+      }
+    }
     
     if (saved) {
-      const { snapshot } = JSON.parse(saved);
+      const { snapshot, sequences } = saved;
       
-      // Process state objects to prepare values and routing
-      const resolvedValues = {};
-      const sequences = {};
+      console.log(`[SCENE] load from memory slot ${memoryLocation}, snapshotKeys:`, Object.keys(snapshot), `hasHRG:`, Object.keys(sequences).length > 0);
       
-      for (const [param, stateObj] of Object.entries(snapshot)) {
-        switch (stateObj.type) {
-          case 'direct':
-            // Direct value - apply immediately
-            resolvedValues[param] = stateObj.value;
-            this.pendingRouting[param] = 'direct';
-            break;
-            
-          case 'hrg':
-            // HRG - restore sequence state but don't force direct routing
-            if (stateObj.numeratorIndex !== undefined && stateObj.denominatorIndex !== undefined) {
-              sequences[param] = {
-                numeratorIndex: stateObj.numeratorIndex,
-                denominatorIndex: stateObj.denominatorIndex,
-                numeratorShuffle: stateObj.numeratorShuffle,
-                denominatorShuffle: stateObj.denominatorShuffle
-              };
-            }
-            // Keep program routing for HRG
-            break;
-            
-          case 'rbg_stat':
-            // RBG stat mode - apply scalar value and force direct routing
-            resolvedValues[param] = stateObj.value;
-            this.pendingRouting[param] = 'direct';
-            break;
-            
-          case 'rbg_rand':
-            // RBG rand mode - re-randomize within range
-            const range = stateObj.max - stateObj.min;
-            resolvedValues[param] = stateObj.min + (Math.random() * range);
-            this.pendingRouting[param] = 'direct';
-            break;
+      // Initialize HRG state - but only for params without saved sequences
+      for (const paramName in this.programConfig) {
+        if (sequences[paramName]) {
+          // Use saved sequence data to restore complete HRG state
+          this._restoreHRGState(paramName, sequences[paramName], this.programConfig[paramName]);
+          
+          // Detailed frequency HRG state logging
+          if (paramName === 'frequency') {
+            const hrgState = this.hrgState[paramName]?.start;
+            console.log(`[LOAD_SCENE] frequency HRG state - behavior: ${hrgState.numeratorBehavior}/${hrgState.denominatorBehavior}, index: ${hrgState.indexN}/${hrgState.indexD}, arrays: [${hrgState.numerators?.slice(0,3).join(',')}...] / [${hrgState.denominators?.slice(0,3).join(',')}...]`);
+          }
+        } else {
+          // No saved sequence - initialize fresh with per-synth randomization
+          this._initializeHRGState(paramName, this.programConfig[paramName]);
         }
       }
       
-      // Stage resolved values for next EOC
-      this.pendingSceneState = resolvedValues;
-      
-      console.log(`📋 Staged routing for snapshot params:`, this.pendingRouting);
-      
-      // Restore HRG sequences immediately
-      if (Object.keys(sequences).length > 0 && this.programNode) {
-        this.programNode.port.postMessage({
-          type: 'RESTORE_SEQUENCES',
-          sequences
-        });
+      // Stage scalar values for next EOC (both direct and RBG stat)
+      if (Object.keys(snapshot).length > 0) {
+        this.pendingSceneState = snapshot;
       }
     } else {
-      // New synth - resolve from program
-      this.pendingSceneState = this._resolveProgram(program);
+      console.log(`[SCENE] load, no data in memory slot ${memoryLocation} - initializing fresh`);
+      // No saved scene - initialize fresh HRG state with per-synth randomization
+      for (const paramName in this.programConfig) {
+        this._initializeHRGState(paramName, this.programConfig[paramName]);
+      }
     }
   }
 
   clearAllBanks() {
-    const prefix = 'scene_';
-    const suffix = `_synth_${this.stableSynthId}`;
-    const keys = [];
-    
-    // Find all scene keys for this synth
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith(prefix) && k.endsWith(suffix)) {
-        keys.push(k);
-      }
-    }
-    
-    // Remove all found keys
-    keys.forEach(k => localStorage.removeItem(k));
-    console.log(`🧹 Cleared ${keys.length} synth scene bank(s)`);
+    // Clear all in-memory scene snapshots
+    const clearedCount = this.sceneSnapshots.filter(s => s).length;
+    this.sceneSnapshots = [];
+    console.log(`🧹 Cleared ${clearedCount} synth scene bank(s) from memory`);
   }
 
   clearBank(bank) {
-    const key = `scene_${bank}_synth_${this.stableSynthId}`;
-    localStorage.removeItem(key);
-    console.log(`🧹 Cleared synth scene bank ${bank}`);
+    // Clear specific in-memory scene snapshot
+    if (this.sceneSnapshots[bank]) {
+      delete this.sceneSnapshots[bank];
+      console.log(`🧹 Cleared synth scene bank ${bank} from memory`);
+    }
   }
 
   applyResolvedState(resolvedState) {
@@ -1749,6 +1689,242 @@ class SynthClient {
     if (this.voiceNode && this.voiceNode.parameters.has("active")) {
       const activeParam = this.voiceNode.parameters.get("active");
       activeParam.value = this.synthesisActive ? 1 : 0;
+    }
+  }
+
+  // Parse SIN (Simple Integer Notation) strings like "1,3,5" or "1-6"
+  _parseSIN(sinString) {
+    if (!sinString || typeof sinString !== "string") return [1];
+
+    const results = [];
+    const parts = sinString.split(",");
+
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (trimmed.includes("-")) {
+        // Handle ranges like "1-6"
+        const [start, end] = trimmed.split("-").map((n) => parseInt(n.trim()));
+        if (!isNaN(start) && !isNaN(end)) {
+          for (let i = start; i <= end; i++) {
+            results.push(i);
+          }
+        }
+      } else {
+        // Handle single numbers
+        const num = parseInt(trimmed);
+        if (!isNaN(num)) results.push(num);
+      }
+    }
+
+    return results.length > 0 ? results : [1];
+  }
+
+  // Initialize HRG state for a parameter
+  _initializeHRGState(param, config) {
+    const generator = config.startValueGenerator;
+    if (!generator || generator.type !== 'periodic') return;
+
+    const numerators = this._parseSIN(generator.numerators || "1");
+    const denominators = this._parseSIN(generator.denominators || "1");
+    const numeratorBehavior = generator.numeratorBehavior || "static";
+    const denominatorBehavior = generator.denominatorBehavior || "static";
+
+    this.hrgState[param] = {
+      start: {
+        numerators,
+        denominators,
+        numeratorBehavior,
+        denominatorBehavior,
+        indexN: numeratorBehavior === 'static' ? Math.floor(Math.random() * numerators.length) : 0,
+        indexD: denominatorBehavior === 'static' ? Math.floor(Math.random() * denominators.length) : 0,
+        orderN: numeratorBehavior === 'shuffle' ? this._shuffleArray([...numerators]) : null,
+        orderD: denominatorBehavior === 'shuffle' ? this._shuffleArray([...denominators]) : null
+      }
+    };
+
+    // Initialize end state if cosine interpolation
+    if (config.interpolation === 'cosine' && config.endValueGenerator?.type === 'periodic') {
+      const endGen = config.endValueGenerator;
+      const endNumerators = this._parseSIN(endGen.numerators || "1");
+      const endDenominators = this._parseSIN(endGen.denominators || "1");
+      const endNumBehavior = endGen.numeratorBehavior || "static";
+      const endDenBehavior = endGen.denominatorBehavior || "static";
+
+      this.hrgState[param].end = {
+        numerators: endNumerators,
+        denominators: endDenominators,
+        numeratorBehavior: endNumBehavior,
+        denominatorBehavior: endDenBehavior,
+        indexN: endNumBehavior === 'static' ? Math.floor(Math.random() * endNumerators.length) : 0,
+        indexD: endDenBehavior === 'static' ? Math.floor(Math.random() * endDenominators.length) : 0,
+        orderN: endNumBehavior === 'shuffle' ? this._shuffleArray([...endNumerators]) : null,
+        orderD: endDenBehavior === 'shuffle' ? this._shuffleArray([...endDenominators]) : null
+      };
+    }
+  }
+
+  // Restore HRG state from saved sequence data (preserves per-synth uniqueness)
+  _restoreHRGState(param, seqState, config) {
+    const generator = config.startValueGenerator;
+    if (!generator || generator.type !== 'periodic') return;
+
+    // Use saved behaviors if available, otherwise fall back to config
+    const numeratorBehavior = seqState.numeratorBehavior || generator.numeratorBehavior || "static";
+    const denominatorBehavior = seqState.denominatorBehavior || generator.denominatorBehavior || "static";
+
+    // For shuffle behavior, the saved orderN/orderD ARE the arrays to use
+    // For other behaviors, parse from config but use saved indices
+    let numerators, denominators;
+
+    if (numeratorBehavior === 'shuffle' && seqState.orderN) {
+      numerators = seqState.orderN; // Use saved shuffled array
+    } else {
+      numerators = this._parseSIN(generator.numerators || "1");
+    }
+
+    if (denominatorBehavior === 'shuffle' && seqState.orderD) {
+      denominators = seqState.orderD; // Use saved shuffled array  
+    } else {
+      denominators = this._parseSIN(generator.denominators || "1");
+    }
+
+    this.hrgState[param] = {
+      start: {
+        numerators,
+        denominators,
+        numeratorBehavior,
+        denominatorBehavior,
+        indexN: seqState.indexN,
+        indexD: seqState.indexD,
+        orderN: seqState.orderN,
+        orderD: seqState.orderD
+      }
+    };
+
+    // Initialize end state if cosine interpolation
+    if (config.interpolation === 'cosine' && config.endValueGenerator?.type === 'periodic') {
+      const endGen = config.endValueGenerator;
+      const endNumerators = this._parseSIN(endGen.numerators || "1");
+      const endDenominators = this._parseSIN(endGen.denominators || "1");
+      const endNumBehavior = endGen.numeratorBehavior || "static";
+      const endDenBehavior = endGen.denominatorBehavior || "static";
+
+      this.hrgState[param].end = {
+        numerators: endNumerators,
+        denominators: endDenominators,
+        numeratorBehavior: endNumBehavior,
+        denominatorBehavior: endDenBehavior,
+        indexN: endNumBehavior === 'static' ? Math.floor(Math.random() * endNumerators.length) : 0,
+        indexD: endDenBehavior === 'static' ? Math.floor(Math.random() * endDenominators.length) : 0,
+        orderN: endNumBehavior === 'shuffle' ? this._shuffleArray([...endNumerators]) : null,
+        orderD: endDenBehavior === 'shuffle' ? this._shuffleArray([...endDenominators]) : null
+      };
+    }
+
+    console.log(`🔄 Restored HRG state for ${param} using saved sequences - behavior: ${numeratorBehavior}/${denominatorBehavior}, index: ${seqState.indexN}/${seqState.indexD}`);
+  }
+
+  // Shuffle array using Fisher-Yates algorithm
+  _shuffleArray(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
+  }
+
+  // Resolve HRG value and advance sequence
+  _resolveHRG(param, position = 'start') {
+    const state = this.hrgState[param]?.[position];
+    if (!state) return 440; // Default frequency
+
+    const { numerators, denominators, numeratorBehavior, denominatorBehavior } = state;
+    
+    // Get current values
+    let numerator, denominator;
+    
+    if (numeratorBehavior === 'static') {
+      numerator = numerators[state.indexN];
+    } else if (numeratorBehavior === 'ascending') {
+      numerator = numerators[state.indexN % numerators.length];
+      state.indexN++;
+    } else if (numeratorBehavior === 'descending') {
+      numerator = numerators[(numerators.length - 1 - state.indexN) % numerators.length];
+      state.indexN++;
+    } else if (numeratorBehavior === 'shuffle') {
+      numerator = state.orderN[state.indexN % state.orderN.length];
+      state.indexN++;
+      if (state.indexN >= state.orderN.length) {
+        state.orderN = this._shuffleArray([...numerators]);
+        state.indexN = 0;
+      }
+    } else if (numeratorBehavior === 'random') {
+      numerator = numerators[Math.floor(Math.random() * numerators.length)];
+    }
+
+    if (denominatorBehavior === 'static') {
+      denominator = denominators[state.indexD];
+    } else if (denominatorBehavior === 'ascending') {
+      denominator = denominators[state.indexD % denominators.length];
+      state.indexD++;
+    } else if (denominatorBehavior === 'descending') {
+      denominator = denominators[(denominators.length - 1 - state.indexD) % denominators.length];
+      state.indexD++;
+    } else if (denominatorBehavior === 'shuffle') {
+      denominator = state.orderD[state.indexD % state.orderD.length];
+      state.indexD++;
+      if (state.indexD >= state.orderD.length) {
+        state.orderD = this._shuffleArray([...denominators]);
+        state.indexD = 0;
+      }
+    } else if (denominatorBehavior === 'random') {
+      denominator = denominators[Math.floor(Math.random() * denominators.length)];
+    }
+
+    const baseValue = this.programConfig[param]?.startValueGenerator?.baseValue || 440;
+    return baseValue * (numerator / (denominator || 1));
+  }
+
+  // Resolve RBG value
+  _resolveRBG(generator) {
+    if (typeof generator.range === "number") {
+      return generator.range;
+    } else if (generator.range && typeof generator.range === "object") {
+      const range = generator.range.max - generator.range.min;
+      return generator.range.min + (Math.random() * range);
+    }
+    return Math.random() * 0.5;
+  }
+
+  // Apply direct value to parameter
+  _setDirectValue(paramName, value) {
+    if (paramName === "whiteNoise") {
+      // White noise controls both audio and visualization gain
+      if (this.whiteNoiseAudioGain) {
+        this.whiteNoiseAudioGain.gain.setTargetAtTime(
+          value,
+          this.audioContext.currentTime,
+          0.015,
+        );
+      }
+      if (this.whiteNoiseVizGain) {
+        this.whiteNoiseVizGain.gain.setTargetAtTime(
+          value,
+          this.audioContext.currentTime,
+          0.015,
+        );
+      }
+    } else if (this.voiceNode?.parameters.has(`${paramName}_in`)) {
+      const audioParam = this.voiceNode.parameters.get(`${paramName}_in`);
+      audioParam.setTargetAtTime(
+        value,
+        this.audioContext.currentTime,
+        0.015,
+      );
+    }
+    
+    if (this.verbose) {
+      console.log(`🎚️ Applied direct parameter: ${paramName} = ${value}`);
     }
   }
 

@@ -318,7 +318,7 @@ class ControlClient {
 
       // Parameter controls
       applyParamsBtn: document.getElementById("apply-params-btn"),
-      reseedBtn: document.getElementById("reseed-btn"),
+      reresolveBtn: document.getElementById("reresolve-btn"),
 
       peerList: document.getElementById("peer-list"),
       debugLog: document.getElementById("debug-log"),
@@ -329,6 +329,7 @@ class ControlClient {
     };
 
     console.log("applyParamsBtn element:", this.elements.applyParamsBtn);
+    console.log("reresolveBtn element:", this.elements.reresolveBtn);
 
     this.setupEventHandlers();
     this.calculateCycleLength();
@@ -373,23 +374,34 @@ class ControlClient {
       this.applyParameterChanges();
     });
 
-    // Re-resolve (reseed) button
-    if (this.elements.reseedBtn) {
-      this.elements.reseedBtn.addEventListener("click", () => {
-        this.reseedRandomization();
+    // Re-resolve button
+    if (this.elements.reresolveBtn) {
+      console.log("✅ Re-resolve button found, adding click handler");
+      this.elements.reresolveBtn.addEventListener("click", () => {
+        console.log("🔀 Re-resolve button clicked!");
+        this.reresolveAtEOC();
       });
+    } else {
+      console.error("❌ Re-resolve button not found in DOM");
     }
 
     // Musical controls
     this.setupMusicalControls();
   }
 
-  reseedRandomization() {
-    if (!this.star) return;
-    const message = MessageBuilder.reseedRandomization();
+  reresolveAtEOC() {
+    console.log("🔀 reresolveAtEOC() called");
+    if (!this.star) {
+      console.error("❌ No WebRTC star available for re-resolve");
+      return;
+    }
+    console.log("📡 Creating re-resolve message...");
+    const message = MessageBuilder.reresolveAtEOC();
+    console.log("📤 Broadcasting re-resolve message:", message);
     const sent = this.star.broadcastToType("synth", message, "control");
+    console.log(`✅ Re-resolve message sent to ${sent} synths`);
     this.log(
-      `🔀 Re-resolve randomization requested for ${sent} synths`,
+      `🔀 Re-resolve requested for ${sent} synths at next EOC`,
       "info",
     );
   }
@@ -1910,14 +1922,11 @@ class ControlClient {
         this._updateUIFromState(paramName as keyof IMusicalState);
       });
 
-      // 4. Broadcast LOAD_SCENE first (so synths prepare snapshot routing)
+      // 4. Broadcast LOAD_SCENE only (contains full program config)
       if (this.star) {
         const message = MessageBuilder.loadScene(memoryLocation, loadedProgram);
         this.star.broadcastToType("synth", message, "control");
       }
-
-      // 5. Then broadcast PROGRAM_UPDATE (for synths without snapshots)
-      this.broadcastMusicalParameters();
 
       this.log(`Scene ${memoryLocation} loaded and broadcast.`, "success");
       this.updateSceneMemoryIndicators();

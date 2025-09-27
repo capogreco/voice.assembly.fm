@@ -17,10 +17,16 @@ var MessageTypes = {
   CALIBRATION_MODE: "calibration-mode",
   SYNTH_READY: "synth-ready",
   PROGRAM: "program",
-  RESEED_RANDOMIZATION: "reseed-randomization",
+  // Worklet Control
+  SET_STEP_VALUES: "set-step-values",
+  SET_COS_SEGMENTS: "set-cos-segments",
+  RESTORE_SEQUENCE_STATE: "restore-sequence-state",
+  RERESOLVE_AT_EOC: "reresolve-at-eoc",
   // Scene Memory
   SAVE_SCENE: "save-scene",
-  LOAD_SCENE: "load-scene"
+  LOAD_SCENE: "load-scene",
+  CLEAR_BANKS: "clear-banks",
+  CLEAR_SCENE: "clear-scene"
 };
 var MessageBuilder = class {
   static ping(timestamp = performance.now()) {
@@ -84,9 +90,30 @@ var MessageBuilder = class {
       timestamp: performance.now()
     };
   }
-  static reseedRandomization() {
+  static setStepValues(params) {
     return {
-      type: MessageTypes.RESEED_RANDOMIZATION,
+      type: MessageTypes.SET_STEP_VALUES,
+      params,
+      timestamp: performance.now()
+    };
+  }
+  static setCosSegments(params) {
+    return {
+      type: MessageTypes.SET_COS_SEGMENTS,
+      params,
+      timestamp: performance.now()
+    };
+  }
+  static restoreSequenceState(sequences) {
+    return {
+      type: MessageTypes.RESTORE_SEQUENCE_STATE,
+      sequences,
+      timestamp: performance.now()
+    };
+  }
+  static reresolveAtEOC() {
+    return {
+      type: MessageTypes.RERESOLVE_AT_EOC,
       timestamp: performance.now()
     };
   }
@@ -110,6 +137,19 @@ var MessageBuilder = class {
       type: MessageTypes.LOAD_SCENE,
       memoryLocation,
       program,
+      timestamp: performance.now()
+    };
+  }
+  static clearBanks() {
+    return {
+      type: MessageTypes.CLEAR_BANKS,
+      timestamp: performance.now()
+    };
+  }
+  static clearScene(memoryLocation) {
+    return {
+      type: MessageTypes.CLEAR_SCENE,
+      memoryLocation,
       timestamp: performance.now()
     };
   }
@@ -149,7 +189,18 @@ function validateMessage(message) {
         throw new Error("Program message must have config object");
       }
       break;
-    case MessageTypes.RESEED_RANDOMIZATION:
+    case MessageTypes.SET_STEP_VALUES:
+    case MessageTypes.SET_COS_SEGMENTS:
+      if (!message.params || typeof message.params !== "object") {
+        throw new Error(`${message.type} message must have params object`);
+      }
+      break;
+    case MessageTypes.RESTORE_SEQUENCE_STATE:
+      if (!message.sequences || typeof message.sequences !== "object") {
+        throw new Error("Restore sequence state message must have sequences object");
+      }
+      break;
+    case MessageTypes.RERESOLVE_AT_EOC:
       break;
     case MessageTypes.SAVE_SCENE:
       if (typeof message.memoryLocation !== "number" || message.memoryLocation < 0 || message.memoryLocation > 9) {
@@ -159,6 +210,13 @@ function validateMessage(message) {
     case MessageTypes.LOAD_SCENE:
       if (typeof message.memoryLocation !== "number" || message.memoryLocation < 0 || message.memoryLocation > 9 || !message.program || typeof message.program !== "object") {
         throw new Error("Load scene message requires memoryLocation (0-9) and program object");
+      }
+      break;
+    case MessageTypes.CLEAR_BANKS:
+      break;
+    case MessageTypes.CLEAR_SCENE:
+      if (typeof message.memoryLocation !== "number" || message.memoryLocation < 0 || message.memoryLocation > 9) {
+        throw new Error("Clear scene message requires memoryLocation (0-9)");
       }
       break;
   }
@@ -1075,12 +1133,15 @@ var ControlClient = class {
       es8EnableBtn: document.getElementById("es8-enable-btn"),
       // Parameter controls
       applyParamsBtn: document.getElementById("apply-params-btn"),
-      reseedBtn: document.getElementById("reseed-btn"),
+      reresolveBtn: document.getElementById("reresolve-btn"),
       peerList: document.getElementById("peer-list"),
       debugLog: document.getElementById("debug-log"),
-      clearLogBtn: document.getElementById("clear-log-btn")
+      clearLogBtn: document.getElementById("clear-log-btn"),
+      // Scene memory
+      clearBanksBtn: document.getElementById("clear-banks-btn")
     };
     console.log("applyParamsBtn element:", this.elements.applyParamsBtn);
+    console.log("reresolveBtn element:", this.elements.reresolveBtn);
     this.setupEventHandlers();
     this.calculateCycleLength();
     this.initializePhasor();
@@ -1097,22 +1158,36 @@ var ControlClient = class {
       }
     });
     this.elements.clearLogBtn.addEventListener("click", () => this.clearLog());
+    if (this.elements.clearBanksBtn) {
+      this.elements.clearBanksBtn.addEventListener("click", () => this.clearSceneBanks());
+    }
     this.elements.applyParamsBtn.addEventListener("click", () => {
       console.log("Apply Parameter Changes button clicked!");
       this.applyParameterChanges();
     });
-    if (this.elements.reseedBtn) {
-      this.elements.reseedBtn.addEventListener("click", () => {
-        this.reseedRandomization();
+    if (this.elements.reresolveBtn) {
+      console.log("\u2705 Re-resolve button found, adding click handler");
+      this.elements.reresolveBtn.addEventListener("click", () => {
+        console.log("\u{1F500} Re-resolve button clicked!");
+        this.reresolveAtEOC();
       });
+    } else {
+      console.error("\u274C Re-resolve button not found in DOM");
     }
     this.setupMusicalControls();
   }
-  reseedRandomization() {
-    if (!this.star) return;
-    const message = MessageBuilder.reseedRandomization();
+  reresolveAtEOC() {
+    console.log("\u{1F500} reresolveAtEOC() called");
+    if (!this.star) {
+      console.error("\u274C No WebRTC star available for re-resolve");
+      return;
+    }
+    console.log("\u{1F4E1} Creating re-resolve message...");
+    const message = MessageBuilder.reresolveAtEOC();
+    console.log("\u{1F4E4} Broadcasting re-resolve message:", message);
     const sent = this.star.broadcastToType("synth", message, "control");
-    this.log(`\u{1F500} Re-resolve randomization requested for ${sent} synths`, "info");
+    console.log(`\u2705 Re-resolve message sent to ${sent} synths`);
+    this.log(`\u{1F500} Re-resolve requested for ${sent} synths at next EOC`, "info");
   }
   setupMusicalControls() {
     this.setupEnvelopeControls();
@@ -2136,7 +2211,10 @@ var ControlClient = class {
   saveScene(memoryLocation) {
     console.log(`\u{1F4BE} Saving scene to memory location ${memoryLocation}...`);
     try {
-      const programToSave = this.pendingMusicalState;
+      const programToSave = {
+        ...this.musicalState,
+        savedAt: Date.now()
+      };
       localStorage.setItem(`scene_${memoryLocation}_controller`, JSON.stringify(programToSave));
       if (this.star) {
         const message = MessageBuilder.saveScene(memoryLocation);
@@ -2163,7 +2241,6 @@ var ControlClient = class {
       Object.keys(this.musicalState).forEach((paramName) => {
         this._updateUIFromState(paramName);
       });
-      this.broadcastMusicalParameters();
       if (this.star) {
         const message = MessageBuilder.loadScene(memoryLocation, loadedProgram);
         this.star.broadcastToType("synth", message, "control");
@@ -2173,6 +2250,26 @@ var ControlClient = class {
     } catch (error) {
       console.error("Error loading scene:", error);
       this.log(`Failed to load scene ${memoryLocation}: ${error.message}`, "error");
+    }
+  }
+  clearSceneBanks() {
+    for (let i = 0; i <= 9; i++) {
+      localStorage.removeItem(`scene_${i}_controller`);
+    }
+    this.updateSceneMemoryIndicators();
+    this.log("Cleared all scene banks", "success");
+    if (this.star) {
+      const msg = MessageBuilder.clearBanks();
+      this.star.broadcastToType("synth", msg, "control");
+    }
+  }
+  clearBank(memoryLocation) {
+    localStorage.removeItem(`scene_${memoryLocation}_controller`);
+    this.updateSceneMemoryIndicators();
+    this.log(`Cleared scene bank ${memoryLocation}`, "success");
+    if (this.star) {
+      const msg = MessageBuilder.clearScene(memoryLocation);
+      this.star.broadcastToType("synth", msg, "control");
     }
   }
   // Legacy setupParameterRandomizer method removed - now handled by compact controls

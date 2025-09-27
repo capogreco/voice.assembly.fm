@@ -26,7 +26,12 @@ export const MessageTypes = {
   CALIBRATION_MODE: "calibration-mode",
   SYNTH_READY: "synth-ready",
   PROGRAM: "program",
-  RESEED_RANDOMIZATION: "reseed-randomization",
+
+  // Worklet Control
+  SET_STEP_VALUES: "set-step-values",
+  SET_COS_SEGMENTS: "set-cos-segments",
+  RESTORE_SEQUENCE_STATE: "restore-sequence-state",
+  RERESOLVE_AT_EOC: "reresolve-at-eoc",
 
   // Scene Memory
   SAVE_SCENE: "save-scene",
@@ -104,9 +109,33 @@ export class MessageBuilder {
     };
   }
 
-  static reseedRandomization() {
+  static setStepValues(params) {
     return {
-      type: MessageTypes.RESEED_RANDOMIZATION,
+      type: MessageTypes.SET_STEP_VALUES,
+      params,
+      timestamp: performance.now(),
+    };
+  }
+
+  static setCosSegments(params) {
+    return {
+      type: MessageTypes.SET_COS_SEGMENTS,
+      params,
+      timestamp: performance.now(),
+    };
+  }
+
+  static restoreSequenceState(sequences) {
+    return {
+      type: MessageTypes.RESTORE_SEQUENCE_STATE,
+      sequences,
+      timestamp: performance.now(),
+    };
+  }
+
+  static reresolveAtEOC() {
+    return {
+      type: MessageTypes.RERESOLVE_AT_EOC,
       timestamp: performance.now(),
     };
   }
@@ -209,8 +238,21 @@ export function validateMessage(message) {
       }
       break;
 
-    case MessageTypes.RESEED_RANDOMIZATION:
-      // No required fields; used to trigger stochastic re-resolution
+    case MessageTypes.SET_STEP_VALUES:
+    case MessageTypes.SET_COS_SEGMENTS:
+      if (!message.params || typeof message.params !== "object") {
+        throw new Error(`${message.type} message must have params object`);
+      }
+      break;
+
+    case MessageTypes.RESTORE_SEQUENCE_STATE:
+      if (!message.sequences || typeof message.sequences !== "object") {
+        throw new Error("Restore sequence state message must have sequences object");
+      }
+      break;
+
+    case MessageTypes.RERESOLVE_AT_EOC:
+      // No required fields - simple trigger message
       break;
 
     case MessageTypes.SAVE_SCENE:
