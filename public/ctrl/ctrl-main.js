@@ -59,6 +59,7 @@ var MessageBuilder = class {
       amplitude: params.amplitude,
       whiteNoise: params.whiteNoise,
       synthesisActive: params.synthesisActive,
+      portamentoTime: params.portamentoTime,
       timestamp: performance.now()
     };
   }
@@ -1091,6 +1092,15 @@ var ControlClient = class {
     this.markPendingChanges();
   }
   /**
+   * Apply HRG changes when paused
+   * Updates active state directly and broadcasts program configuration for synths to resolve with portamento
+   */
+  _applyHRGChangeWithPortamento(action) {
+    this._updateActiveState(action);
+    const portamentoTime = this.elements.portamentoTime ? parseInt(this.elements.portamentoTime.value) : 100;
+    this.broadcastMusicalParameters(portamentoTime);
+  }
+  /**
    * Update the active musical state directly (bypassing pending state)
    * Used when transport is paused for immediate parameter updates
    */
@@ -1466,7 +1476,7 @@ var ControlClient = class {
         });
         startNumeratorsInput.addEventListener("blur", () => {
           if (!this.isPlaying) {
-            this._updateActiveState({
+            this._applyHRGChangeWithPortamento({
               type: "SET_GENERATOR_CONFIG",
               param: "frequency",
               position: "start",
@@ -1474,7 +1484,6 @@ var ControlClient = class {
                 numerators: startNumeratorsInput.value
               }
             });
-            this.broadcastMusicalParameters();
           } else {
             this._updatePendingState({
               type: "SET_GENERATOR_CONFIG",
@@ -1506,7 +1515,7 @@ var ControlClient = class {
         });
         startDenominatorsInput.addEventListener("blur", () => {
           if (!this.isPlaying) {
-            this._updateActiveState({
+            this._applyHRGChangeWithPortamento({
               type: "SET_GENERATOR_CONFIG",
               param: "frequency",
               position: "start",
@@ -1514,7 +1523,6 @@ var ControlClient = class {
                 denominators: startDenominatorsInput.value
               }
             });
-            this.broadcastMusicalParameters();
           } else {
             this._updatePendingState({
               type: "SET_GENERATOR_CONFIG",
@@ -1531,7 +1539,7 @@ var ControlClient = class {
       if (startNumBehaviorSelect) {
         startNumBehaviorSelect.addEventListener("change", () => {
           if (!this.isPlaying) {
-            this._updateActiveState({
+            this._applyHRGChangeWithPortamento({
               type: "SET_GENERATOR_CONFIG",
               param: "frequency",
               position: "start",
@@ -1539,7 +1547,6 @@ var ControlClient = class {
                 numeratorBehavior: startNumBehaviorSelect.value
               }
             });
-            this.broadcastMusicalParameters();
           } else {
             this._updatePendingState({
               type: "SET_GENERATOR_CONFIG",
@@ -1556,7 +1563,7 @@ var ControlClient = class {
       if (startDenBehaviorSelect) {
         startDenBehaviorSelect.addEventListener("change", () => {
           if (!this.isPlaying) {
-            this._updateActiveState({
+            this._applyHRGChangeWithPortamento({
               type: "SET_GENERATOR_CONFIG",
               param: "frequency",
               position: "start",
@@ -1564,7 +1571,6 @@ var ControlClient = class {
                 denominatorBehavior: startDenBehaviorSelect.value
               }
             });
-            this.broadcastMusicalParameters();
           } else {
             this._updatePendingState({
               type: "SET_GENERATOR_CONFIG",
@@ -1600,7 +1606,7 @@ var ControlClient = class {
         });
         endNumeratorsInput.addEventListener("blur", () => {
           if (!this.isPlaying) {
-            this._updateActiveState({
+            this._applyHRGChangeWithPortamento({
               type: "SET_GENERATOR_CONFIG",
               param: "frequency",
               position: "end",
@@ -1608,7 +1614,6 @@ var ControlClient = class {
                 numerators: endNumeratorsInput.value
               }
             });
-            this.broadcastMusicalParameters();
           } else {
             this._updatePendingState({
               type: "SET_GENERATOR_CONFIG",
@@ -1640,7 +1645,7 @@ var ControlClient = class {
         });
         endDenominatorsInput.addEventListener("blur", () => {
           if (!this.isPlaying) {
-            this._updateActiveState({
+            this._applyHRGChangeWithPortamento({
               type: "SET_GENERATOR_CONFIG",
               param: "frequency",
               position: "end",
@@ -1648,7 +1653,6 @@ var ControlClient = class {
                 denominators: endDenominatorsInput.value
               }
             });
-            this.broadcastMusicalParameters();
           } else {
             this._updatePendingState({
               type: "SET_GENERATOR_CONFIG",
@@ -1665,7 +1669,7 @@ var ControlClient = class {
       if (endNumBehaviorSelect) {
         endNumBehaviorSelect.addEventListener("change", () => {
           if (!this.isPlaying) {
-            this._updateActiveState({
+            this._applyHRGChangeWithPortamento({
               type: "SET_GENERATOR_CONFIG",
               param: "frequency",
               position: "end",
@@ -1673,7 +1677,6 @@ var ControlClient = class {
                 numeratorBehavior: endNumBehaviorSelect.value
               }
             });
-            this.broadcastMusicalParameters();
           } else {
             this._updatePendingState({
               type: "SET_GENERATOR_CONFIG",
@@ -1690,7 +1693,7 @@ var ControlClient = class {
       if (endDenBehaviorSelect) {
         endDenBehaviorSelect.addEventListener("change", () => {
           if (!this.isPlaying) {
-            this._updateActiveState({
+            this._applyHRGChangeWithPortamento({
               type: "SET_GENERATOR_CONFIG",
               param: "frequency",
               position: "end",
@@ -1698,7 +1701,6 @@ var ControlClient = class {
                 denominatorBehavior: endDenBehaviorSelect.value
               }
             });
-            this.broadcastMusicalParameters();
           } else {
             this._updatePendingState({
               type: "SET_GENERATOR_CONFIG",
@@ -1998,11 +2000,14 @@ var ControlClient = class {
    * Central method for translating IMusicalState to wire format
    * Used by both broadcastMusicalParameters and sendCompleteStateToSynth
    */
-  _getWirePayload() {
+  _getWirePayload(portamentoTime) {
     const wirePayload = {
       synthesisActive: this.synthesisActive,
       isManualMode: this.isManualControlMode
     };
+    if (portamentoTime !== void 0) {
+      wirePayload.portamentoTime = portamentoTime;
+    }
     for (const key in this.musicalState) {
       const paramKey = key;
       const paramState = this.musicalState[paramKey];
@@ -2035,13 +2040,13 @@ var ControlClient = class {
     }
     return wirePayload;
   }
-  broadcastMusicalParameters() {
+  broadcastMusicalParameters(portamentoTime) {
     if (!this.star) return;
-    const wirePayload = this._getWirePayload();
+    const wirePayload = this._getWirePayload(portamentoTime);
     console.log("Broadcasting translated payload:", wirePayload);
     const message = MessageBuilder.createParameterUpdate(MessageTypes.PROGRAM_UPDATE, wirePayload);
     this.star.broadcast(message);
-    this.log("\u{1F4E1} Broadcasted musical parameters", "info");
+    this.log(`\u{1F4E1} Broadcasted musical parameters${portamentoTime ? ` with ${portamentoTime}ms portamento` : ""}`, "info");
   }
   // Removed splitParametersByMode - no longer needed with separated state
   broadcastDirectParameters() {

@@ -174,25 +174,10 @@ class SynthClient {
    * Manages whether parameters come from main thread or program worklet
    */
   _updateParameterRouting(paramName, mode) {
-    if (!this.voiceNode || !this.programNode || !this.parameterSwitches) return;
-
-    const gainNode = this.parameterSwitches[paramName];
-    if (!gainNode) return;
-
-    if (mode === "direct") {
-      // Turn off program worklet input for this parameter (use AudioParam)
-      gainNode.gain.setTargetAtTime(0, this.audioContext.currentTime, 0.015);
-      const destination = paramName === "whiteNoise"
-        ? "WhiteNoise Gain"
-        : "Voice";
-      console.log(`🔌 Route for '${paramName}': Main Thread -> ${destination}`);
-    } else { // mode is 'program'
-      // Turn on program worklet input for this parameter
-      gainNode.gain.setTargetAtTime(1, this.audioContext.currentTime, 0.015);
-      const destination = paramName === "whiteNoise"
-        ? "WhiteNoise Gain"
-        : "Voice";
-      console.log(`🔌 Route for '${paramName}': Program -> ${destination}`);
+    // Parameter routing is now handled internally by the unified worklet
+    // No complex routing needed - just log for debugging
+    if (this.verbose) {
+      console.log(`🔌 Parameter '${paramName}' mode: ${mode} (handled by unified worklet)`);
     }
   }
 
@@ -308,41 +293,40 @@ class SynthClient {
 
   async initializeFormantSynthesis() {
     try {
-      // Load all worklet modules
+      // Load unified synth worklet and white noise processor
       await this.audioContext.audioWorklet.addModule(
-        "./worklets/program-worklet.js",
-      );
-      await this.audioContext.audioWorklet.addModule(
-        "./worklets/voice-worklet.js",
+        "./worklets/unified-synth-worklet.js",
       );
       await this.audioContext.audioWorklet.addModule(
         "./worklets/white-noise-processor.js",
       );
 
-      // Create program worklet with 8 outputs (one per parameter)
-      this.programNode = new AudioWorkletNode(
+      // Create unified synth worklet with 5 channels output (main + duplicate + F1 + F2 + F3)
+      this.unifiedSynthNode = new AudioWorkletNode(
         this.audioContext,
-        "program-worklet",
+        "unified-synth-worklet",
         {
-          numberOfInputs: 0,
+          numberOfInputs: 0, // Phase input via AudioParam
           numberOfOutputs: 1,
-          outputChannelCount: [8], // frequency, zingMorph, zingAmount, vowelX, vowelY, symmetry, amplitude, whiteNoise
-        },
-      );
-      
-      // Program worklet is now a simple envelope generator - no EOC reports needed
-
-      // Create voice worklet with 5 channels output (main + duplicate + F1 + F2 + F3)
-      this.voiceNode = new AudioWorkletNode(
-        this.audioContext,
-        "voice-worklet",
-        {
-          numberOfInputs: 1, // Accept control inputs from program worklet
-          numberOfOutputs: 1,
-          inputChannelCount: [7], // 7 control channels from program worklet (excluding whiteNoise)
           outputChannelCount: [5], // Main, duplicate, F1, F2, F3
         },
       );
+
+      // Store references for backward compatibility (some methods may still reference these)
+      this.voiceNode = this.unifiedSynthNode; // Main audio node
+      this.programNode = this.unifiedSynthNode; // Same node handles program logic
+      
+      // Track current parameter values for portamento (no longer need complex routing)
+      this.lastResolvedValues = {
+        frequency: 440,
+        zingMorph: 0,
+        zingAmount: 0,
+        vowelX: 0.5,
+        vowelY: 0.5,
+        symmetry: 0.5,
+        amplitude: 0.1,
+        whiteNoise: 0,
+      };
 
       // Create two independent white noise worklets for decorrelated audio/visualization
       this.whiteNoiseAudio = new AudioWorkletNode(
@@ -375,62 +359,16 @@ class SynthClient {
         seed: Math.random(),
       });
 
-      // Create parameter routing system
-      this.parameterSwitches = {};
-      this.channelSplitter = this.audioContext.createChannelSplitter(8);
-
-      // Create separate mergers for voice and noise parameters
-      this.voiceChannelMerger = this.audioContext.createChannelMerger(7); // For voice worklet
-      this.whiteNoiseAudioGain = this.audioContext.createGain(); // For audio white noise volume
+      // Create white noise gain control
+      this.whiteNoiseAudioGain = this.audioContext.createGain();
       this.whiteNoiseAudioGain.gain.value = 0; // Default to silent
 
-      // Connect program worklet to channel splitter
-      this.programNode.connect(this.channelSplitter);
-
-      // Create gain node switches for voice parameters (first 7 channels)
-      const voiceParamNames = [
-        "frequency",
-        "zingMorph",
-        "zingAmount",
-        "vowelX",
-        "vowelY",
-        "symmetry",
-        "amplitude",
-      ];
-      voiceParamNames.forEach((paramName, index) => {
-        const gainNode = this.audioContext.createGain();
-        gainNode.gain.value = 0; // Default to off (direct mode)
-        this.parameterSwitches[paramName] = gainNode;
-
-        // Connect: splitter → gain switch → voice merger
-        this.channelSplitter.connect(gainNode, index);
-        gainNode.connect(this.voiceChannelMerger, 0, index);
-      });
-
-      // Create gain switch for white noise parameter (channel 7)
-      const whiteNoiseGainSwitch = this.audioContext.createGain();
-      whiteNoiseGainSwitch.gain.value = 0; // Default to off (direct mode)
-      this.parameterSwitches["whiteNoise"] = whiteNoiseGainSwitch;
-
-      // Connect whiteNoise parameter to control audio white noise volume only
-      this.channelSplitter.connect(whiteNoiseGainSwitch, 7); // Channel 7 is whiteNoise
-      whiteNoiseGainSwitch.connect(this.whiteNoiseAudioGain.gain); // Control the audio gain only
-
-      // Initialize all parameters to direct mode (gain switches are 0 by default)
-      voiceParamNames.forEach((paramName) => {
-        this.currentRouting[paramName] = 'direct';
-      });
-      this.currentRouting['whiteNoise'] = 'direct';
-
       // Create mixer for combining voice and white noise
-      this.mixer = this.audioContext.createGain(); // Simple mixer
+      this.mixer = this.audioContext.createGain();
 
-      // Connect voice merger to voice worklet
-      this.voiceChannelMerger.connect(this.voiceNode);
-
-      // Create channel splitter for voice worklet's 5 outputs
+      // Create channel splitter for unified synth worklet's 5 outputs
       this.voiceSplitter = this.audioContext.createChannelSplitter(5);
-      this.voiceNode.connect(this.voiceSplitter);
+      this.unifiedSynthNode.connect(this.voiceSplitter);
 
       // Route channel 0 (main audio) to mixer for sound output
       this.voiceSplitter.connect(this.mixer, 0);
@@ -468,10 +406,10 @@ class SynthClient {
       // Connect mixer to master gain
       this.mixer.connect(this.masterGain);
 
-      // Connect phasor worklet to program worklet if both exist
-      if (this.phasorWorklet && this.programNode) {
-        this.phasorWorklet.connect(this.programNode.parameters.get("phase"));
-        if (this.verbose) console.log("🔗 Phasor worklet connected to program worklet phase parameter");
+      // Connect phasor worklet to unified synth worklet if both exist
+      if (this.phasorWorklet && this.unifiedSynthNode) {
+        this.phasorWorklet.connect(this.unifiedSynthNode.parameters.get("phase"));
+        if (this.verbose) console.log("🔗 Phasor worklet connected to unified synth worklet phase parameter");
       }
 
       // Apply any stored state that was received before audio was ready
@@ -722,81 +660,173 @@ class SynthClient {
   activateImmediateSynthesis() {
     console.log("🎵 Activating immediate synthesis...");
     
-    // Ensure voice worklet is active
-    if (this.voiceNode && this.voiceNode.parameters.has("active")) {
-      this.voiceNode.parameters.get("active").value = 1;
+    // Ensure unified synth worklet is active
+    if (this.unifiedSynthNode && this.unifiedSynthNode.parameters.has("active")) {
+      this.unifiedSynthNode.parameters.get("active").value = 1;
     }
     
-    // Extract current parameter values from program config and send to worklet
-    if (this.programConfig && this.programNode) {
-      console.log("🎼 Sending immediate parameter values to program worklet");
+    // Send interpolation types and resolve values to AudioParams
+    if (this.programConfig && this.unifiedSynthNode) {
+      console.log("🎼 Setting parameter values and interpolation types for immediate synthesis");
       
-      // Default parameter values
-      const immediateValues = {
-        frequency: 440,
-        amplitude: 0.1,
-        vowelX: 0.5,
-        vowelY: 0.5,
-        zingMorph: 0.0,
-        zingAmount: 0.0,
-        symmetry: 0.5,
-        whiteNoise: 0.0
-      };
-      
-      // Extract values from program config based on parameter scope
+      // Send interpolation types configuration
+      const interpolationTypes = {};
       for (const [paramName, paramConfig] of Object.entries(this.programConfig)) {
-        if (immediateValues.hasOwnProperty(paramName)) {
+        if (paramConfig.scope === "program" && paramConfig.interpolation) {
+          interpolationTypes[paramName] = paramConfig.interpolation;
+        }
+      }
+      
+      this.unifiedSynthNode.port.postMessage({
+        type: "SET_INTERPOLATION_TYPES",
+        params: interpolationTypes
+      });
+      
+      // Resolve and set parameter values to AudioParams immediately
+      for (const [paramName, paramConfig] of Object.entries(this.programConfig)) {
+        if (this.lastResolvedValues.hasOwnProperty(paramName)) {
+          let startValue, endValue;
+          
           if (paramConfig.scope === "direct") {
             // Use direct value for direct parameters
-            immediateValues[paramName] = paramConfig.directValue;
+            startValue = endValue = paramConfig.directValue;
           } else if (paramConfig.scope === "program") {
-            // Resolve program parameter values using same logic as handleCycleReset
-            let resolvedValue;
-            
-            if (paramConfig.startValueGenerator?.type === 'periodic') {
-              // HRG - use sequence state
-              resolvedValue = this._resolveHRG(paramName, 'start');
-            } else if (paramConfig.startValueGenerator?.type === 'normalised') {
-              // RBG - resolve scalar
-              resolvedValue = this._resolveRBG(paramConfig.startValueGenerator);
-            } else if (paramConfig.startValueGenerator?.value !== undefined) {
-              // Direct value
-              resolvedValue = paramConfig.startValueGenerator.value;
+            // Resolve program parameter values
+            if (paramConfig.interpolation === "step") {
+              // Step interpolation - only need start value
+              startValue = this._resolveParameterValue(paramConfig.startValueGenerator, paramName, 'start');
+              endValue = startValue;
             } else {
-              // Fallback to default value
-              resolvedValue = immediateValues[paramName]; // Keep the default
+              // Cosine/other interpolation - need start and end values
+              startValue = this._resolveParameterValue(paramConfig.startValueGenerator, paramName, 'start');
+              endValue = paramConfig.endValueGenerator ? 
+                this._resolveParameterValue(paramConfig.endValueGenerator, paramName, 'end') : 
+                startValue;
             }
+          }
+          
+          if (startValue !== undefined) {
+            // Set AudioParam values directly (no ramping for immediate activation)
+            const startParam = this.unifiedSynthNode.parameters.get(`${paramName}_start`);
+            const endParam = this.unifiedSynthNode.parameters.get(`${paramName}_end`);
             
-            immediateValues[paramName] = resolvedValue;
+            if (startParam) {
+              startParam.value = startValue;
+              this.lastResolvedValues[paramName] = startValue;
+            }
+            if (endParam) {
+              endParam.value = endValue;
+            }
           }
         }
       }
       
-      // Send immediate step values to program worklet
-      this.programNode.port.postMessage({
-        type: "SET_STEP_VALUES",
-        params: immediateValues
-      });
-      
-      // Immediately update routing for program parameters to bypass EOC staging
-      for (const [paramName, paramConfig] of Object.entries(this.programConfig)) {
-        if (paramConfig.scope === "program" && immediateValues.hasOwnProperty(paramName)) {
-          // Immediately route to program mode
-          this._updateParameterRouting(paramName, 'program');
-          this.currentRouting[paramName] = 'program';
-          
-          // Clear any pending routing for this parameter
-          delete this.pendingRouting[paramName];
-          
-          console.log(`🔗 Immediate routing: ${paramName} → program`);
-        }
-      }
-      
-      console.log("🎛️ Immediate synthesis values:", immediateValues);
+      console.log("🎛️ Updated AudioParam values for immediate synthesis:", this.lastResolvedValues);
     } else {
       console.log("⚠️ No program config available for immediate synthesis");
     }
   }
+
+  /**
+   * Apply program parameters with portamento when paused
+   * Resolves parameter values at current phase and applies with smooth transitions
+   */
+  applyProgramWithPortamento(portamentoTime) {
+    if (!this.programConfig || !this.unifiedSynthNode) {
+      console.log("⚠️ No program config available for portamento application");
+      return;
+    }
+
+    console.log(`🎵 Applying parameter changes with ${portamentoTime}ms portamento`);
+    
+    // Send interpolation types configuration
+    const interpolationTypes = {};
+    for (const [paramName, paramConfig] of Object.entries(this.programConfig)) {
+      if (paramConfig.scope === "program" && paramConfig.interpolation) {
+        interpolationTypes[paramName] = paramConfig.interpolation;
+      }
+    }
+    
+    this.unifiedSynthNode.port.postMessage({
+      type: "SET_INTERPOLATION_TYPES",
+      params: interpolationTypes
+    });
+    
+    // Calculate portamento duration in seconds
+    const portamentoDurationSec = portamentoTime / 1000;
+    const targetTime = this.audioContext.currentTime + portamentoDurationSec;
+    
+    // For each parameter, resolve new values and apply with AudioParam ramping
+    console.log(`🔍 Debug: Processing ${Object.keys(this.programConfig).length} parameters from programConfig`);
+    for (const [paramName, paramData] of Object.entries(this.programConfig)) {
+      console.log(`🔍 Debug: Processing parameter: ${paramName}, scope: ${paramData.scope}`);
+      if (this.lastResolvedValues.hasOwnProperty(paramName)) {
+        let startValue, endValue;
+        
+        if (paramData.scope === "direct") {
+          // Use direct value for direct parameters
+          startValue = endValue = paramData.directValue;
+        } else if (paramData.scope === "program") {
+          // Resolve program parameter values
+          if (paramData.interpolation === "step") {
+            // Step interpolation - only need start value
+            startValue = this._resolveParameterValue(paramData.startValueGenerator, paramName, 'start');
+            endValue = startValue;
+          } else {
+            // Cosine/other interpolation - need start and end values
+            startValue = this._resolveParameterValue(paramData.startValueGenerator, paramName, 'start');
+            endValue = paramData.endValueGenerator ? 
+              this._resolveParameterValue(paramData.endValueGenerator, paramName, 'end') : 
+              startValue;
+          }
+        }
+        
+        if (startValue !== undefined) {
+          const startParam = this.unifiedSynthNode.parameters.get(`${paramName}_start`);
+          const endParam = this.unifiedSynthNode.parameters.get(`${paramName}_end`);
+          
+          // Debug: Log available parameters and what we're trying to access
+          console.log(`🔍 Debug: Trying to access ${paramName}_start parameter`);
+          console.log(`🔍 Available parameters:`, Array.from(this.unifiedSynthNode.parameters.keys()));
+          console.log(`🔍 startParam exists:`, !!startParam, `endParam exists:`, !!endParam);
+          
+          if (startParam) {
+            // Get current value as starting point for ramping
+            const currentValue = this.lastResolvedValues[paramName] || startParam.value || 440;
+            
+            // Set starting point for ramp
+            startParam.setValueAtTime(currentValue, this.audioContext.currentTime);
+            
+            // Use exponential ramping for frequency (if > 0), linear for normalized parameters
+            if (paramName === 'frequency' && startValue > 0 && currentValue > 0) {
+              startParam.exponentialRampToValueAtTime(startValue, targetTime);
+            } else {
+              startParam.linearRampToValueAtTime(startValue, targetTime);
+            }
+            
+            console.log(`🎵 Portamento ${paramName}: ${currentValue.toFixed(3)} → ${startValue.toFixed(3)} over ${portamentoTime}ms`);
+            this.lastResolvedValues[paramName] = startValue;
+          }
+          
+          if (endParam) {
+            // Get current end value as starting point
+            const currentEndValue = endParam.value || endValue;
+            
+            // Set starting point for end parameter ramp
+            endParam.setValueAtTime(currentEndValue, this.audioContext.currentTime);
+            
+            if (paramName === 'frequency' && endValue > 0 && currentEndValue > 0) {
+              endParam.exponentialRampToValueAtTime(endValue, targetTime);
+            } else {
+              endParam.linearRampToValueAtTime(endValue, targetTime);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // _resolveParameterAtPhase method removed - using AudioParams directly
 
   handleProgramUpdate(message) {
     if (this.verbose) console.log("📨 PROGRAM_UPDATE received:", message);
@@ -807,6 +837,14 @@ class SynthClient {
       this.lastProgramUpdate = message;
       return;
     }
+
+    // Check if this update includes portamento time for paused parameter changes
+    const hasPortamento = message.portamentoTime !== undefined;
+    
+    // Debug: Log the message and portamento detection
+    console.log(`🔍 Debug: handleProgramUpdate message:`, message);
+    console.log(`🔍 Debug: message.portamentoTime =`, message.portamentoTime);
+    console.log(`🔍 Debug: hasPortamento =`, hasPortamento);
 
     // Store program config in main thread (we are the musical brain now)
     this.programConfig = {};
@@ -827,7 +865,7 @@ class SynthClient {
     for (const paramName in message) {
       // Skip non-parameter fields
       if (
-        ["type", "timestamp", "synthesisActive", "isManualMode"].includes(
+        ["type", "timestamp", "synthesisActive", "isManualMode", "portamentoTime"].includes(
           paramName,
         )
       ) continue;
@@ -868,9 +906,20 @@ class SynthClient {
 
     console.log("✅ Program config stored in main thread, HRG states initialized");
     
-    // If synthesis is active, ensure immediate audio output
+    // If synthesis is active, handle audio output based on whether portamento is requested
+    console.log(`🔍 Debug: this.synthesisActive =`, this.synthesisActive, `hasPortamento =`, hasPortamento);
     if (this.synthesisActive) {
-      this.activateImmediateSynthesis();
+      if (hasPortamento) {
+        // Apply program parameters with portamento (for paused updates)
+        console.log(`🎵 Applying program update with ${message.portamentoTime}ms portamento`);
+        this.applyProgramWithPortamento(message.portamentoTime);
+      } else {
+        // Immediate synthesis (for initial activation or when playing)
+        console.log(`🔍 Debug: Taking immediate synthesis path (no portamento)`);
+        this.activateImmediateSynthesis();
+      }
+    } else {
+      console.log(`🔍 Debug: Skipping synthesis (synthesisActive = false)`);
     }
   }
 
@@ -1052,10 +1101,10 @@ class SynthClient {
         }
       };
 
-      // Connect phasor worklet output to program worklet phase parameter
-      if (this.programNode) {
-        this.phasorWorklet.connect(this.programNode.parameters.get("phase"));
-        if (this.verbose) console.log("🔗 Phasor worklet connected to program worklet phase parameter");
+      // Connect phasor worklet output to unified synth worklet phase parameter
+      if (this.unifiedSynthNode) {
+        this.phasorWorklet.connect(this.unifiedSynthNode.parameters.get("phase"));
+        if (this.verbose) console.log("🔗 Phasor worklet connected to unified synth worklet phase parameter");
       }
 
       // Start the worklet phasor
@@ -1897,62 +1946,7 @@ class SynthClient {
     }
   }
 
-  applyWithPortamento(param, targetValue, portamentoTime) {
-    // Find the current output value for this parameter
-    const outputIndex = this.programNode.parameterOutputs?.[param];
-    if (outputIndex === undefined) {
-      console.warn(`No output index found for parameter ${param}`);
-      return;
-    }
-
-    // Get current value from worklet
-    const currentValue = this.programNode.currentValues?.[param] || 0;
-    
-    console.log(`🎵 Portamento ${param}: ${currentValue.toFixed(3)} → ${targetValue.toFixed(3)} over ${portamentoTime}ms`);
-
-    if (portamentoTime <= 0 || Math.abs(currentValue - targetValue) < 0.001) {
-      // No portamento needed or values are too close
-      this.programNode.port.postMessage({
-        type: "SET_INTERPOLATED_VALUE",
-        param: param,
-        value: targetValue
-      });
-      return;
-    }
-
-    // Implement smooth transition using requestAnimationFrame
-    const startTime = performance.now();
-    const startValue = currentValue;
-    const valueRange = targetValue - startValue;
-    
-    const smoothTransition = (currentTime) => {
-      const elapsed = currentTime - startTime;
-      const progress = Math.min(elapsed / portamentoTime, 1.0);
-      
-      // Use exponential easing for more musical portamento
-      const easedProgress = 1 - Math.exp(-4 * progress);
-      const currentVal = startValue + (valueRange * easedProgress);
-      
-      this.programNode.port.postMessage({
-        type: "SET_INTERPOLATED_VALUE",
-        param: param,
-        value: currentVal
-      });
-      
-      if (progress < 1.0) {
-        requestAnimationFrame(smoothTransition);
-      } else {
-        // Ensure final value is exact
-        this.programNode.port.postMessage({
-          type: "SET_INTERPOLATED_VALUE",
-          param: param,
-          value: targetValue
-        });
-      }
-    };
-    
-    requestAnimationFrame(smoothTransition);
-  }
+  // Portamento is now handled entirely within the unified worklet
   
   pauseEnvelopes() {
     if (!this.programNode) return;
@@ -2213,6 +2207,25 @@ class SynthClient {
       [array[i], array[j]] = [array[j], array[i]];
     }
     return array;
+  }
+
+  // Helper method to resolve parameter values for AudioParams
+  _resolveParameterValue(generator, paramName, position) {
+    if (!generator) return this.lastResolvedValues[paramName] || 440;
+    
+    if (generator.type === 'periodic') {
+      // HRG - use sequence state
+      return this._resolveHRG(paramName, position);
+    } else if (generator.type === 'normalised') {
+      // RBG - resolve scalar
+      return this._resolveRBG(generator);
+    } else if (generator.value !== undefined) {
+      // Direct value
+      return generator.value;
+    } else {
+      // Fallback
+      return this.lastResolvedValues[paramName] || 440;
+    }
   }
 
   // Resolve HRG value and advance sequence

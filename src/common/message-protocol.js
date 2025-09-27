@@ -73,6 +73,7 @@ export class MessageBuilder {
       amplitude: params.amplitude,
       whiteNoise: params.whiteNoise,
       synthesisActive: params.synthesisActive,
+      portamentoTime: params.portamentoTime,
       timestamp: performance.now(),
     };
   }

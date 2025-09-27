@@ -191,6 +191,23 @@ class ControlClient {
   }
 
   /**
+   * Apply HRG changes when paused
+   * Updates active state directly and broadcasts program configuration for synths to resolve with portamento
+   */
+  private _applyHRGChangeWithPortamento(action: any) {
+    // Update active state with the HRG change (no pending state when paused)
+    this._updateActiveState(action);
+    
+    // Get portamento time from UI
+    const portamentoTime = this.elements.portamentoTime ? 
+      parseInt(this.elements.portamentoTime.value) : 100;
+    
+    // Broadcast the complete program configuration with portamento time
+    // Synths will resolve values using current phase and apply portamento
+    this.broadcastMusicalParameters(portamentoTime);
+  }
+
+  /**
    * Update the active musical state directly (bypassing pending state)
    * Used when transport is paused for immediate parameter updates
    */
@@ -772,14 +789,13 @@ class ControlClient {
         // Commit complete value on blur
         startNumeratorsInput.addEventListener("blur", () => {
           if (!this.isPlaying) {
-            // When paused: update active state directly and broadcast
-            this._updateActiveState({
+            // When paused: update active state and send with portamento
+            this._applyHRGChangeWithPortamento({
               type: "SET_GENERATOR_CONFIG",
               param: "frequency",
               position: "start",
               config: { numerators: startNumeratorsInput.value },
             });
-            this.broadcastMusicalParameters();
           } else {
             // When playing: update pending state for EOC
             this._updatePendingState({
@@ -813,14 +829,13 @@ class ControlClient {
         // Commit complete value on blur
         startDenominatorsInput.addEventListener("blur", () => {
           if (!this.isPlaying) {
-            // When paused: update active state directly and broadcast
-            this._updateActiveState({
+            // When paused: update active state and send with portamento
+            this._applyHRGChangeWithPortamento({
               type: "SET_GENERATOR_CONFIG",
               param: "frequency",
               position: "start",
               config: { denominators: startDenominatorsInput.value },
             });
-            this.broadcastMusicalParameters();
           } else {
             // When playing: update pending state for EOC
             this._updatePendingState({
@@ -837,14 +852,13 @@ class ControlClient {
       if (startNumBehaviorSelect) {
         startNumBehaviorSelect.addEventListener("change", () => {
           if (!this.isPlaying) {
-            // When paused: update active state directly and broadcast
-            this._updateActiveState({
+            // When paused: update active state and send with portamento
+            this._applyHRGChangeWithPortamento({
               type: "SET_GENERATOR_CONFIG",
               param: "frequency",
               position: "start",
               config: { numeratorBehavior: startNumBehaviorSelect.value },
             });
-            this.broadcastMusicalParameters();
           } else {
             // When playing: update pending state for EOC
             this._updatePendingState({
@@ -861,14 +875,13 @@ class ControlClient {
       if (startDenBehaviorSelect) {
         startDenBehaviorSelect.addEventListener("change", () => {
           if (!this.isPlaying) {
-            // When paused: update active state directly and broadcast
-            this._updateActiveState({
+            // When paused: update active state and send with portamento
+            this._applyHRGChangeWithPortamento({
               type: "SET_GENERATOR_CONFIG",
               param: "frequency",
               position: "start",
               config: { denominatorBehavior: startDenBehaviorSelect.value },
             });
-            this.broadcastMusicalParameters();
           } else {
             // When playing: update pending state for EOC
             this._updatePendingState({
@@ -916,14 +929,13 @@ class ControlClient {
         // Commit complete value on blur
         endNumeratorsInput.addEventListener("blur", () => {
           if (!this.isPlaying) {
-            // When paused: update active state directly and broadcast
-            this._updateActiveState({
+            // When paused: update active state and send with portamento
+            this._applyHRGChangeWithPortamento({
               type: "SET_GENERATOR_CONFIG",
               param: "frequency",
               position: "end",
               config: { numerators: endNumeratorsInput.value },
             });
-            this.broadcastMusicalParameters();
           } else {
             // When playing: update pending state for EOC
             this._updatePendingState({
@@ -957,14 +969,13 @@ class ControlClient {
         // Commit complete value on blur
         endDenominatorsInput.addEventListener("blur", () => {
           if (!this.isPlaying) {
-            // When paused: update active state directly and broadcast
-            this._updateActiveState({
+            // When paused: update active state and send with portamento
+            this._applyHRGChangeWithPortamento({
               type: "SET_GENERATOR_CONFIG",
               param: "frequency",
               position: "end",
               config: { denominators: endDenominatorsInput.value },
             });
-            this.broadcastMusicalParameters();
           } else {
             // When playing: update pending state for EOC
             this._updatePendingState({
@@ -981,14 +992,13 @@ class ControlClient {
       if (endNumBehaviorSelect) {
         endNumBehaviorSelect.addEventListener("change", () => {
           if (!this.isPlaying) {
-            // When paused: update active state directly and broadcast
-            this._updateActiveState({
+            // When paused: update active state and send with portamento
+            this._applyHRGChangeWithPortamento({
               type: "SET_GENERATOR_CONFIG",
               param: "frequency",
               position: "end",
               config: { numeratorBehavior: endNumBehaviorSelect.value },
             });
-            this.broadcastMusicalParameters();
           } else {
             // When playing: update pending state for EOC
             this._updatePendingState({
@@ -1005,14 +1015,13 @@ class ControlClient {
       if (endDenBehaviorSelect) {
         endDenBehaviorSelect.addEventListener("change", () => {
           if (!this.isPlaying) {
-            // When paused: update active state directly and broadcast
-            this._updateActiveState({
+            // When paused: update active state and send with portamento
+            this._applyHRGChangeWithPortamento({
               type: "SET_GENERATOR_CONFIG",
               param: "frequency",
               position: "end",
               config: { denominatorBehavior: endDenBehaviorSelect.value },
             });
-            this.broadcastMusicalParameters();
           } else {
             // When playing: update pending state for EOC
             this._updatePendingState({
@@ -1451,11 +1460,16 @@ class ControlClient {
    * Central method for translating IMusicalState to wire format
    * Used by both broadcastMusicalParameters and sendCompleteStateToSynth
    */
-  private _getWirePayload(): any {
+  private _getWirePayload(portamentoTime?: number): any {
     const wirePayload: any = {
       synthesisActive: this.synthesisActive,
       isManualMode: this.isManualControlMode,
     };
+    
+    // Include portamento time when provided (for paused updates)
+    if (portamentoTime !== undefined) {
+      wirePayload.portamentoTime = portamentoTime;
+    }
 
     // Send discriminated union format directly
     for (const key in this.musicalState) {
@@ -1495,10 +1509,10 @@ class ControlClient {
     return wirePayload;
   }
 
-  broadcastMusicalParameters() {
+  broadcastMusicalParameters(portamentoTime?: number) {
     if (!this.star) return;
 
-    const wirePayload = this._getWirePayload();
+    const wirePayload = this._getWirePayload(portamentoTime);
     console.log("Broadcasting translated payload:", wirePayload);
 
     const message = MessageBuilder.createParameterUpdate(
@@ -1506,7 +1520,7 @@ class ControlClient {
       wirePayload,
     );
     this.star.broadcast(message);
-    this.log("📡 Broadcasted musical parameters", "info");
+    this.log(`📡 Broadcasted musical parameters${portamentoTime ? ` with ${portamentoTime}ms portamento` : ''}`, "info");
   }
 
   // Removed splitParametersByMode - no longer needed with separated state
