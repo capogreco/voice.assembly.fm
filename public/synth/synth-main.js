@@ -306,17 +306,8 @@ class SynthClient {
       this.voiceNode = this.unifiedSynthNode; // Main audio node
       this.programNode = this.unifiedSynthNode; // Same node handles program logic
       
-      // Track current parameter values for portamento (no longer need complex routing)
-      this.lastResolvedValues = {
-        frequency: 220,
-        zingMorph: 0,
-        zingAmount: 0,
-        vowelX: 0.5,
-        vowelY: 0.5,
-        symmetry: 0.5,
-        amplitude: 0.1,
-        whiteNoise: 0,
-      };
+      // Track current parameter values for portamento (strict - no defaults)
+      this.lastResolvedValues = {};
 
       // Create two independent white noise worklets for decorrelated audio/visualization
       this.whiteNoiseAudio = new AudioWorkletNode(
@@ -468,6 +459,10 @@ class SynthClient {
     switch (message.type) {
       case MessageTypes.PROGRAM_UPDATE:
         this.handleProgramUpdate(message);
+        break;
+
+      case MessageTypes.SUB_PARAM_UPDATE:
+        this.handleSubParameterUpdate(message);
         break;
 
       case MessageTypes.UNIFIED_PARAM_UPDATE:
@@ -904,11 +899,11 @@ class SynthClient {
       
       // Handle unified format with interpolation + generators
       
-      // Validate directValue for periodic generators
-      if (paramData.startValueGenerator?.type === 'periodic' && paramData.directValue === undefined) {
-        console.error(`🚨 CRITICAL: Periodic generator for ${paramName} missing directValue!`);
+      // Validate baseValue for periodic generators
+      if (paramData.startValueGenerator?.type === 'periodic' && paramData.baseValue === undefined) {
+        console.error(`🚨 CRITICAL: Periodic generator for ${paramName} missing baseValue!`);
         console.error(`🚨 This means controller sent incomplete parameter data`);
-        throw new Error(`Missing directValue for periodic generator ${paramName} - controller bug?`);
+        throw new Error(`Missing baseValue for periodic generator ${paramName} - controller bug?`);
       }
 
       // Initialize HRG state for periodic generators
@@ -943,13 +938,15 @@ class SynthClient {
             continue; // Skip meta fields
           }
           
-          // Update program config for this parameter
+          // Standard parameter update: update config first
           this.programConfig[paramName] = message[paramName];
           
-          // Refresh HRG state if this parameter uses periodic generators
-          if (message[paramName].startValueGenerator?.type === 'periodic' || 
-              message[paramName].endValueGenerator?.type === 'periodic') {
-            this._initializeHRGState(paramName, this.programConfig[paramName]);
+          // Selectively refresh HRG state for changed positions only
+          if (message[paramName].startValueGenerator?.type === 'periodic') {
+            this._reinitHRGPosition(paramName, 'start');
+          }
+          if (message[paramName].endValueGenerator?.type === 'periodic' && this.programConfig[paramName].interpolation === 'cosine') {
+            this._reinitHRGPosition(paramName, 'end');
           }
           
           // Apply single parameter with portamento
@@ -958,6 +955,50 @@ class SynthClient {
       }
     }
   }
+
+  handleSubParameterUpdate(message) {
+    if (!this.programConfig) {
+      console.warn("⚠️ Sub-parameter update received before program initialization");
+      return;
+    }
+
+    const { paramPath, value, portamentoTime } = message;
+    const pathParts = paramPath.split('.');
+    const paramName = pathParts[0];
+    
+    console.log(`🔧 Sub-parameter update: ${paramPath} = ${value}`);
+    
+    if (!this.programConfig[paramName]) {
+      throw new Error(`CRITICAL: Unknown parameter ${paramName}`);
+    }
+
+    // Update the specific sub-parameter in config
+    let target = this.programConfig[paramName];
+    for (let i = 1; i < pathParts.length - 1; i++) {
+      if (!target[pathParts[i]]) {
+        throw new Error(`CRITICAL: Invalid path ${paramPath} - missing ${pathParts[i]}`);
+      }
+      target = target[pathParts[i]];
+    }
+    
+    const finalKey = pathParts[pathParts.length - 1];
+    target[finalKey] = value;
+    
+    // Re-randomize HRG indices for SIN or behavior changes
+    if (paramPath.includes('.numerators') || 
+        paramPath.includes('.denominators') || 
+        paramPath.includes('Behavior')) {
+      if (paramPath.startsWith('frequency.startValueGenerator.')) {
+        this._reinitHRGPosition('frequency', 'start');
+      } else if (paramPath.startsWith('frequency.endValueGenerator.')) {
+        this._reinitHRGPosition('frequency', 'end');
+      }
+    }
+    
+    // Always re-resolve and apply the parameter
+    this.applySingleParamWithPortamento(paramName, portamentoTime);
+  }
+
 
   // OBSOLETE - These methods were used by the old monolithic worklet
   // applyProgramUpdateFromWorklet(parameters) {
@@ -2149,6 +2190,41 @@ class SynthClient {
     }
   }
 
+  // Re-initialize only a specific HRG position (start or end) for selective updates
+  _reinitHRGPosition(param, position) {
+    const config = this.programConfig[param];
+    if (!config) {
+      throw new Error(`CRITICAL: Missing config for ${param}`);
+    }
+    
+    const generator = position === 'start' ? config.startValueGenerator : config.endValueGenerator;
+    if (!generator || generator.type !== 'periodic') return;
+    
+    const numerators = this._parseSIN(generator.numerators || "1");
+    const denominators = this._parseSIN(generator.denominators || "1");
+    const numeratorBehavior = generator.numeratorBehavior || "static";
+    const denominatorBehavior = generator.denominatorBehavior || "static";
+    
+    // Ensure HRG state exists
+    if (!this.hrgState[param]) {
+      this.hrgState[param] = {};
+    }
+    
+    // Re-randomize only this position
+    this.hrgState[param][position] = {
+      numerators,
+      denominators,
+      numeratorBehavior,
+      denominatorBehavior,
+      indexN: numeratorBehavior === 'static' ? Math.floor(Math.random() * numerators.length) : 0,
+      indexD: denominatorBehavior === 'static' ? Math.floor(Math.random() * denominators.length) : 0,
+      orderN: numeratorBehavior === 'shuffle' ? this._shuffleArray([...numerators]) : null,
+      orderD: denominatorBehavior === 'shuffle' ? this._shuffleArray([...denominators]) : null
+    };
+    
+    console.log(`🔄 Re-initialized HRG ${position} for ${param}: N=${numeratorBehavior}[${this.hrgState[param][position].indexN}], D=${denominatorBehavior}[${this.hrgState[param][position].indexD}]`);
+  }
+
   // Restore HRG state from saved sequence data (preserves per-synth uniqueness)
   _restoreHRGState(param, seqState, config) {
     const generator = config.startValueGenerator;
@@ -2274,6 +2350,47 @@ class SynthClient {
       throw new Error(`CRITICAL: Invalid frequency ${current}`);
     }
     
+    // Add debug logging for frequency HRG changes
+    if (paramName === 'frequency') {
+      console.log(`🐛 HRG DEBUG: current=${current}, target=${target}, portamentoMs=${portamentoMs}`);
+    }
+    
+    const now = this.audioContext.currentTime;
+    const targetTime = now + portamentoMs / 1000;
+    
+    if (paramName === 'frequency') {
+      console.log(`🐛 HRG DEBUG: Scheduling ramp from ${current} to ${target} over ${portamentoMs}ms (now=${now}, targetTime=${targetTime})`);
+    }
+    
+    startParam.setValueAtTime(current, now);
+    if (paramName === 'frequency' && current > 0 && target > 0) {
+      startParam.exponentialRampToValueAtTime(target, targetTime);
+      console.log(`🐛 HRG DEBUG: ✅ Exponential ramp scheduled`);
+    } else {
+      startParam.linearRampToValueAtTime(target, targetTime);
+      if (paramName === 'frequency') {
+        console.log(`🐛 HRG DEBUG: ✅ Linear ramp scheduled`);
+      }
+    }
+    
+    console.log(`🎵 Paused portamento ${paramName}: ${current.toFixed(3)} → ${target.toFixed(3)} over ${portamentoMs}ms`);
+    this.lastResolvedValues[paramName] = target;
+  }
+
+  // Apply base frequency change with ratio-preserving ramp
+  applyBaseChangeWithPortamento(paramName, current, target, portamentoMs) {
+    const startParam = this.unifiedSynthNode.parameters.get(`${paramName}_start`);
+    if (!startParam) {
+      throw new Error(`CRITICAL: Missing AudioParam ${paramName}_start`);
+    }
+    
+    if (!Number.isFinite(current) || !Number.isFinite(target)) {
+      throw new Error(`CRITICAL: Invalid values for base change ${paramName}: current=${current}, target=${target}`);
+    }
+    if (paramName === 'frequency' && (current <= 0 || target <= 0)) {
+      throw new Error(`CRITICAL: Invalid frequency for exponential ramp: current=${current}, target=${target}`);
+    }
+    
     const now = this.audioContext.currentTime;
     const targetTime = now + portamentoMs / 1000;
     
@@ -2284,7 +2401,7 @@ class SynthClient {
       startParam.linearRampToValueAtTime(target, targetTime);
     }
     
-    console.log(`🎵 Paused portamento ${paramName}: ${current.toFixed(3)} → ${target.toFixed(3)} over ${portamentoMs}ms`);
+    console.log(`🎵 Base change portamento ${paramName}: ${current.toFixed(3)} → ${target.toFixed(3)} over ${portamentoMs}ms`);
     this.lastResolvedValues[paramName] = target;
   }
 
@@ -2366,8 +2483,8 @@ class SynthClient {
     if (!cfg) {
       throw new Error(`CRITICAL: peekHRGValue - missing config for ${paramName}`);
     }
-    if (!Number.isFinite(cfg.directValue)) {
-      throw new Error(`CRITICAL: peekHRGValue - missing directValue for ${paramName}`);
+    if (!Number.isFinite(cfg.baseValue)) {
+      throw new Error(`CRITICAL: peekHRGValue - missing baseValue for ${paramName}`);
     }
     
     const state = this.hrgState[paramName]?.[position];
@@ -2406,7 +2523,7 @@ class SynthClient {
       denominator = denominators[Math.floor(Math.random() * denominators.length)];
     }
     
-    const base = Number(cfg.directValue);
+    const base = Number(cfg.baseValue);
     return base * (numerator / (denominator || 1));
   }
 
@@ -2466,11 +2583,11 @@ class SynthClient {
     if (!cfg) {
       throw new Error(`CRITICAL: HRG resolution for ${param} - missing program config`);
     }
-    if (!Number.isFinite(cfg.directValue)) {
-      throw new Error(`CRITICAL: HRG resolution for ${param} - missing directValue`);
+    if (!Number.isFinite(cfg.baseValue)) {
+      throw new Error(`CRITICAL: HRG resolution for ${param} - missing baseValue`);
     }
     
-    const base = Number(cfg.directValue);
+    const base = Number(cfg.baseValue);
     return base * (numerator / (denominator || 1));
   }
 
@@ -2553,7 +2670,7 @@ class SynthClient {
         if (!baseValue) {
           console.error(`🚨 CRITICAL: Missing baseValue for periodic generator in _resolveGenerator!`);
           console.error(`🚨 Generator:`, generator);
-          throw new Error(`Missing baseValue for periodic generator - directValue not copied?`);
+          throw new Error(`Missing baseValue for periodic generator - baseValue not copied?`);
         }
         const numerators = this._parseSIN(generator.numerators || "1");
         const denominators = this._parseSIN(generator.denominators || "1");

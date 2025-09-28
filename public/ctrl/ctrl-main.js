@@ -9,6 +9,7 @@ var MessageTypes = {
   PONG: "pong",
   // Parameter Control
   PROGRAM_UPDATE: "program-update",
+  SUB_PARAM_UPDATE: "sub-param-update",
   UNIFIED_PARAM_UPDATE: "unified-param-update",
   // Timing Control
   PHASOR_SYNC: "phasor-sync",
@@ -161,6 +162,15 @@ var MessageBuilder = class {
       timestamp: performance.now()
     };
   }
+  static subParamUpdate(paramPath, value, portamentoTime) {
+    return {
+      type: MessageTypes.SUB_PARAM_UPDATE,
+      paramPath,
+      value,
+      portamentoTime,
+      timestamp: performance.now()
+    };
+  }
   static unifiedParamUpdate(param, startValue, endValue, interpolation, isPlaying, portamentoTime, currentPhase) {
     return {
       type: MessageTypes.UNIFIED_PARAM_UPDATE,
@@ -223,8 +233,8 @@ function validateMessage(message) {
           if (value.interpolation === "cosine" && (!value.endValueGenerator || typeof value.endValueGenerator !== "object")) {
             throw new Error(`Parameter '${key}' with cosine interpolation must have endValueGenerator`);
           }
-          if (value.startValueGenerator.type === "periodic" && value.directValue === void 0) {
-            throw new Error(`Parameter '${key}' with periodic generator must have directValue`);
+          if (value.startValueGenerator.type === "periodic" && value.baseValue === void 0) {
+            throw new Error(`Parameter '${key}' with periodic generator must have baseValue`);
           }
         }
       }
@@ -297,6 +307,14 @@ function validateMessage(message) {
     case MessageTypes.CLEAR_SCENE:
       if (typeof message.memoryLocation !== "number" || message.memoryLocation < 0 || message.memoryLocation > 9) {
         throw new Error("Clear scene message requires memoryLocation (0-9)");
+      }
+      break;
+    case MessageTypes.SUB_PARAM_UPDATE:
+      if (typeof message.paramPath !== "string" || message.value === void 0 || typeof message.portamentoTime !== "number") {
+        throw new Error("Sub param update message missing required fields: paramPath, value, portamentoTime");
+      }
+      if (!/^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$/.test(message.paramPath)) {
+        throw new Error(`Invalid paramPath format: ${message.paramPath}`);
       }
       break;
     case MessageTypes.UNIFIED_PARAM_UPDATE:
@@ -1019,7 +1037,7 @@ var ControlClient = class {
   _createDefaultState() {
     const defaultFrequencyState = () => ({
       interpolation: "step",
-      directValue: 220,
+      baseValue: 220,
       startValueGenerator: {
         type: "periodic",
         numerators: "1",
@@ -1048,7 +1066,7 @@ var ControlClient = class {
     });
     const defaultConstantState = (value) => ({
       interpolation: "step",
-      directValue: value,
+      baseValue: value,
       startValueGenerator: {
         type: "normalised",
         range: value,
@@ -1070,9 +1088,9 @@ var ControlClient = class {
     console.log("Action dispatched:", action);
     const newState = JSON.parse(JSON.stringify(this.pendingMusicalState));
     switch (action.type) {
-      case "SET_DIRECT_VALUE": {
+      case "SET_BASE_VALUE": {
         const param = newState[action.param];
-        param.directValue = action.value;
+        param.baseValue = action.value;
         if (param.startValueGenerator?.type === "periodic") {
           param.startValueGenerator.baseValue = action.value;
         }
@@ -1086,13 +1104,13 @@ var ControlClient = class {
         if (action.interpolation === "step") {
           newState[action.param] = {
             interpolation: "step",
-            directValue: param.directValue,
+            baseValue: param.baseValue,
             startValueGenerator: param.startValueGenerator
           };
         } else {
           newState[action.param] = {
             interpolation: action.interpolation,
-            directValue: param.directValue,
+            baseValue: param.baseValue,
             startValueGenerator: param.startValueGenerator,
             endValueGenerator: param.endValueGenerator || {
               ...param.startValueGenerator
@@ -1109,7 +1127,7 @@ var ControlClient = class {
             ...action.config
           };
           if (param.startValueGenerator.type === "periodic") {
-            param.startValueGenerator.baseValue = param.directValue;
+            param.startValueGenerator.baseValue = param.baseValue;
           }
         } else if (action.position === "end" && param.interpolation !== "step" && param.endValueGenerator) {
           param.endValueGenerator = {
@@ -1117,7 +1135,7 @@ var ControlClient = class {
             ...action.config
           };
           if (param.endValueGenerator.type === "periodic") {
-            param.endValueGenerator.baseValue = param.directValue;
+            param.endValueGenerator.baseValue = param.baseValue;
           }
         }
         break;
@@ -1145,9 +1163,9 @@ var ControlClient = class {
   _updateActiveState(action) {
     const newState = JSON.parse(JSON.stringify(this.musicalState));
     switch (action.type) {
-      case "SET_DIRECT_VALUE": {
+      case "SET_BASE_VALUE": {
         const param = newState[action.param];
-        param.directValue = action.value;
+        param.baseValue = action.value;
         if (param.startValueGenerator?.type === "periodic") {
           param.startValueGenerator.baseValue = action.value;
         }
@@ -1161,13 +1179,13 @@ var ControlClient = class {
         if (action.interpolation === "step") {
           newState[action.param] = {
             interpolation: "step",
-            directValue: param.directValue,
+            baseValue: param.baseValue,
             startValueGenerator: param.startValueGenerator
           };
         } else {
           newState[action.param] = {
             interpolation: action.interpolation,
-            directValue: param.directValue,
+            baseValue: param.baseValue,
             startValueGenerator: param.startValueGenerator,
             endValueGenerator: param.endValueGenerator || {
               ...param.startValueGenerator
@@ -1184,7 +1202,7 @@ var ControlClient = class {
             ...action.config
           };
           if (param.startValueGenerator.type === "periodic") {
-            param.startValueGenerator.baseValue = param.directValue;
+            param.startValueGenerator.baseValue = param.baseValue;
           }
         } else if (action.position === "end" && param.interpolation !== "step" && param.endValueGenerator) {
           param.endValueGenerator = {
@@ -1192,7 +1210,7 @@ var ControlClient = class {
             ...action.config
           };
           if (param.endValueGenerator.type === "periodic") {
-            param.endValueGenerator.baseValue = param.directValue;
+            param.endValueGenerator.baseValue = param.baseValue;
           }
         }
         break;
@@ -1462,7 +1480,7 @@ var ControlClient = class {
             }
             console.log(`Input for '${paramName}' was empty on blur, defaulting to ${defaultValue}`);
             this._updatePendingState({
-              type: "SET_DIRECT_VALUE",
+              type: "SET_BASE_VALUE",
               param: paramName,
               value: defaultValue
             });
@@ -1761,23 +1779,27 @@ var ControlClient = class {
         if (!Number.isFinite(v)) return;
         v = Math.max(16, Math.min(16384, v));
         baseInput.value = String(v);
-        this._updatePendingState({
-          type: "SET_DIRECT_VALUE",
-          param: paramName,
-          value: v
-        });
         if (this.isPlaying) {
+          this._updatePendingState({
+            type: "SET_BASE_VALUE",
+            param: paramName,
+            value: v
+          });
           this.broadcastMusicalParameters();
           this.pendingParameterChanges.add(paramName);
           this.updateParameterVisualFeedback(paramName);
         } else {
+          this._updateActiveState({
+            type: "SET_BASE_VALUE",
+            param: paramName,
+            value: v
+          });
           const portamentoTime = this.elements.portamentoTime ? parseInt(this.elements.portamentoTime.value) : 100;
-          this.broadcastSingleParameterUpdate(paramName, portamentoTime);
+          this.broadcastSubParameterUpdate(`${paramName}.baseValue`, v, portamentoTime);
           this.pendingParameterChanges.delete(paramName);
           this.updateParameterVisualFeedback(paramName);
         }
       };
-      baseInput.addEventListener("change", applyBase);
       baseInput.addEventListener("blur", applyBase);
     }
     if (interpSelect) {
@@ -2063,23 +2085,23 @@ var ControlClient = class {
     if (trimmedValue.includes("-")) {
     }
     if (currentMode === "direct") {
-      let directValue;
+      let baseValue;
       if (trimmedValue.includes("-")) {
         const [min, max] = trimmedValue.split("-").map((v) => parseFloat(v.trim()));
         if (!isNaN(min) && !isNaN(max)) {
-          directValue = (min + max) / 2;
+          baseValue = (min + max) / 2;
         }
       } else {
         const value = parseFloat(trimmedValue);
         if (!isNaN(value)) {
-          directValue = value;
+          baseValue = value;
         }
       }
-      if (directValue !== void 0) {
+      if (baseValue !== void 0) {
         this._updatePendingState({
-          type: "SET_DIRECT_VALUE",
+          type: "SET_BASE_VALUE",
           param: paramName,
-          value: directValue
+          value: baseValue
         });
       }
     } else {
@@ -2171,9 +2193,9 @@ var ControlClient = class {
           valueInput.value = `${range.min}-${range.max}`;
         }
       } else if (paramState.startValueGenerator?.type === "periodic") {
-        valueInput.value = (paramState.directValue ?? "").toString();
-      } else if (paramState.directValue !== null) {
-        valueInput.value = paramState.directValue.toString();
+        valueInput.value = (paramState.baseValue ?? "").toString();
+      } else if (paramState.baseValue !== null) {
+        valueInput.value = paramState.baseValue.toString();
       } else {
         valueInput.value = "";
         valueInput.focus();
@@ -2385,29 +2407,23 @@ var ControlClient = class {
       if (paramState.interpolation === "cosine" && !paramState.endValueGenerator) {
         throw new Error(`CRITICAL: Parameter '${paramKey}' cosine interpolation missing endValueGenerator`);
       }
-      if (paramState.startValueGenerator.type === "periodic" && paramState.directValue === void 0) {
-        throw new Error(`CRITICAL: Parameter '${paramKey}' periodic generator missing directValue`);
+      if (paramState.startValueGenerator.type === "periodic" && paramState.baseValue === void 0) {
+        throw new Error(`CRITICAL: Parameter '${paramKey}' periodic generator missing baseValue`);
       }
       const startGen = {
         ...paramState.startValueGenerator
       };
-      if (startGen.type === "periodic") {
-        startGen.baseValue = paramState.directValue;
-      }
       let endGen = void 0;
       if (paramState.interpolation === "cosine" && paramState.endValueGenerator) {
         endGen = {
           ...paramState.endValueGenerator
         };
-        if (endGen.type === "periodic") {
-          endGen.baseValue = paramState.directValue;
-        }
       }
       wirePayload[paramKey] = {
         interpolation: paramState.interpolation,
         startValueGenerator: startGen,
         endValueGenerator: endGen,
-        directValue: paramState.directValue
+        baseValue: paramState.baseValue
       };
     }
     return wirePayload;
@@ -2426,7 +2442,7 @@ var ControlClient = class {
    */
   broadcastSingleParameterUpdate(paramName, portamentoTime) {
     if (!this.star) return;
-    const paramState = this.musicalState[paramName];
+    const paramState = this.pendingMusicalState[paramName];
     if ("scope" in paramState) {
       throw new Error(`CRITICAL: Parameter '${paramName}' has forbidden 'scope' field`);
     }
@@ -2437,27 +2453,30 @@ var ControlClient = class {
     const startGen = {
       ...paramState.startValueGenerator
     };
-    if (startGen.type === "periodic") {
-      startGen.baseValue = paramState.directValue;
-    }
     let endGen = void 0;
     if (paramState.interpolation === "cosine" && paramState.endValueGenerator) {
       endGen = {
         ...paramState.endValueGenerator
       };
-      if (endGen.type === "periodic") {
-        endGen.baseValue = paramState.directValue;
-      }
     }
     wirePayload[paramName] = {
       interpolation: paramState.interpolation,
       startValueGenerator: startGen,
       endValueGenerator: endGen,
-      directValue: paramState.directValue
+      baseValue: paramState.baseValue
     };
     const message = MessageBuilder.createParameterUpdate(MessageTypes.PROGRAM_UPDATE, wirePayload);
     this.star.broadcastToType("synth", message, "control");
     this.log(`\u{1F4E1} Broadcasted ${paramName} update with ${portamentoTime}ms portamento`, "info");
+  }
+  /**
+   * Broadcast a sub-parameter update (e.g., frequency.baseValue)
+   */
+  broadcastSubParameterUpdate(paramPath, value, portamentoTime) {
+    if (!this.star) return;
+    const message = MessageBuilder.subParamUpdate(paramPath, value, portamentoTime);
+    this.star.broadcastToType("synth", message, "control");
+    this.log(`\u{1F4E1} Broadcasted sub-parameter ${paramPath} = ${value} with ${portamentoTime}ms portamento`, "info");
   }
   // Broadcast a single parameter update for staging at EOC (no portamento field)
   broadcastSingleParameterStaged(paramName) {
@@ -2473,7 +2492,7 @@ var ControlClient = class {
       ...paramState.startValueGenerator
     };
     if (startGen.type === "periodic") {
-      startGen.baseValue = paramState.directValue;
+      startGen.baseValue = paramState.baseValue;
     }
     let endGen = void 0;
     if (paramState.interpolation === "cosine" && paramState.endValueGenerator) {
@@ -2481,14 +2500,14 @@ var ControlClient = class {
         ...paramState.endValueGenerator
       };
       if (endGen.type === "periodic") {
-        endGen.baseValue = paramState.directValue;
+        endGen.baseValue = paramState.baseValue;
       }
     }
     wirePayload[paramName] = {
       interpolation: paramState.interpolation,
       startValueGenerator: startGen,
       endValueGenerator: endGen,
-      directValue: paramState.directValue
+      baseValue: paramState.baseValue
     };
     const message = MessageBuilder.createParameterUpdate(MessageTypes.PROGRAM_UPDATE, wirePayload);
     this.star.broadcastToType("synth", message, "control");
@@ -2726,7 +2745,7 @@ var ControlClient = class {
   handleUnifiedParameterUpdate(paramName, value) {
     console.log(`\u{1F39B}\uFE0F Unified parameter update: ${paramName} = ${value}`);
     this._updatePendingState({
-      type: "SET_DIRECT_VALUE",
+      type: "SET_BASE_VALUE",
       param: paramName,
       value: parseFloat(value) || 0
     });
@@ -2793,13 +2812,13 @@ var ControlClient = class {
   resolveParameterValues(paramName, paramState) {
     if (paramState.interpolation === "step") {
       return {
-        start: this.resolveGeneratorValue(paramState.startValueGenerator, paramState.directValue),
+        start: this.resolveGeneratorValue(paramState.startValueGenerator, paramState.baseValue),
         end: void 0
       };
     }
     return {
-      start: this.resolveGeneratorValue(paramState.startValueGenerator, paramState.directValue),
-      end: this.resolveGeneratorValue(paramState.endValueGenerator, paramState.directValue)
+      start: this.resolveGeneratorValue(paramState.startValueGenerator, paramState.baseValue),
+      end: this.resolveGeneratorValue(paramState.endValueGenerator, paramState.baseValue)
     };
   }
   resolveGeneratorValue(generator, baseValue) {

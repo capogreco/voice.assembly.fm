@@ -15,7 +15,7 @@ import {
 
 // Define action types for state management
 type ControlAction =
-  | { type: "SET_DIRECT_VALUE"; param: keyof IMusicalState; value: number }
+  | { type: "SET_BASE_VALUE"; param: keyof IMusicalState; value: number }
   | {
     type: "SET_INTERPOLATION";
     param: keyof IMusicalState;
@@ -55,7 +55,7 @@ class ControlClient {
     // Helper for frequency (uses HRG)
     const defaultFrequencyState = (): ParameterState => ({
       interpolation: "step",
-      directValue: 220,
+      baseValue: 220,
       startValueGenerator: {
         type: "periodic",
         numerators: "1",
@@ -82,7 +82,7 @@ class ControlClient {
     // Helper for simple constant parameters  
     const defaultConstantState = (value: number): ParameterState => ({
       interpolation: "step",
-      directValue: value,
+      baseValue: value,
       startValueGenerator: {
         type: "normalised",
         range: value,
@@ -109,9 +109,9 @@ class ControlClient {
     const newState = JSON.parse(JSON.stringify(this.pendingMusicalState));
 
     switch (action.type) {
-      case "SET_DIRECT_VALUE": {
+      case "SET_BASE_VALUE": {
         const param = newState[action.param];
-        param.directValue = action.value;
+        param.baseValue = action.value;
         // Update baseValue for periodic generators
         if (param.startValueGenerator?.type === "periodic") {
           param.startValueGenerator.baseValue = action.value;
@@ -128,14 +128,14 @@ class ControlClient {
           // Step interpolation - only needs start generator
           newState[action.param] = {
             interpolation: "step",
-            directValue: param.directValue,
+            baseValue: param.baseValue,
             startValueGenerator: param.startValueGenerator,
           };
         } else {
           // Cosine interpolation - needs start and end generators
           newState[action.param] = {
             interpolation: action.interpolation,
-            directValue: param.directValue,
+            baseValue: param.baseValue,
             startValueGenerator: param.startValueGenerator,
             endValueGenerator: param.endValueGenerator || {
               ...param.startValueGenerator, // Copy start generator as default
@@ -155,7 +155,7 @@ class ControlClient {
           };
           // Update baseValue if this is a periodic generator
           if (param.startValueGenerator.type === "periodic") {
-            param.startValueGenerator.baseValue = param.directValue;
+            param.startValueGenerator.baseValue = param.baseValue;
           }
         } else if (
           action.position === "end" && param.interpolation !== "step" &&
@@ -168,7 +168,7 @@ class ControlClient {
           };
           // Update baseValue if this is a periodic generator
           if (param.endValueGenerator.type === "periodic") {
-            param.endValueGenerator.baseValue = param.directValue;
+            param.endValueGenerator.baseValue = param.baseValue;
           }
         }
         break;
@@ -212,9 +212,9 @@ class ControlClient {
 
     // Apply the same logic as _updatePendingState but to active state
     switch (action.type) {
-      case "SET_DIRECT_VALUE": {
+      case "SET_BASE_VALUE": {
         const param = newState[action.param];
-        param.directValue = action.value;
+        param.baseValue = action.value;
         
         // Update baseValue for periodic generators
         if (param.startValueGenerator?.type === "periodic") {
@@ -232,14 +232,14 @@ class ControlClient {
           // Step interpolation - only needs start generator
           newState[action.param] = {
             interpolation: "step",
-            directValue: param.directValue,
+            baseValue: param.baseValue,
             startValueGenerator: param.startValueGenerator,
           };
         } else {
           // Cosine interpolation - needs start and end generators
           newState[action.param] = {
             interpolation: action.interpolation,
-            directValue: param.directValue,
+            baseValue: param.baseValue,
             startValueGenerator: param.startValueGenerator,
             endValueGenerator: param.endValueGenerator || {
               ...param.startValueGenerator, // Copy start generator as default
@@ -259,7 +259,7 @@ class ControlClient {
           };
           // Update baseValue if this is a periodic generator
           if (param.startValueGenerator.type === "periodic") {
-            param.startValueGenerator.baseValue = param.directValue;
+            param.startValueGenerator.baseValue = param.baseValue;
           }
         } else if (
           action.position === "end" && param.interpolation !== "step" &&
@@ -272,7 +272,7 @@ class ControlClient {
           };
           // Update baseValue if this is a periodic generator
           if (param.endValueGenerator.type === "periodic") {
-            param.endValueGenerator.baseValue = param.directValue;
+            param.endValueGenerator.baseValue = param.baseValue;
           }
         }
         break;
@@ -699,7 +699,7 @@ class ControlClient {
 
             // Update the state with the determined default value
             this._updatePendingState({
-              type: "SET_DIRECT_VALUE",
+              type: "SET_BASE_VALUE",
               param: paramName as keyof IMusicalState,
               value: defaultValue,
             });
@@ -1044,24 +1044,22 @@ class ControlClient {
         v = Math.max(16, Math.min(16384, v));
         baseInput.value = String(v);
 
-        // Update base (directValue) only; do not touch HRG generators
-        this._updatePendingState({ type: "SET_DIRECT_VALUE", param: paramName, value: v });
-
         if (this.isPlaying) {
-          // Playing: stage by updating program on synth (no portamento)
+          // Playing: update pending state for staging
+          this._updatePendingState({ type: "SET_BASE_VALUE", param: paramName, value: v });
           this.broadcastMusicalParameters();
           this.pendingParameterChanges.add(paramName);
           this.updateParameterVisualFeedback(paramName);
         } else {
-          // Paused: apply immediately with global portamento
+          // Paused: update active state directly for immediate application
+          this._updateActiveState({ type: "SET_BASE_VALUE", param: paramName, value: v });
           const portamentoTime = this.elements.portamentoTime ? parseInt(this.elements.portamentoTime.value) : 100;
-          this.broadcastSingleParameterUpdate(paramName, portamentoTime);
+          this.broadcastSubParameterUpdate(`${paramName}.baseValue`, v, portamentoTime);
           this.pendingParameterChanges.delete(paramName);
           this.updateParameterVisualFeedback(paramName);
         }
       };
 
-      baseInput.addEventListener("change", applyBase);
       baseInput.addEventListener("blur", applyBase);
     }
 
@@ -1223,28 +1221,28 @@ class ControlClient {
 
     if (currentMode === "direct") {
       // Parse direct value from input
-      let directValue;
+      let baseValue;
       if (trimmedValue.includes("-")) {
         // Range format: use average of range
         const [min, max] = trimmedValue.split("-").map((v) =>
           parseFloat(v.trim())
         );
         if (!isNaN(min) && !isNaN(max)) {
-          directValue = (min + max) / 2;
+          baseValue = (min + max) / 2;
         }
       } else {
         // Single value format
         const value = parseFloat(trimmedValue);
         if (!isNaN(value)) {
-          directValue = value;
+          baseValue = value;
         }
       }
 
-      if (directValue !== undefined) {
+      if (baseValue !== undefined) {
         this._updatePendingState({
-          type: "SET_DIRECT_VALUE",
+          type: "SET_BASE_VALUE",
           param: paramName,
-          value: directValue,
+          value: baseValue,
         });
       }
     } else {
@@ -1367,9 +1365,9 @@ class ControlClient {
           valueInput.value = `${range.min}-${range.max}`;
         }
       } else if (paramState.startValueGenerator?.type === "periodic") {
-        valueInput.value = (paramState.directValue ?? "").toString();
-      } else if (paramState.directValue !== null) {
-        valueInput.value = paramState.directValue.toString();
+        valueInput.value = (paramState.baseValue ?? "").toString();
+      } else if (paramState.baseValue !== null) {
+        valueInput.value = paramState.baseValue.toString();
       } else {
         valueInput.value = ""; // Handle the blank-and-focus case
         valueInput.focus();
@@ -1684,22 +1682,16 @@ class ControlClient {
         throw new Error(`CRITICAL: Parameter '${paramKey}' cosine interpolation missing endValueGenerator`);
       }
       
-      if (paramState.startValueGenerator.type === "periodic" && paramState.directValue === undefined) {
-        throw new Error(`CRITICAL: Parameter '${paramKey}' periodic generator missing directValue`);
+      if (paramState.startValueGenerator.type === "periodic" && paramState.baseValue === undefined) {
+        throw new Error(`CRITICAL: Parameter '${paramKey}' periodic generator missing baseValue`);
       }
 
-      // Prepare generators with proper baseValue for periodic parameters
+      // Prepare generators
       const startGen = { ...paramState.startValueGenerator };
-      if (startGen.type === "periodic") {
-        startGen.baseValue = paramState.directValue;
-      }
 
       let endGen = undefined;
       if (paramState.interpolation === "cosine" && paramState.endValueGenerator) {
         endGen = { ...paramState.endValueGenerator };
-        if (endGen.type === "periodic") {
-          endGen.baseValue = paramState.directValue;
-        }
       }
 
       // Send unified parameter format (no scope field)
@@ -1707,7 +1699,7 @@ class ControlClient {
         interpolation: paramState.interpolation,
         startValueGenerator: startGen,
         endValueGenerator: endGen,
-        directValue: paramState.directValue,
+        baseValue: paramState.baseValue,
       };
     }
     return wirePayload;
@@ -1734,7 +1726,7 @@ class ControlClient {
   broadcastSingleParameterUpdate(paramName: keyof IMusicalState, portamentoTime: number) {
     if (!this.star) return;
 
-    const paramState = this.musicalState[paramName];
+    const paramState = this.pendingMusicalState[paramName];
     
     // Strict validation: reject forbidden scope field
     if ("scope" in (paramState as any)) {
@@ -1749,24 +1741,19 @@ class ControlClient {
 
     // Prepare unified parameter format (no scope)
     const startGen = { ...paramState.startValueGenerator };
-    if (startGen.type === "periodic") {
-      startGen.baseValue = paramState.directValue;
-    }
 
     let endGen = undefined;
     if (paramState.interpolation === "cosine" && paramState.endValueGenerator) {
       endGen = { ...paramState.endValueGenerator };
-      if (endGen.type === "periodic") {
-        endGen.baseValue = paramState.directValue;
-      }
     }
 
     wirePayload[paramName] = {
       interpolation: paramState.interpolation,
       startValueGenerator: startGen,
       endValueGenerator: endGen,
-      directValue: paramState.directValue,
+      baseValue: paramState.baseValue,
     };
+
 
     const message = MessageBuilder.createParameterUpdate(
       MessageTypes.PROGRAM_UPDATE,
@@ -1775,6 +1762,19 @@ class ControlClient {
     // Send over control channel for reliability/priority
     this.star.broadcastToType("synth", message, "control");
     this.log(`📡 Broadcasted ${paramName} update with ${portamentoTime}ms portamento`, "info");
+  }
+
+  /**
+   * Broadcast a sub-parameter update (e.g., frequency.baseValue)
+   */
+  broadcastSubParameterUpdate(paramPath: string, value: any, portamentoTime: number) {
+    if (!this.star) return;
+
+    const message = MessageBuilder.subParamUpdate(paramPath, value, portamentoTime);
+    
+    // Send over control channel for reliability/priority
+    this.star.broadcastToType("synth", message, "control");
+    this.log(`📡 Broadcasted sub-parameter ${paramPath} = ${value} with ${portamentoTime}ms portamento`, "info");
   }
 
   // Broadcast a single parameter update for staging at EOC (no portamento field)
@@ -1794,14 +1794,14 @@ class ControlClient {
     // Emit unified format with interpolation + generators
     const startGen = { ...paramState.startValueGenerator };
     if (startGen.type === "periodic") {
-      startGen.baseValue = paramState.directValue;
+      startGen.baseValue = paramState.baseValue;
     }
     
     let endGen = undefined;
     if (paramState.interpolation === "cosine" && paramState.endValueGenerator) {
       endGen = { ...paramState.endValueGenerator };
       if (endGen.type === "periodic") {
-        endGen.baseValue = paramState.directValue;
+        endGen.baseValue = paramState.baseValue;
       }
     }
     
@@ -1809,7 +1809,7 @@ class ControlClient {
       interpolation: paramState.interpolation,
       startValueGenerator: startGen,
       endValueGenerator: endGen,
-      directValue: paramState.directValue,
+      baseValue: paramState.baseValue,
     };
 
     const message = MessageBuilder.createParameterUpdate(
@@ -2141,9 +2141,9 @@ class ControlClient {
   handleUnifiedParameterUpdate(paramName: keyof IMusicalState, value: string) {
     console.log(`🎛️ Unified parameter update: ${paramName} = ${value}`);
     
-    // Update the directValue in our state
+    // Update the baseValue in our state
     this._updatePendingState({
-      type: "SET_DIRECT_VALUE",
+      type: "SET_BASE_VALUE",
       param: paramName,
       value: parseFloat(value) || 0,
     });
@@ -2233,15 +2233,15 @@ class ControlClient {
     // For step interpolation, only resolve start value
     if (paramState.interpolation === "step") {
       return {
-        start: this.resolveGeneratorValue(paramState.startValueGenerator, paramState.directValue),
+        start: this.resolveGeneratorValue(paramState.startValueGenerator, paramState.baseValue),
         end: undefined,
       };
     }
     
     // For cosine interpolation, resolve both start and end
     return {
-      start: this.resolveGeneratorValue(paramState.startValueGenerator, paramState.directValue),
-      end: this.resolveGeneratorValue(paramState.endValueGenerator!, paramState.directValue),
+      start: this.resolveGeneratorValue(paramState.startValueGenerator, paramState.baseValue),
+      end: this.resolveGeneratorValue(paramState.endValueGenerator!, paramState.baseValue),
     };
   }
 

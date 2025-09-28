@@ -16,6 +16,7 @@ export const MessageTypes = {
 
   // Parameter Control
   PROGRAM_UPDATE: "program-update",
+  SUB_PARAM_UPDATE: "sub-param-update",
   UNIFIED_PARAM_UPDATE: "unified-param-update",
 
   // Timing Control
@@ -191,6 +192,16 @@ export class MessageBuilder {
     };
   }
 
+  static subParamUpdate(paramPath, value, portamentoTime) {
+    return {
+      type: MessageTypes.SUB_PARAM_UPDATE,
+      paramPath,
+      value,
+      portamentoTime,
+      timestamp: performance.now(),
+    };
+  }
+
   static unifiedParamUpdate(param, startValue, endValue, interpolation, isPlaying, portamentoTime, currentPhase) {
     return {
       type: MessageTypes.UNIFIED_PARAM_UPDATE,
@@ -264,9 +275,9 @@ export function validateMessage(message) {
             throw new Error(`Parameter '${key}' with cosine interpolation must have endValueGenerator`);
           }
           
-          // For periodic generators, require directValue
-          if (value.startValueGenerator.type === "periodic" && value.directValue === undefined) {
-            throw new Error(`Parameter '${key}' with periodic generator must have directValue`);
+          // For periodic generators, require baseValue
+          if (value.startValueGenerator.type === "periodic" && value.baseValue === undefined) {
+            throw new Error(`Parameter '${key}' with periodic generator must have baseValue`);
           }
         }
       }
@@ -363,6 +374,20 @@ export function validateMessage(message) {
         message.memoryLocation < 0 || message.memoryLocation > 9
       ) {
         throw new Error("Clear scene message requires memoryLocation (0-9)");
+      }
+      break;
+
+    case MessageTypes.SUB_PARAM_UPDATE:
+      if (
+        typeof message.paramPath !== "string" ||
+        message.value === undefined ||
+        typeof message.portamentoTime !== "number"
+      ) {
+        throw new Error("Sub param update message missing required fields: paramPath, value, portamentoTime");
+      }
+      // Validate paramPath format (param.subparam or param.subparam.subsubparam)
+      if (!/^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$/.test(message.paramPath)) {
+        throw new Error(`Invalid paramPath format: ${message.paramPath}`);
       }
       break;
 
