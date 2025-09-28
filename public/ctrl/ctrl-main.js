@@ -3210,12 +3210,16 @@ var ControlClient = class {
       case "inactive":
         valueElement.textContent = "Inactive (view only)";
         statusElement.classList.add("inactive");
-        takeoverSection.style.display = "block";
+        if (takeoverSection) {
+          takeoverSection.style.display = "block";
+        }
         break;
       case "kicked":
         valueElement.textContent = "Kicked (reload to retry)";
         statusElement.classList.add("kicked");
-        takeoverSection.style.display = "block";
+        if (takeoverSection) {
+          takeoverSection.style.display = "block";
+        }
         break;
       case "connected":
         valueElement.textContent = "Connected";
