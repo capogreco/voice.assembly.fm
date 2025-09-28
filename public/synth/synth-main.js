@@ -932,22 +932,28 @@ class SynthClient {
         const pt = message.portamentoTime ?? 0;
         console.log(`⚡ Applying program update now with ${pt}ms portamento (paused)`);
         
-        // Call activateImmediateSynthesis when synthesis is enabled
-        if (message.synthesisActive) {
+        // Call activateImmediateSynthesis only when synthesis is being enabled for the first time
+        if (message.synthesisActive && !this.synthesisActive) {
           this.activateImmediateSynthesis();
-        } else {
-          // Apply only changed parameters with portamento
-          for (const paramName in message) {
-            if (['type', 'timestamp', 'synthesisActive', 'isManualMode', 'portamentoTime'].includes(paramName)) {
-              continue; // Skip meta fields
-            }
-            
-            // Update program config for this parameter
-            this.programConfig[paramName] = message[paramName];
-            
-            // Apply single parameter with portamento
-            this.applySingleParamWithPortamento(paramName, pt);
+        }
+        
+        // Apply changed parameters with portamento (for all paused updates, regardless of synthesis state)
+        for (const paramName in message) {
+          if (['type', 'timestamp', 'synthesisActive', 'isManualMode', 'portamentoTime'].includes(paramName)) {
+            continue; // Skip meta fields
           }
+          
+          // Update program config for this parameter
+          this.programConfig[paramName] = message[paramName];
+          
+          // Refresh HRG state if this parameter uses periodic generators
+          if (message[paramName].startValueGenerator?.type === 'periodic' || 
+              message[paramName].endValueGenerator?.type === 'periodic') {
+            this._initializeHRGState(paramName, this.programConfig[paramName]);
+          }
+          
+          // Apply single parameter with portamento
+          this.applySingleParamWithPortamento(paramName, pt);
         }
       }
     }
@@ -984,6 +990,11 @@ class SynthClient {
       } else {
         this.phasorWorklet.port.postMessage({ type: "stop" });
       }
+    }
+    
+    // Update unified synth worklet with playing state for portamento behavior
+    if (this.unifiedSynthNode && this.unifiedSynthNode.parameters.has('isPlaying')) {
+      this.unifiedSynthNode.parameters.get('isPlaying').value = this.receivedIsPlaying ? 1 : 0;
     }
 
     // Store official timing and start look-ahead scheduler if needed
