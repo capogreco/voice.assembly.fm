@@ -2619,25 +2619,37 @@ var ControlClient = class {
         endGen.baseValue = paramState.baseValue;
       }
     }
-    wirePayload[paramName] = {
-      interpolation: paramState.interpolation,
-      startValueGenerator: startGen,
-      endValueGenerator: endGen,
-      baseValue: paramState.baseValue
-    };
-    const resolvedValues = this.resolveParameterValues(paramName, paramState);
-    const message = MessageBuilder.unifiedParamUpdate(
-      paramName,
-      resolvedValues.start,
-      resolvedValues.end,
-      paramState.interpolation,
-      this.isPlaying,
-      100,
-      this.phasor
-      // current phase
-    );
-    this.star.broadcastToType("synth", message, "control");
-    this.log(`\u{1F4E1} Broadcasted staged ${paramName} interpolation change`, "info");
+    // Check if this parameter has HRG (periodic generator) that needs synth-side resolution
+    const hasHRG = paramState.startValueGenerator?.type === "periodic" || 
+                   paramState.endValueGenerator?.type === "periodic";
+    
+    if (hasHRG) {
+      // For HRG parameters, send configuration for each synth to resolve independently
+      wirePayload[paramName] = {
+        interpolation: paramState.interpolation,
+        startValueGenerator: startGen,
+        endValueGenerator: endGen,
+        baseValue: paramState.baseValue
+      };
+      const message = MessageBuilder.createParameterUpdate(MessageTypes.PROGRAM_UPDATE, wirePayload);
+      this.star.broadcastToType("synth", message, "control");
+      this.log(`\u{1F4E1} Broadcasted staged ${paramName} HRG config for distributed resolution`, "info");
+    } else {
+      // For RBG/static parameters, resolve and send values
+      const resolvedValues = this.resolveParameterValues(paramName, paramState);
+      const message = MessageBuilder.unifiedParamUpdate(
+        paramName,
+        resolvedValues.start,
+        resolvedValues.end,
+        paramState.interpolation,
+        this.isPlaying,
+        100,
+        this.phasor
+        // current phase
+      );
+      this.star.broadcastToType("synth", message, "control");
+      this.log(`\u{1F4E1} Broadcasted staged ${paramName} resolved values`, "info");
+    }
   }
   // Removed splitParametersByMode - no longer needed with separated state
   // Phasor Management Methods
@@ -2877,20 +2889,55 @@ var ControlClient = class {
       value: parseFloat(value) || 0
     });
     const paramState = this.pendingMusicalState[paramName];
-    const resolvedValues = this.resolveParameterValues(paramName, paramState);
     const portamentoTime = this.elements.portamentoTime ? parseInt(this.elements.portamentoTime.value) : 100;
-    const message = MessageBuilder.unifiedParamUpdate(
-      paramName,
-      resolvedValues.start,
-      resolvedValues.end,
-      paramState.interpolation,
-      this.isPlaying,
-      portamentoTime,
-      this.phasor
-      // Include current phase for interpolation
-    );
-    if (this.star) {
-      this.star.broadcastToType("synth", message, "control");
+    
+    // Check if this parameter has HRG (periodic generator) that needs synth-side resolution
+    const hasHRG = paramState.startValueGenerator?.type === "periodic" || 
+                   paramState.endValueGenerator?.type === "periodic";
+    
+    if (hasHRG) {
+      // For HRG parameters, send configuration for each synth to resolve independently
+      const wirePayload = {
+        synthesisActive: this.synthesisActive,
+        portamentoTime
+      };
+      const startGen = { ...paramState.startValueGenerator };
+      if (startGen.type === "periodic") {
+        startGen.baseValue = paramState.baseValue;
+      }
+      let endGen = undefined;
+      if (paramState.interpolation === "cosine" && paramState.endValueGenerator) {
+        endGen = { ...paramState.endValueGenerator };
+        if (endGen.type === "periodic") {
+          endGen.baseValue = paramState.baseValue;
+        }
+      }
+      wirePayload[paramName] = {
+        interpolation: paramState.interpolation,
+        startValueGenerator: startGen,
+        endValueGenerator: endGen,
+        baseValue: paramState.baseValue
+      };
+      const message = MessageBuilder.createParameterUpdate(MessageTypes.PROGRAM_UPDATE, wirePayload);
+      if (this.star) {
+        this.star.broadcastToType("synth", message, "control");
+      }
+    } else {
+      // For RBG/static parameters, resolve and send values
+      const resolvedValues = this.resolveParameterValues(paramName, paramState);
+      const message = MessageBuilder.unifiedParamUpdate(
+        paramName,
+        resolvedValues.start,
+        resolvedValues.end,
+        paramState.interpolation,
+        this.isPlaying,
+        portamentoTime,
+        this.phasor
+        // Include current phase for interpolation
+      );
+      if (this.star) {
+        this.star.broadcastToType("synth", message, "control");
+      }
     }
     if (this.isPlaying) {
       this.pendingParameterChanges.add(paramName);
