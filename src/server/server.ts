@@ -301,7 +301,7 @@ async function handleWebSocketMessage(
         );
       }
 
-      await sendOrQueue((message as any).target, message, 30 * 1000);
+      await sendOrQueue((message as any).target, message as unknown as Record<string, unknown>, 30 * 1000);
     }
   } catch (error) {
     console.error(`❌ Error handling message: ${error}`);
@@ -362,7 +362,7 @@ async function handleRequest(request: Request): Promise<Response> {
   ) {
     const { socket, response } = Deno.upgradeWebSocket(request);
     const temp_id = crypto.randomUUID();
-    let client_id = temp_id;
+    let client_id: string = temp_id;
 
     socket.addEventListener("open", () => {
       connections.set(temp_id, { socket, actual_id: null });
