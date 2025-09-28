@@ -732,7 +732,25 @@ var WebRTCStar = class extends EventTarget {
       console.error(`\u274C Received answer from unknown peer: ${fromPeerId}`);
       return;
     }
-    await peer.connection.setRemoteDescription(answer);
+
+    try {
+      const pc = peer.connection;
+
+      if (pc.signalingState !== "have-local-offer") {
+        if (this.verbose) {
+          console.warn(
+            `⚠️ Received answer while signaling state is ${pc.signalingState}, ignoring`,
+          );
+        }
+        return;
+      }
+
+      await pc.setRemoteDescription(answer);
+      
+      if (this.verbose) console.log(`✅ Set answer from ${fromPeerId}`);
+    } catch (error) {
+      console.error(`❌ Error handling answer from ${fromPeerId}:`, error);
+    }
   }
   /**
    * Handle ICE candidate
@@ -752,12 +770,31 @@ var WebRTCStar = class extends EventTarget {
     }
     try {
       if (candidate) {
-        await peer.connection.addIceCandidate(new RTCIceCandidate(candidate));
+        const pc = peer.connection;
+        
+        // Check if we have a remote description before adding the candidate
+        if (!pc.remoteDescription) {
+          if (this.verbose) {
+            console.warn(
+              `⚠️ Received ICE candidate from ${fromPeerId} before remote description, ignoring`,
+            );
+          }
+          return;
+        }
+        
+        // Add the ICE candidate
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        
+        if (this.verbose) console.log(`✅ Added ICE candidate from ${fromPeerId}`);
       }
     } catch (error) {
-      if (!error.message.includes("Cannot add ICE candidate before a remote description")) {
+      if (
+        !error.message.includes("Cannot add ICE candidate") &&
+        !error.message.includes("No remoteDescription")
+      ) {
         console.error(`\u274C Error adding ICE candidate for ${fromPeerId}:`, error);
       }
+      // Silently ignore "remote description not set" errors as they're expected during race conditions
     }
   }
   /**
