@@ -15,9 +15,7 @@ export const MessageTypes = {
   PONG: "pong",
 
   // Parameter Control
-  SYNTH_PARAMS: "synth-params",
   PROGRAM_UPDATE: "program-update",
-  DIRECT_PARAM_UPDATE: "direct-param-update",
   UNIFIED_PARAM_UPDATE: "unified-param-update",
 
   // Timing Control
@@ -160,14 +158,6 @@ export class MessageBuilder {
     };
   }
 
-  static directParamUpdate(paramName, value) {
-    return {
-      type: MessageTypes.DIRECT_PARAM_UPDATE,
-      param: paramName,
-      value: value,
-      timestamp: performance.now(),
-    };
-  }
 
   static saveScene(memoryLocation) {
     return {
@@ -247,10 +237,6 @@ export function validateMessage(message) {
       }
       break;
 
-    case MessageTypes.SYNTH_PARAMS:
-      // DEPRECATED: Use PROGRAM_UPDATE instead
-      console.warn("SYNTH_PARAMS is deprecated, use PROGRAM_UPDATE");
-      break;
 
     case MessageTypes.PROGRAM_UPDATE:
       // Enforce unified parameter structure - no scope field allowed
@@ -277,6 +263,11 @@ export function validateMessage(message) {
           if (value.interpolation === "cosine" && (!value.endValueGenerator || typeof value.endValueGenerator !== "object")) {
             throw new Error(`Parameter '${key}' with cosine interpolation must have endValueGenerator`);
           }
+          
+          // For periodic generators, require directValue
+          if (value.startValueGenerator.type === "periodic" && value.directValue === undefined) {
+            throw new Error(`Parameter '${key}' with periodic generator must have directValue`);
+          }
         }
       }
       break;
@@ -284,11 +275,24 @@ export function validateMessage(message) {
     case MessageTypes.PHASOR_SYNC:
       if (
         typeof message.phasor !== "number" ||
-        (message.cpm !== null && typeof message.cpm !== "number") ||
         typeof message.stepsPerCycle !== "number" ||
-        typeof message.cycleLength !== "number"
+        typeof message.cycleLength !== "number" ||
+        typeof message.isPlaying !== "boolean"
       ) {
-        throw new Error("Phasor sync message missing required numeric fields");
+        throw new Error("PHASOR_SYNC missing required fields: phasor, stepsPerCycle, cycleLength, isPlaying");
+      }
+      
+      // For scrubbing, require both scrubbing and scrubMs
+      if (!message.isPlaying && message.scrubbing && typeof message.scrubMs !== "number") {
+        throw new Error("PHASOR_SYNC scrubbing mode requires scrubMs field");
+      }
+      
+      // Reject unknown fields
+      const allowedFields = ["type", "timestamp", "phasor", "cpm", "stepsPerCycle", "cycleLength", "isPlaying", "scrubbing", "scrubMs"];
+      for (const key of Object.keys(message)) {
+        if (!allowedFields.includes(key)) {
+          throw new Error(`PHASOR_SYNC contains unknown field: ${key}`);
+        }
       }
       break;
 

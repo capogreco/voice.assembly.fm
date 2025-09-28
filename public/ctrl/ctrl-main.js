@@ -8,9 +8,7 @@ var MessageTypes = {
   PING: "ping",
   PONG: "pong",
   // Parameter Control
-  SYNTH_PARAMS: "synth-params",
   PROGRAM_UPDATE: "program-update",
-  DIRECT_PARAM_UPDATE: "direct-param-update",
   UNIFIED_PARAM_UPDATE: "unified-param-update",
   // Timing Control
   PHASOR_SYNC: "phasor-sync",
@@ -135,14 +133,6 @@ var MessageBuilder = class {
       timestamp: performance.now()
     };
   }
-  static directParamUpdate(paramName, value) {
-    return {
-      type: MessageTypes.DIRECT_PARAM_UPDATE,
-      param: paramName,
-      value,
-      timestamp: performance.now()
-    };
-  }
   static saveScene(memoryLocation) {
     return {
       type: MessageTypes.SAVE_SCENE,
@@ -206,9 +196,6 @@ function validateMessage(message) {
         throw new Error("Pong message missing required fields");
       }
       break;
-    case MessageTypes.SYNTH_PARAMS:
-      console.warn("SYNTH_PARAMS is deprecated, use PROGRAM_UPDATE");
-      break;
     case MessageTypes.PROGRAM_UPDATE:
       for (const [key, value] of Object.entries(message)) {
         if ([
@@ -236,12 +223,34 @@ function validateMessage(message) {
           if (value.interpolation === "cosine" && (!value.endValueGenerator || typeof value.endValueGenerator !== "object")) {
             throw new Error(`Parameter '${key}' with cosine interpolation must have endValueGenerator`);
           }
+          if (value.startValueGenerator.type === "periodic" && value.directValue === void 0) {
+            throw new Error(`Parameter '${key}' with periodic generator must have directValue`);
+          }
         }
       }
       break;
     case MessageTypes.PHASOR_SYNC:
-      if (typeof message.phasor !== "number" || message.cpm !== null && typeof message.cpm !== "number" || typeof message.stepsPerCycle !== "number" || typeof message.cycleLength !== "number") {
-        throw new Error("Phasor sync message missing required numeric fields");
+      if (typeof message.phasor !== "number" || typeof message.stepsPerCycle !== "number" || typeof message.cycleLength !== "number" || typeof message.isPlaying !== "boolean") {
+        throw new Error("PHASOR_SYNC missing required fields: phasor, stepsPerCycle, cycleLength, isPlaying");
+      }
+      if (!message.isPlaying && message.scrubbing && typeof message.scrubMs !== "number") {
+        throw new Error("PHASOR_SYNC scrubbing mode requires scrubMs field");
+      }
+      const allowedFields = [
+        "type",
+        "timestamp",
+        "phasor",
+        "cpm",
+        "stepsPerCycle",
+        "cycleLength",
+        "isPlaying",
+        "scrubbing",
+        "scrubMs"
+      ];
+      for (const key of Object.keys(message)) {
+        if (!allowedFields.includes(key)) {
+          throw new Error(`PHASOR_SYNC contains unknown field: ${key}`);
+        }
       }
       break;
     case MessageTypes.TRANSPORT:
@@ -2351,8 +2360,7 @@ var ControlClient = class {
     for (const key in this.musicalState) {
       const paramState = this.musicalState[key];
       if ("scope" in paramState) {
-        console.error(`BREAKING: Parameter '${key}' contains forbidden 'scope' field. Stopping send.`);
-        throw new Error(`Parameter '${key}' has scope field - this is forbidden`);
+        throw new Error(`CRITICAL: Parameter '${key}' has forbidden 'scope' field`);
       }
     }
     const wirePayload = {
@@ -2365,6 +2373,21 @@ var ControlClient = class {
     for (const key in this.musicalState) {
       const paramKey = key;
       const paramState = this.musicalState[paramKey];
+      if (!paramState.interpolation || ![
+        "step",
+        "cosine"
+      ].includes(paramState.interpolation)) {
+        throw new Error(`CRITICAL: Parameter '${paramKey}' missing valid interpolation`);
+      }
+      if (!paramState.startValueGenerator) {
+        throw new Error(`CRITICAL: Parameter '${paramKey}' missing startValueGenerator`);
+      }
+      if (paramState.interpolation === "cosine" && !paramState.endValueGenerator) {
+        throw new Error(`CRITICAL: Parameter '${paramKey}' cosine interpolation missing endValueGenerator`);
+      }
+      if (paramState.startValueGenerator.type === "periodic" && paramState.directValue === void 0) {
+        throw new Error(`CRITICAL: Parameter '${paramKey}' periodic generator missing directValue`);
+      }
       const startGen = {
         ...paramState.startValueGenerator
       };
@@ -2405,8 +2428,7 @@ var ControlClient = class {
     if (!this.star) return;
     const paramState = this.musicalState[paramName];
     if ("scope" in paramState) {
-      console.error(`BREAKING: Parameter '${paramName}' contains forbidden 'scope' field. Stopping send.`);
-      return;
+      throw new Error(`CRITICAL: Parameter '${paramName}' has forbidden 'scope' field`);
     }
     const wirePayload = {
       synthesisActive: this.synthesisActive,
@@ -2442,8 +2464,7 @@ var ControlClient = class {
     if (!this.star) return;
     const paramState = this.musicalState[paramName];
     if ("scope" in paramState) {
-      console.error(`BREAKING: Parameter '${paramName}' contains forbidden 'scope' field. Stopping send.`);
-      throw new Error(`Parameter '${paramName}' has scope field - this is forbidden`);
+      throw new Error(`CRITICAL: Parameter '${paramName}' has forbidden 'scope' field`);
     }
     const wirePayload = {
       synthesisActive: this.synthesisActive

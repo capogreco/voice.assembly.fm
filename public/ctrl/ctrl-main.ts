@@ -1648,12 +1648,11 @@ class ControlClient {
    * Used by both broadcastMusicalParameters and sendCompleteStateToSynth
    */
   private _getWirePayload(portamentoTime?: number): any {
-    // Error guard: check for forbidden scope field in state
+    // Strict validation: reject any state with forbidden fields
     for (const key in this.musicalState) {
       const paramState = this.musicalState[key as keyof IMusicalState] as any;
       if ("scope" in paramState) {
-        console.error(`BREAKING: Parameter '${key}' contains forbidden 'scope' field. Stopping send.`);
-        throw new Error(`Parameter '${key}' has scope field - this is forbidden`);
+        throw new Error(`CRITICAL: Parameter '${key}' has forbidden 'scope' field`);
       }
     }
 
@@ -1671,6 +1670,23 @@ class ControlClient {
     for (const key in this.musicalState) {
       const paramKey = key as keyof IMusicalState;
       const paramState = this.musicalState[paramKey];
+
+      // Strict validation: require all necessary fields
+      if (!paramState.interpolation || !["step", "cosine"].includes(paramState.interpolation)) {
+        throw new Error(`CRITICAL: Parameter '${paramKey}' missing valid interpolation`);
+      }
+      
+      if (!paramState.startValueGenerator) {
+        throw new Error(`CRITICAL: Parameter '${paramKey}' missing startValueGenerator`);
+      }
+      
+      if (paramState.interpolation === "cosine" && !paramState.endValueGenerator) {
+        throw new Error(`CRITICAL: Parameter '${paramKey}' cosine interpolation missing endValueGenerator`);
+      }
+      
+      if (paramState.startValueGenerator.type === "periodic" && paramState.directValue === undefined) {
+        throw new Error(`CRITICAL: Parameter '${paramKey}' periodic generator missing directValue`);
+      }
 
       // Prepare generators with proper baseValue for periodic parameters
       const startGen = { ...paramState.startValueGenerator };
@@ -1720,10 +1736,9 @@ class ControlClient {
 
     const paramState = this.musicalState[paramName];
     
-    // Error guard: check for forbidden scope field
+    // Strict validation: reject forbidden scope field
     if ("scope" in (paramState as any)) {
-      console.error(`BREAKING: Parameter '${paramName}' contains forbidden 'scope' field. Stopping send.`);
-      return;
+      throw new Error(`CRITICAL: Parameter '${paramName}' has forbidden 'scope' field`);
     }
     
     // Create minimal payload with only the changed parameter
@@ -1766,11 +1781,10 @@ class ControlClient {
   private broadcastSingleParameterStaged(paramName: keyof IMusicalState) {
     if (!this.star) return;
     
-    // Error guard: check for forbidden scope field in state
+    // Strict validation: reject forbidden scope field
     const paramState = this.musicalState[paramName] as any;
     if ("scope" in paramState) {
-      console.error(`BREAKING: Parameter '${paramName}' contains forbidden 'scope' field. Stopping send.`);
-      throw new Error(`Parameter '${paramName}' has scope field - this is forbidden`);
+      throw new Error(`CRITICAL: Parameter '${paramName}' has forbidden 'scope' field`);
     }
     
     const wirePayload: any = {

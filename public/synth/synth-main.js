@@ -425,9 +425,9 @@ class SynthClient {
     }
 
     // Apply synth parameters if they were received before audio was ready
-    if (this.lastSynthParams) {
-      if (this.verbose) console.log("🎵 Applying stored synth parameters");
-      this.handleSynthParams(this.lastSynthParams);
+    if (this.lastProgramUpdate) {
+      if (this.verbose) console.log("🎵 Applying stored program update");
+      this.handleProgramUpdate(this.lastProgramUpdate);
     }
 
     // Ensure phasor/timing config reaches worklets now that they exist
@@ -466,16 +466,8 @@ class SynthClient {
 
   handleDataMessage(peerId, channelType, message) {
     switch (message.type) {
-      case MessageTypes.SYNTH_PARAMS:
-        this.handleSynthParams(message);
-        break;
-
       case MessageTypes.PROGRAM_UPDATE:
         this.handleProgramUpdate(message);
-        break;
-
-      case MessageTypes.DIRECT_PARAM_UPDATE:
-        this.handleDirectParamUpdate(message);
         break;
 
       case MessageTypes.UNIFIED_PARAM_UPDATE:
@@ -678,46 +670,41 @@ class SynthClient {
         params: interpolationTypes
       });
       
-      // Resolve and set parameter values to AudioParams immediately
-      for (const [paramName, paramConfig] of Object.entries(this.programConfig)) {
-        if (this.lastResolvedValues.hasOwnProperty(paramName)) {
-          let startValue, endValue;
-          
-          // Resolve parameter values using unified format
-          // Copy directValue to baseValue for periodic generators before resolution
-          if (paramConfig.startValueGenerator?.type === 'periodic' && paramConfig.directValue !== undefined) {
-            paramConfig.startValueGenerator.baseValue = paramConfig.directValue;
-          }
-          if (paramConfig.endValueGenerator?.type === 'periodic' && paramConfig.directValue !== undefined) {
-            paramConfig.endValueGenerator.baseValue = paramConfig.directValue;
-          }
-          
-          if (paramConfig.interpolation === "step") {
-            // Step interpolation - only need start value
-            startValue = this._resolveParameterValue(paramConfig.startValueGenerator, paramName, 'start');
-            endValue = startValue;
-          } else {
-            // Cosine/other interpolation - need start and end values
-            startValue = this._resolveParameterValue(paramConfig.startValueGenerator, paramName, 'start');
-            endValue = paramConfig.endValueGenerator ? 
-              this._resolveParameterValue(paramConfig.endValueGenerator, paramName, 'end') : 
-              startValue;
-          }
-          
-          if (startValue !== undefined) {
-            // Set AudioParam values directly (no ramping for immediate activation)
-            const startParam = this.unifiedSynthNode.parameters.get(`${paramName}_start`);
-            const endParam = this.unifiedSynthNode.parameters.get(`${paramName}_end`);
-            
-            if (startParam) {
-              startParam.value = startValue;
-              this.lastResolvedValues[paramName] = startValue;
-            }
-            if (endParam) {
-              endParam.value = endValue;
-            }
-          }
+      // Set initial parameter values at current phase
+      const now = this.audioContext.currentTime;
+      
+      // Get phase for interpolation
+      const phaseParam = this.unifiedSynthNode.parameters.get("phase");
+      const phase = phaseParam ? phaseParam.value : 0;
+      
+      for (const [paramName, cfg] of Object.entries(this.programConfig)) {
+        const startParam = this.unifiedSynthNode.parameters.get(`${paramName}_start`);
+        if (!startParam) {
+          throw new Error(`Missing AudioParam ${paramName}_start`);
         }
+        
+        // Resolve using _resolveParameterValue (uses _resolveHRG for periodic)
+        const startValue = this._resolveParameterValue(cfg.startValueGenerator, paramName, "start");
+        
+        let valueNow = startValue;
+        if (cfg.interpolation === "cosine") {
+          if (!cfg.endValueGenerator) {
+            throw new Error(`Missing end generator for ${paramName} (cosine)`);
+          }
+          const endValue = this._resolveParameterValue(cfg.endValueGenerator, paramName, "end");
+          
+          const endParam = this.unifiedSynthNode.parameters.get(`${paramName}_end`);
+          if (endParam) {
+            endParam.setValueAtTime(endValue, now);
+          }
+          
+          // Interpolate for current phase
+          const shaped = 0.5 - Math.cos(phase * Math.PI) * 0.5;
+          valueNow = startValue + (endValue - startValue) * shaped;
+        }
+        
+        startParam.setValueAtTime(valueNow, now);
+        this.lastResolvedValues[paramName] = valueNow;
       }
       
       console.log("🎛️ Updated AudioParam values for immediate synthesis:", this.lastResolvedValues);
@@ -761,13 +748,6 @@ class SynthClient {
         let startValue, endValue;
         
         // Resolve parameter values using unified format
-        // Copy directValue to baseValue for periodic generators before resolution
-        if (paramData.startValueGenerator?.type === 'periodic' && paramData.directValue !== undefined) {
-          paramData.startValueGenerator.baseValue = paramData.directValue;
-        }
-        if (paramData.endValueGenerator?.type === 'periodic' && paramData.directValue !== undefined) {
-          paramData.endValueGenerator.baseValue = paramData.directValue;
-        }
         
         if (paramData.interpolation === "step") {
           // Step interpolation - only need start value
@@ -846,7 +826,10 @@ class SynthClient {
     
     if (startParam) {
       // Get current value as starting point for ramping
-      const currentValue = this.lastResolvedValues[param] || startParam.value || (param === 'frequency' ? 220 : 0);
+      const currentValue = this.lastResolvedValues[param] || startParam.value;
+      if (currentValue === undefined || (param === 'frequency' && currentValue <= 0)) {
+        throw new Error(`CRITICAL: Paused portamento for ${param} - no valid current value to ramp from`);
+      }
       
       // Set starting point for ramp
       startParam.setValueAtTime(currentValue, this.audioContext.currentTime);
@@ -897,6 +880,7 @@ class SynthClient {
           );
         }
       }
+      this.synthesisActive = !!message.synthesisActive; // ADD THIS
     }
 
     for (const paramName in message) {
@@ -947,7 +931,24 @@ class SynthClient {
       } else {
         const pt = message.portamentoTime ?? 0;
         console.log(`⚡ Applying program update now with ${pt}ms portamento (paused)`);
-        this.applyProgramWithPortamento(pt);
+        
+        // Call activateImmediateSynthesis when synthesis is enabled
+        if (message.synthesisActive) {
+          this.activateImmediateSynthesis();
+        } else {
+          // Apply only changed parameters with portamento
+          for (const paramName in message) {
+            if (['type', 'timestamp', 'synthesisActive', 'isManualMode', 'portamentoTime'].includes(paramName)) {
+              continue; // Skip meta fields
+            }
+            
+            // Update program config for this parameter
+            this.programConfig[paramName] = message[paramName];
+            
+            // Apply single parameter with portamento
+            this.applySingleParamWithPortamento(paramName, pt);
+          }
+        }
       }
     }
   }
@@ -1234,10 +1235,6 @@ class SynthClient {
           // Step interpolation - resolve single value and set start parameter
           let stepValue;
           if (config.startValueGenerator?.type === 'periodic') {
-            // HRG - copy directValue to baseValue before resolution
-            if (config.directValue !== undefined) {
-              config.startValueGenerator.baseValue = config.directValue;
-            }
             // HRG - use sequence state
             stepValue = this._resolveHRG(param, 'start');
           } else if (config.startValueGenerator?.type === 'normalised') {
@@ -1257,27 +1254,19 @@ class SynthClient {
           let startValue, endValue;
           
           if (config.startValueGenerator?.type === 'periodic') {
-            // HRG - copy directValue to baseValue before resolution
-            if (config.directValue !== undefined) {
-              config.startValueGenerator.baseValue = config.directValue;
-            }
             startValue = this._resolveHRG(param, 'start');
           } else if (config.startValueGenerator?.type === 'normalised') {
             startValue = this._resolveRBG(config.startValueGenerator);
           } else {
-            startValue = config.startValueGenerator?.value || 0;
+            throw new Error(`CRITICAL: Unknown start generator type for ${param}: ${config.startValueGenerator?.type}`);
           }
 
           if (config.endValueGenerator?.type === 'periodic') {
-            // HRG - copy directValue to baseValue before resolution
-            if (config.directValue !== undefined) {
-              config.endValueGenerator.baseValue = config.directValue;
-            }
             endValue = this._resolveHRG(param, 'end');
           } else if (config.endValueGenerator?.type === 'normalised') {
             endValue = this._resolveRBG(config.endValueGenerator);
           } else {
-            endValue = config.endValueGenerator?.value || startValue;
+            throw new Error(`CRITICAL: Unknown end generator type for ${param}: ${config.endValueGenerator?.type}`);
           }
 
           // Set both start and end AudioParams
@@ -2243,6 +2232,173 @@ class SynthClient {
     }
   }
 
+  // Get current phase from worklet
+  getCurrentPhase() {
+    const p = this.unifiedSynthNode?.parameters.get('phase');
+    if (!p) {
+      throw new Error('CRITICAL: No phase parameter available');
+    }
+    return p.value;
+  }
+
+  // Apply single parameter with portamento for paused mode
+  applySingleParamWithPortamento(paramName, portamentoMs) {
+    const phase = this.getCurrentPhase();
+    const cfg = this.programConfig[paramName];
+    if (!cfg) {
+      throw new Error(`CRITICAL: Missing config for ${paramName}`);
+    }
+    
+    const target = this.resolveParameterAtPhase(paramName, cfg, phase);
+    const startParam = this.unifiedSynthNode.parameters.get(`${paramName}_start`);
+    if (!startParam) {
+      throw new Error(`CRITICAL: Missing AudioParam ${paramName}_start`);
+    }
+    
+    const current = this.lastResolvedValues[paramName] ?? startParam.value;
+    if (!Number.isFinite(current)) {
+      throw new Error(`CRITICAL: No valid current value for ${paramName}`);
+    }
+    if (paramName === 'frequency' && current <= 0) {
+      throw new Error(`CRITICAL: Invalid frequency ${current}`);
+    }
+    
+    const now = this.audioContext.currentTime;
+    const targetTime = now + portamentoMs / 1000;
+    
+    startParam.setValueAtTime(current, now);
+    if (paramName === 'frequency' && current > 0 && target > 0) {
+      startParam.exponentialRampToValueAtTime(target, targetTime);
+    } else {
+      startParam.linearRampToValueAtTime(target, targetTime);
+    }
+    
+    console.log(`🎵 Paused portamento ${paramName}: ${current.toFixed(3)} → ${target.toFixed(3)} over ${portamentoMs}ms`);
+    this.lastResolvedValues[paramName] = target;
+  }
+
+  // Pure parameter resolver at specific phase (no state mutation)
+  resolveParameterAtPhase(paramName, config, phase) {
+    if (!config) {
+      throw new Error(`CRITICAL: resolveParameterAtPhase - missing config for ${paramName}`);
+    }
+    
+    if (config.interpolation === 'step') {
+      const gen = config.startValueGenerator;
+      if (!gen) {
+        throw new Error(`CRITICAL: Missing startValueGenerator for ${paramName}`);
+      }
+      
+      if (gen.type === 'periodic') {
+        return this.peekHRGValue(paramName, 'start');
+      } else if (gen.type === 'normalised') {
+        if (typeof gen.range === 'number') {
+          return gen.range;
+        }
+        if (gen.range?.min !== undefined && gen.range?.max !== undefined) {
+          return gen.range.min + Math.random() * (gen.range.max - gen.range.min);
+        }
+        throw new Error(`CRITICAL: Missing range for normalised ${paramName}`);
+      }
+      throw new Error(`CRITICAL: Unknown generator type for ${paramName}: ${gen.type}`);
+    } else if (config.interpolation === 'cosine') {
+      const startGen = config.startValueGenerator;
+      const endGen = config.endValueGenerator;
+      if (!startGen) {
+        throw new Error(`CRITICAL: Missing startValueGenerator for ${paramName}`);
+      }
+      if (!endGen) {
+        throw new Error(`CRITICAL: Missing endValueGenerator for cosine ${paramName}`);
+      }
+      
+      let start, end;
+      
+      // Resolve start value
+      if (startGen.type === 'periodic') {
+        start = this.peekHRGValue(paramName, 'start');
+      } else if (startGen.type === 'normalised') {
+        if (typeof startGen.range === 'number') {
+          start = startGen.range;
+        } else if (startGen.range?.min !== undefined && startGen.range?.max !== undefined) {
+          start = startGen.range.min + Math.random() * (startGen.range.max - startGen.range.min);
+        } else {
+          throw new Error(`CRITICAL: Missing range for normalised start ${paramName}`);
+        }
+      } else {
+        throw new Error(`CRITICAL: Unknown start generator type for ${paramName}: ${startGen.type}`);
+      }
+      
+      // Resolve end value
+      if (endGen.type === 'periodic') {
+        end = this.peekHRGValue(paramName, 'end');
+      } else if (endGen.type === 'normalised') {
+        if (typeof endGen.range === 'number') {
+          end = endGen.range;
+        } else if (endGen.range?.min !== undefined && endGen.range?.max !== undefined) {
+          end = endGen.range.min + Math.random() * (endGen.range.max - endGen.range.min);
+        } else {
+          throw new Error(`CRITICAL: Missing range for normalised end ${paramName}`);
+        }
+      } else {
+        throw new Error(`CRITICAL: Unknown end generator type for ${paramName}: ${endGen.type}`);
+      }
+      
+      const shapedProgress = 0.5 - Math.cos(phase * Math.PI) * 0.5;
+      return start + (end - start) * shapedProgress;
+    }
+    throw new Error(`CRITICAL: Unknown interpolation for ${paramName}: ${config.interpolation}`);
+  }
+
+  // Pure HRG resolver - does NOT advance sequence indices (for paused parameter resolution)
+  peekHRGValue(paramName, position) {
+    const cfg = this.programConfig[paramName];
+    if (!cfg) {
+      throw new Error(`CRITICAL: peekHRGValue - missing config for ${paramName}`);
+    }
+    if (!Number.isFinite(cfg.directValue)) {
+      throw new Error(`CRITICAL: peekHRGValue - missing directValue for ${paramName}`);
+    }
+    
+    const state = this.hrgState[paramName]?.[position];
+    if (!state) {
+      throw new Error(`CRITICAL: peekHRGValue - missing HRG state for ${paramName}/${position}`);
+    }
+    
+    // Get current values WITHOUT advancing indices
+    const { numerators, denominators, numeratorBehavior, denominatorBehavior } = state;
+    
+    let numerator, denominator;
+    
+    // Get current numerator without advancing
+    if (numeratorBehavior === 'static') {
+      numerator = numerators[state.indexN];
+    } else if (numeratorBehavior === 'ascending') {
+      numerator = numerators[state.indexN % numerators.length];
+    } else if (numeratorBehavior === 'descending') {
+      numerator = numerators[(numerators.length - 1 - state.indexN) % numerators.length];
+    } else if (numeratorBehavior === 'shuffle') {
+      numerator = state.orderN[state.indexN % state.orderN.length];
+    } else if (numeratorBehavior === 'random') {
+      numerator = numerators[Math.floor(Math.random() * numerators.length)];
+    }
+    
+    // Get current denominator without advancing
+    if (denominatorBehavior === 'static') {
+      denominator = denominators[state.indexD];
+    } else if (denominatorBehavior === 'ascending') {
+      denominator = denominators[state.indexD % denominators.length];
+    } else if (denominatorBehavior === 'descending') {
+      denominator = denominators[(denominators.length - 1 - state.indexD) % denominators.length];
+    } else if (denominatorBehavior === 'shuffle') {
+      denominator = state.orderD[state.indexD % state.orderD.length];
+    } else if (denominatorBehavior === 'random') {
+      denominator = denominators[Math.floor(Math.random() * denominators.length)];
+    }
+    
+    const base = Number(cfg.directValue);
+    return base * (numerator / (denominator || 1));
+  }
+
   // Resolve HRG value and advance sequence
   _resolveHRG(param, position = 'start') {
     const state = this.hrgState[param]?.[position];
@@ -2295,11 +2451,15 @@ class SynthClient {
       denominator = denominators[Math.floor(Math.random() * denominators.length)];
     }
 
-    const cfg = this.programConfig[param] || {};
-    const base = (cfg.startValueGenerator?.baseValue ?? 
-                  cfg.endValueGenerator?.baseValue ?? 
-                  cfg.directValue ?? 
-                  220);
+    const cfg = this.programConfig[param];
+    if (!cfg) {
+      throw new Error(`CRITICAL: HRG resolution for ${param} - missing program config`);
+    }
+    if (!Number.isFinite(cfg.directValue)) {
+      throw new Error(`CRITICAL: HRG resolution for ${param} - missing directValue`);
+    }
+    
+    const base = Number(cfg.directValue);
     return base * (numerator / (denominator || 1));
   }
 
@@ -2311,7 +2471,7 @@ class SynthClient {
       const range = generator.range.max - generator.range.min;
       return generator.range.min + (Math.random() * range);
     }
-    return Math.random() * 0.5;
+    throw new Error(`CRITICAL: RBG generator missing range - ${JSON.stringify(generator)}`);
   }
 
   // Apply direct value to parameter
@@ -2397,10 +2557,10 @@ class SynthClient {
           const range = generator.range.max - generator.range.min;
           return generator.range.min + (Math.random() * range);
         }
-        return Math.random() * 0.5;
+        throw new Error(`CRITICAL: Missing baseValue for periodic generator`);
       }
       default: {
-        return generator.value || 0;
+        throw new Error(`CRITICAL: Unknown generator type: ${generator.type}`);
       }
     }
   }

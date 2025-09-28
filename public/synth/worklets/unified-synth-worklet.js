@@ -83,6 +83,9 @@ class UnifiedSynthWorklet extends AudioWorkletProcessor {
     
     // Phase tracking
     this.lastPhase = 0;
+    
+    // Error logging (rate-limited)
+    this.errorLogged = false;
 
     // ===== AUDIO SYNTHESIS (from voice-worklet) =====
     
@@ -540,20 +543,43 @@ class UnifiedSynthWorklet extends AudioWorkletProcessor {
     const paramNames = ['frequency', 'zingMorph', 'zingAmount', 'vowelX', 'vowelY', 'symmetry', 'amplitude', 'whiteNoise'];
     
     for (const paramName of paramNames) {
-      const startValue = parameters[`${paramName}_start`]?.[0] || this.currentValues[paramName];
-      const endValue = parameters[`${paramName}_end`]?.[0] || startValue;
-      const interpolationType = this.interpolationTypes[paramName] || 'step';
+      const startParam = parameters[`${paramName}_start`];
+      const endParam = parameters[`${paramName}_end`];
+      const interpolationType = this.interpolationTypes[paramName];
       
+      // Strict validation: require proper AudioParam values
+      if (!startParam || startParam[0] === undefined) {
+        if (!this.errorLogged) {
+          console.error(`CRITICAL: Worklet missing ${paramName}_start parameter - outputting silence`);
+          this.errorLogged = true;
+        }
+        this.currentValues[paramName] = 0;
+        continue;
+      }
+      
+      const startValue = startParam[0];
       let value;
+      
       if (interpolationType === 'step') {
         value = startValue;
       } else if (interpolationType === 'cosine') {
-        // Cosine interpolation: 0.5 - cos(phase * π) * 0.5
-        const shapedProgress = 0.5 - Math.cos(currentPhase * Math.PI) * 0.5;
-        value = startValue + (endValue - startValue) * shapedProgress;
+        if (!endParam || endParam[0] === undefined) {
+          if (!this.errorLogged) {
+            console.error(`CRITICAL: Worklet missing ${paramName}_end for cosine interpolation - using start value`);
+            this.errorLogged = true;
+          }
+          value = startValue;
+        } else {
+          const endValue = endParam[0];
+          const shapedProgress = 0.5 - Math.cos(currentPhase * Math.PI) * 0.5;
+          value = startValue + (endValue - startValue) * shapedProgress;
+        }
       } else {
-        // Linear fallback
-        value = startValue + (endValue - startValue) * currentPhase;
+        if (!this.errorLogged) {
+          console.error(`CRITICAL: Unknown interpolation type '${interpolationType}' for ${paramName} - using step`);
+          this.errorLogged = true;
+        }
+        value = startValue;
       }
       
       this.currentValues[paramName] = value;
