@@ -248,11 +248,37 @@ export function validateMessage(message) {
       break;
 
     case MessageTypes.SYNTH_PARAMS:
-      // Allow flexible parameter format (direct values or discriminated unions)
+      // DEPRECATED: Use PROGRAM_UPDATE instead
+      console.warn("SYNTH_PARAMS is deprecated, use PROGRAM_UPDATE");
       break;
 
     case MessageTypes.PROGRAM_UPDATE:
-      // Program updates can have any parameter structure
+      // Enforce unified parameter structure - no scope field allowed
+      for (const [key, value] of Object.entries(message)) {
+        if (["type", "timestamp", "synthesisActive", "isManualMode", "portamentoTime"].includes(key)) {
+          continue; // Skip non-parameter fields
+        }
+        
+        if (value && typeof value === "object") {
+          // Check for forbidden scope field
+          if ("scope" in value) {
+            throw new Error(`BREAKING: Parameter '${key}' contains forbidden 'scope' field. Use interpolation + generators instead.`);
+          }
+          
+          // Validate unified parameter structure
+          if (!value.interpolation || !["step", "cosine"].includes(value.interpolation)) {
+            throw new Error(`Parameter '${key}' must have interpolation: 'step' or 'cosine'`);
+          }
+          
+          if (!value.startValueGenerator || typeof value.startValueGenerator !== "object") {
+            throw new Error(`Parameter '${key}' must have startValueGenerator`);
+          }
+          
+          if (value.interpolation === "cosine" && (!value.endValueGenerator || typeof value.endValueGenerator !== "object")) {
+            throw new Error(`Parameter '${key}' with cosine interpolation must have endValueGenerator`);
+          }
+        }
+      }
       break;
 
     case MessageTypes.PHASOR_SYNC:

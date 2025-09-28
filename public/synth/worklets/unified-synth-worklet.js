@@ -167,21 +167,23 @@ class UnifiedSynthWorklet extends AudioWorkletProcessor {
         this.programConfig = message.config || {};
         break;
         
-      case "SET_STEP_VALUES":
-        this.stepValues = message.params || {};
+      case "SET_INTERPOLATION_TYPES":
+        // Receive per-parameter interpolation types (e.g., step, cosine)
+        if (message.params && typeof message.params === 'object') {
+          this.interpolationTypes = {
+            ...this.interpolationTypes,
+            ...message.params,
+          };
+        }
         break;
 
-      case "SET_COS_SEGMENTS":
-        this.cosSegments = message.params || {};
-        break;
+      // SET_STEP_VALUES and SET_COS_SEGMENTS are obsolete
+      // Values are now set directly via AudioParams
 
       case "SET_INTERPOLATED_VALUE":
         // Set a parameter to a specific interpolated value from current phase
         if (message.param && Number.isFinite(message.value)) {
           this.currentValues[message.param] = message.value;
-          // Remove from step and cos segments so it uses the direct value
-          delete this.stepValues[message.param];
-          delete this.cosSegments[message.param];
         }
         break;
         

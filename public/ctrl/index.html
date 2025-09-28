@@ -592,11 +592,14 @@
           <div class="param-line">
             <span class="param-label">freq</span>
             <input
-              type="text"
+              type="number"
               class="text-input"
-              id="frequency-value"
+              id="frequency-base"
               value="220"
-              placeholder="220 or 200-240"
+              min="16"
+              max="16384"
+              step="1"
+              placeholder="Hz"
             >
             <select
               class="interp-select"
@@ -695,14 +698,7 @@
                 <option value="shuffle">shuf</option>
               </select>
             </span>
-            <input
-              type="text"
-              class="end-value-input"
-              id="frequency-end-value"
-              value="220"
-              placeholder="220 or 200-240"
-              title="End value"
-            >
+            <!-- No numeric end value for frequency; envelope end is defined by HRG end set -->
           </div>
         </div>
 
