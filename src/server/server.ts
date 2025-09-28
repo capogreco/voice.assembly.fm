@@ -608,11 +608,9 @@ async function handleRequest(request: Request): Promise<Response> {
   let response;
 
   if (url.pathname === "/") {
-    response = await serveDir(request, {
-      fsRoot: "./public",
-      urlRoot: "/",
-      index: "index.html",
-      headers: ["access-control-allow-origin: *"],
+    response = new Response(null, {
+      status: 302,
+      headers: { "Location": "/synth/" },
     });
   } else if (url.pathname === "/ctrl/" || url.pathname === "/ctrl") {
     response = new Response(null, {
