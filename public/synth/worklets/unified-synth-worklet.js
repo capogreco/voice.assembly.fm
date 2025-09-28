@@ -721,7 +721,20 @@ class UnifiedSynthWorklet extends AudioWorkletProcessor {
       if (f3FullChannel) f3FullChannel[sample] = blendedF3 * 10.0 * currentAmplitude;
       
       // Output white noise envelope value for external gain control
-      if (whiteNoiseEnvChannel) whiteNoiseEnvChannel[sample] = paramArrays['whiteNoise'][sample];
+      if (whiteNoiseEnvChannel) {
+        // Ensure we have a valid white noise value even on first process call
+        let whiteNoiseValue = 0;
+        
+        if (paramArrays['whiteNoise'] && paramArrays['whiteNoise'][sample] !== undefined) {
+          // Use properly calculated envelope value
+          whiteNoiseValue = paramArrays['whiteNoise'][sample];
+        } else if (parameters.whiteNoise_start && parameters.whiteNoise_start[0] !== undefined) {
+          // Fallback: use start value directly if envelope array not ready
+          whiteNoiseValue = parameters.whiteNoise_start[0];
+        }
+        
+        whiteNoiseEnvChannel[sample] = whiteNoiseValue;
+      }
     }
 
     return true;
