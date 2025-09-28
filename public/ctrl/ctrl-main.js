@@ -577,7 +577,10 @@ var WebRTCStar = class extends EventTarget {
       peerType: targetPeerType,
       syncChannel: null,
       controlChannel: null,
-      connectedEventSent: false
+      connectedEventSent: false,
+      isInitiator: shouldInitiate, // Track who initiated for reconnection
+      hasRetried: false, // Track if we've already attempted reconnection
+      reconnectTimer: null // Store reconnection timer
     });
     let syncChannel, controlChannel;
     if (shouldInitiate) {
@@ -620,11 +623,15 @@ var WebRTCStar = class extends EventTarget {
         console.log(`\u{1F517} Connection to ${peerId}: ${peerConnection.connectionState}`);
       }
       if (peerConnection.connectionState === "connected") {
-        setTimeout(() => {
-          this.checkPeerReadiness(peerId);
-        }, 100);
-      } else if (peerConnection.connectionState === "failed" || peerConnection.connectionState === "disconnected") {
+        // Check readiness immediately - remove artificial delay
+        this.checkPeerReadiness(peerId);
+      } else if (peerConnection.connectionState === "failed") {
+        this.scheduleReconnection(peerId);
+      } else if (peerConnection.connectionState === "closed") {
         this.removePeer(peerId);
+      } else if (peerConnection.connectionState === "disconnected") {
+        console.log(`⚠️ Connection to ${peerId} disconnected, monitoring...`);
+        // Let it recover naturally, no immediate action
       }
     });
     peerConnection.addEventListener("iceconnectionstatechange", () => {
@@ -632,9 +639,8 @@ var WebRTCStar = class extends EventTarget {
         console.log(`\u{1F9CA} ICE connection to ${peerId}: ${peerConnection.iceConnectionState}`);
       }
       if (peerConnection.iceConnectionState === "connected" || peerConnection.iceConnectionState === "completed") {
-        setTimeout(() => {
-          this.checkPeerReadiness(peerId);
-        }, 100);
+        // Check readiness immediately - remove artificial delay
+        this.checkPeerReadiness(peerId);
       }
     });
     if (shouldInitiate) {
@@ -734,22 +740,14 @@ var WebRTCStar = class extends EventTarget {
     }
 
     try {
-      const pc = peer.connection;
-
-      if (pc.signalingState !== "have-local-offer") {
-        if (this.verbose) {
-          console.warn(
-            `⚠️ Received answer while signaling state is ${pc.signalingState}, ignoring`,
-          );
-        }
-        return;
-      }
-
-      await pc.setRemoteDescription(answer);
+      await peer.connection.setRemoteDescription(answer);
       
       if (this.verbose) console.log(`✅ Set answer from ${fromPeerId}`);
     } catch (error) {
-      console.error(`❌ Error handling answer from ${fromPeerId}:`, error);
+      // Log but don't fail - let WebRTC handle signaling issues gracefully
+      if (this.verbose) {
+        console.warn(`⚠️ Non-fatal error setting answer from ${fromPeerId}:`, error.message);
+      }
     }
   }
   /**
@@ -943,24 +941,17 @@ var WebRTCStar = class extends EventTarget {
   checkPeerReadiness(peerId) {
     const peer = this.peers.get(peerId);
     if (!peer) return;
-    const peerConnection = peer.connection;
-    const isConnectionReady = peerConnection && (peerConnection.connectionState === "connected" || peerConnection.iceConnectionState === "connected" || peerConnection.iceConnectionState === "completed");
-    const isSyncChannelReady = peer.syncChannel && peer.syncChannel.readyState === "open";
-    const isControlChannelReady = peer.controlChannel && peer.controlChannel.readyState === "open";
+    // Simplified readiness: just check if both channels are open
+    const isSyncChannelReady = peer.syncChannel?.readyState === "open";
+    const isControlChannelReady = peer.controlChannel?.readyState === "open";
     if (this.verbose) {
       console.log(`\u{1F50D} Peer ${peerId} readiness check:`, {
-        connectionState: peerConnection?.connectionState,
-        iceConnectionState: peerConnection?.iceConnectionState,
-        hasSyncChannel: !!peer.syncChannel,
         syncChannelState: peer.syncChannel?.readyState,
-        hasControlChannel: !!peer.controlChannel,
         controlChannelState: peer.controlChannel?.readyState,
-        isConnectionReady,
-        isSyncChannelReady,
-        isControlChannelReady
+        ready: isSyncChannelReady && isControlChannelReady,
       });
     }
-    if (isConnectionReady && isSyncChannelReady && isControlChannelReady) {
+    if (isSyncChannelReady && isControlChannelReady) {
       if (this.verbose) {
         console.log(`\u2705 Connection and both channels ready for ${peerId}`);
       }
@@ -981,11 +972,44 @@ var WebRTCStar = class extends EventTarget {
     }
   }
   /**
+   * Schedule a single reconnection attempt for a failed peer
+   */
+  scheduleReconnection(peerId) {
+    const peer = this.peers.get(peerId);
+    if (!peer || peer.hasRetried) {
+      console.log(`🔄 Skipping reconnection for ${peerId} (no peer or already retried)`);
+      this.removePeer(peerId);
+      return;
+    }
+    
+    peer.hasRetried = true;
+    console.log(`🔄 Scheduling reconnection to ${peerId} in 2-3s...`);
+    
+    // Clear any existing timer
+    if (peer.reconnectTimer) {
+      clearTimeout(peer.reconnectTimer);
+    }
+    
+    peer.reconnectTimer = setTimeout(() => {
+      const wasInitiator = peer.isInitiator;
+      console.log(`🔄 Attempting reconnection to ${peerId}...`);
+      this.removePeer(peerId);
+      this.createPeerConnection(peerId, wasInitiator);
+    }, 2000 + Math.random() * 1000); // 2-3s with jitter
+  }
+
+  /**
    * Remove peer from mesh
    */
   removePeer(peerId) {
     const peer = this.peers.get(peerId);
     if (!peer) return;
+    
+    // Clear any reconnection timer
+    if (peer.reconnectTimer) {
+      clearTimeout(peer.reconnectTimer);
+    }
+    
     if (peer.connection.connectionState !== "closed") {
       peer.connection.close();
     }
