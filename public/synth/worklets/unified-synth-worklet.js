@@ -163,12 +163,10 @@ class UnifiedSynthWorklet extends AudioWorkletProcessor {
 
     // Message handling for program configuration
     this.port.onmessage = this.handleMessage.bind(this);
-    console.log("🏗️ Message handler set up in worklet constructor");
   }
 
   handleMessage(event) {
     const message = event.data;
-    console.log("🎯 Worklet received message:", message.type);
 
     switch (message.type) {
       case "SET_PROGRAM_CONFIG":
@@ -178,16 +176,11 @@ class UnifiedSynthWorklet extends AudioWorkletProcessor {
         
       case "SET_INTERPOLATION_TYPES":
         // Receive per-parameter interpolation types (e.g., step, cosine)
-        console.log("🎯 Processing SET_INTERPOLATION_TYPES, message.params:", message.params);
         if (message.params && typeof message.params === 'object') {
-          console.log("🎯 Before update:", this.interpolationTypes);
           this.interpolationTypes = {
             ...this.interpolationTypes,
             ...message.params,
           };
-          console.log("🎯 After update:", this.interpolationTypes);
-        } else {
-          console.log("🚨 Invalid SET_INTERPOLATION_TYPES message format");
         }
         break;
 
@@ -201,9 +194,6 @@ class UnifiedSynthWorklet extends AudioWorkletProcessor {
         }
         break;
         
-      case "TEST_MESSAGE":
-        console.log("🧪 Worklet received test message:", message.data);
-        break;
         
       // Portamento is now handled by AudioParam ramping
         
@@ -537,6 +527,7 @@ class UnifiedSynthWorklet extends AudioWorkletProcessor {
     const f1FullChannel = output.length > 2 ? output[2] : null; // F1 full amplitude
     const f2FullChannel = output.length > 3 ? output[3] : null; // F2 full amplitude
     const f3FullChannel = output.length > 4 ? output[4] : null; // F3 full amplitude
+    const whiteNoiseEnvChannel = output.length > 5 ? output[5] : null; // White noise envelope
     const blockSize = outputChannel.length;
 
     // Update sample rate from global scope if available
@@ -581,9 +572,7 @@ class UnifiedSynthWorklet extends AudioWorkletProcessor {
         const startValue = startParam[0];
         paramArrays[paramName].fill(startValue);
       } else if (interpolationType === 'cosine') {
-        if (paramName === 'zingMorph') {
-          console.log(`🔧 Processing cosine interpolation for ${paramName}`);
-        }
+        // Processing cosine interpolation
         // Cosine interpolation: calculate per-sample based on phase
         if (!endParam || endParam[0] === undefined) {
           if (!this.errorLogged) {
@@ -602,19 +591,7 @@ class UnifiedSynthWorklet extends AudioWorkletProcessor {
             const shapedProgress = 0.5 - Math.cos(currentPhase * Math.PI) * 0.5;
             paramArrays[paramName][i] = startValue + (endValue - startValue) * shapedProgress;
             
-            // Debug phase array usage and calculations for first few samples
-            if (paramName === 'zingMorph' && i <= 2) {
-              console.log(`🔧 ${paramName} sample [${i}]: phase=${currentPhase.toFixed(6)}, cos(${(currentPhase * Math.PI).toFixed(3)})=${Math.cos(currentPhase * Math.PI).toFixed(6)}, progress=${shapedProgress.toFixed(6)}, value=${paramArrays[paramName][i].toFixed(6)} (${startValue.toFixed(3)} → ${endValue.toFixed(3)})`);
-            }
-            
-            // Debug envelope behavior for all cosine interpolation parameters
-            if (i === 0 && currentPhase < 0.05) {
-              console.log(`🎬 CYCLE START: ${paramName} phase=${currentPhase.toFixed(6)}, value=${paramArrays[paramName][i].toFixed(3)} (start=${startValue.toFixed(3)}, end=${endValue.toFixed(3)})`);
-            } else if (i === 0 && currentPhase > 0.95) {
-              console.log(`🏁 CYCLE END: ${paramName} phase=${currentPhase.toFixed(6)}, value=${paramArrays[paramName][i].toFixed(3)} (start=${startValue.toFixed(3)}, end=${endValue.toFixed(3)})`);
-            } else if (i === 0 && Math.abs(currentPhase - 0.5) < 0.05) {
-              console.log(`🔄 CYCLE MID: ${paramName} phase=${currentPhase.toFixed(6)}, value=${paramArrays[paramName][i].toFixed(3)} (start=${startValue.toFixed(3)}, end=${endValue.toFixed(3)})`);
-            }
+            // Per-sample cosine interpolation calculation
           }
         }
       } else {
@@ -624,9 +601,7 @@ class UnifiedSynthWorklet extends AudioWorkletProcessor {
         }
         const startValue = startParam[0];
         paramArrays[paramName].fill(startValue);
-        if (paramName === 'zingMorph') {
-          console.log(`⚠️ Using fallback step interpolation for ${paramName} (type: ${interpolationType})`);
-        }
+        // Using fallback step interpolation
       }
     }
     
@@ -651,19 +626,7 @@ class UnifiedSynthWorklet extends AudioWorkletProcessor {
     const zingMorphArray = paramArrays.zingMorph;
     const symmetryArray = paramArrays.symmetry;
     
-    // Debug parameter array progression every 1000 blocks
-    this.debugParamCounter = (this.debugParamCounter || 0) + 1;
-    if (this.debugParamCounter % 1000 === 0 && zingMorphArray) {
-      const samples = [0, 32, 64, 96, 127];
-      const morphDetails = samples.map(i => `[${i}]=${zingMorphArray[i]?.toFixed(4)}`).join(', ');
-      console.log(`🎵 ZingMorph array progression: ${morphDetails}`);
-    }
 
-    // Debug frequency every ~1 second
-    this.debugCounter++;
-    if (this.debugCounter % 44100 === 0) {
-      console.log(`🎵 Unified Voice: frequency=${frequencyArray[0]}Hz, active=${active}`);
-    }
 
     // Internal gain compensation constants
     const formantGain = 3.0;
@@ -756,6 +719,9 @@ class UnifiedSynthWorklet extends AudioWorkletProcessor {
       if (f1FullChannel) f1FullChannel[sample] = blendedF1 * 10.0 * currentAmplitude;
       if (f2FullChannel) f2FullChannel[sample] = blendedF2 * 10.0 * currentAmplitude;
       if (f3FullChannel) f3FullChannel[sample] = blendedF3 * 10.0 * currentAmplitude;
+      
+      // Output white noise envelope value for external gain control
+      if (whiteNoiseEnvChannel) whiteNoiseEnvChannel[sample] = paramArrays['whiteNoise'][sample];
     }
 
     return true;

@@ -1034,6 +1034,9 @@ var ControlClient = class {
   pendingParameterChanges;
   elements;
   synthesisActive;
+  // Bulk mode properties
+  bulkModeEnabled;
+  bulkChanges;
   _createDefaultState() {
     const defaultFrequencyState = () => ({
       interpolation: "step",
@@ -1142,6 +1145,9 @@ var ControlClient = class {
       }
     }
     this.pendingMusicalState = newState;
+    if (action.type === "SET_GENERATOR_CONFIG" && this.isPlaying) {
+      this.broadcastSingleParameterStaged(action.param);
+    }
     if (action.param) {
       this._updateUIFromState(action.param);
     }
@@ -1155,6 +1161,42 @@ var ControlClient = class {
     this._updateActiveState(action);
     const portamentoTime = this.elements.portamentoTime ? parseInt(this.elements.portamentoTime.value) : 100;
     this.broadcastSingleParameterUpdate(action.param, portamentoTime);
+  }
+  /**
+   * Check if an input value represents a range (contains hyphen between numbers)
+   * @param value The input value to check
+   * @returns true if the value represents a range
+   */
+  _isRangeValue(value) {
+    const trimmed = value.trim();
+    if (!trimmed.includes("-")) return false;
+    const parts = trimmed.split("-");
+    if (parts.length !== 2) return false;
+    const [min, max] = parts.map((p) => p.trim());
+    const minNum = parseFloat(min);
+    const maxNum = parseFloat(max);
+    return !isNaN(minNum) && !isNaN(maxNum);
+  }
+  /**
+   * Send sub-parameter update message with staging logic
+   * @param paramPath Dot notation path (e.g., "frequency.startValueGenerator.numerators")
+   * @param value New value to set
+   * @param portamentoTime Optional portamento duration (defaults to UI value)
+   */
+  _sendSubParameterUpdate(paramPath, value, portamentoTime) {
+    const finalPortamentoTime = portamentoTime ?? (this.elements.portamentoTime ? parseInt(this.elements.portamentoTime.value) : 100);
+    if (this.addToBulkChanges({
+      type: "sub-param-update",
+      paramPath,
+      value,
+      portamentoTime: finalPortamentoTime
+    })) {
+      return;
+    }
+    const message = MessageBuilder.subParamUpdate(paramPath, value, finalPortamentoTime);
+    if (this.star) {
+      this.star.broadcastToType("synth", message, "control");
+    }
   }
   /**
    * Update the active musical state directly (bypassing pending state)
@@ -1244,6 +1286,8 @@ var ControlClient = class {
     this.es8Node = null;
     this.hasPendingChanges = false;
     this.pendingParameterChanges = /* @__PURE__ */ new Set();
+    this.bulkModeEnabled = false;
+    this.bulkChanges = [];
     this.synthesisActive = false;
     this.musicalState = this._createDefaultState();
     this.pendingMusicalState = this._createDefaultState();
@@ -1276,6 +1320,8 @@ var ControlClient = class {
       portamentoTime: document.getElementById("portamento-time"),
       portamentoValue: document.getElementById("portamento-value"),
       reresolveBtn: document.getElementById("reresolve-btn"),
+      bulkModeCheckbox: document.getElementById("bulk-mode-checkbox"),
+      applyBulkBtn: document.getElementById("apply-bulk-btn"),
       peerList: document.getElementById("peer-list"),
       synthCount: document.getElementById("synth-count"),
       debugLog: document.getElementById("debug-log"),
@@ -1387,6 +1433,22 @@ var ControlClient = class {
     if (this.elements.es8EnableBtn) {
       this.elements.es8EnableBtn.addEventListener("click", () => this.toggleES8());
     }
+    if (this.elements.bulkModeCheckbox) {
+      this.elements.bulkModeCheckbox.addEventListener("change", () => {
+        this.bulkModeEnabled = this.elements.bulkModeCheckbox.checked;
+        if (this.elements.applyBulkBtn) {
+          this.elements.applyBulkBtn.style.display = this.bulkModeEnabled ? "inline-block" : "none";
+        }
+        this.bulkChanges = [];
+        this.updateBulkButtonState();
+        console.log(`\u{1F504} Bulk mode ${this.bulkModeEnabled ? "enabled" : "disabled"}`);
+      });
+    }
+    if (this.elements.applyBulkBtn) {
+      this.elements.applyBulkBtn.addEventListener("click", () => {
+        this.applyBulkChanges();
+      });
+    }
     this.setupSceneMemoryUI();
     document.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -1438,6 +1500,9 @@ var ControlClient = class {
           interpolation
         });
         this.markPendingChanges();
+        if (this.isPlaying) {
+          this.broadcastSingleParameterStaged(paramName);
+        }
       });
     }
     if (endValueInput) {
@@ -1448,7 +1513,49 @@ var ControlClient = class {
       endValueInput.addEventListener("input", () => {
         const isValid = /^-?\d*\.?\d*(\s*-\s*-?\d*\.?\d*)?$/.test(endValueInput.value);
         endValueInput.classList.toggle("invalid-input", !isValid && endValueInput.value !== "");
+        const endBehaviorSelect = document.getElementById(`${paramName}-end-rbg-behavior`);
+        if (endBehaviorSelect) {
+          endBehaviorSelect.style.display = this._isRangeValue(endValueInput.value) ? "inline-block" : "none";
+        }
       });
+    }
+    if (textInput) {
+      textInput.addEventListener("input", () => {
+        const startBehaviorSelect = document.getElementById(`${paramName}-start-rbg-behavior`);
+        if (startBehaviorSelect) {
+          startBehaviorSelect.style.display = this._isRangeValue(textInput.value) ? "inline-block" : "none";
+        }
+      });
+    }
+    const startRbgBehaviorSelect = document.getElementById(`${paramName}-start-rbg-behavior`);
+    const endRbgBehaviorSelect = document.getElementById(`${paramName}-end-rbg-behavior`);
+    if (startRbgBehaviorSelect) {
+      startRbgBehaviorSelect.addEventListener("change", () => {
+        this._sendSubParameterUpdate(`${paramName}.startValueGenerator.sequenceBehavior`, startRbgBehaviorSelect.value);
+        const currentValue = textInput.value;
+        this._handleValueInput(paramName, currentValue, "start");
+        this.markPendingChanges();
+      });
+    }
+    if (endRbgBehaviorSelect) {
+      endRbgBehaviorSelect.addEventListener("change", () => {
+        this._sendSubParameterUpdate(`${paramName}.endValueGenerator.sequenceBehavior`, endRbgBehaviorSelect.value);
+        const currentValue = endValueInput.value;
+        this._handleValueInput(paramName, currentValue, "end");
+        this.markPendingChanges();
+      });
+    }
+    if (textInput) {
+      const startBehaviorSelect = document.getElementById(`${paramName}-start-rbg-behavior`);
+      if (startBehaviorSelect) {
+        startBehaviorSelect.style.display = this._isRangeValue(textInput.value) ? "inline-block" : "none";
+      }
+    }
+    if (endValueInput) {
+      const endBehaviorSelect = document.getElementById(`${paramName}-end-rbg-behavior`);
+      if (endBehaviorSelect) {
+        endBehaviorSelect.style.display = this._isRangeValue(endValueInput.value) ? "inline-block" : "none";
+      }
     }
     if (textInput) {
       textInput.addEventListener("change", () => {
@@ -1785,7 +1892,8 @@ var ControlClient = class {
             param: paramName,
             value: v
           });
-          this.broadcastMusicalParameters();
+          const portamentoTime = this.elements.portamentoTime ? parseInt(this.elements.portamentoTime.value) : 100;
+          this._sendSubParameterUpdate(`${paramName}.baseValue`, v, portamentoTime);
           this.pendingParameterChanges.add(paramName);
           this.updateParameterVisualFeedback(paramName);
         } else {
@@ -1811,7 +1919,11 @@ var ControlClient = class {
           interpolation
         });
         this.markPendingChanges();
-        this.broadcastMusicalParameters();
+        if (this.isPlaying) {
+          this.broadcastSingleParameterStaged(paramName);
+        } else {
+          this.broadcastMusicalParameters();
+        }
       });
     }
     if (startNumeratorsInput) {
@@ -1832,8 +1944,9 @@ var ControlClient = class {
         }
       });
       startNumeratorsInput.addEventListener("blur", () => {
+        this._sendSubParameterUpdate("frequency.startValueGenerator.numerators", startNumeratorsInput.value);
         if (!this.isPlaying) {
-          this._applyHRGChangeWithPortamento({
+          this._updateActiveState({
             type: "SET_GENERATOR_CONFIG",
             param: "frequency",
             position: "start",
@@ -1872,8 +1985,9 @@ var ControlClient = class {
         }
       });
       startDenominatorsInput.addEventListener("blur", () => {
+        this._sendSubParameterUpdate("frequency.startValueGenerator.denominators", startDenominatorsInput.value);
         if (!this.isPlaying) {
-          this._applyHRGChangeWithPortamento({
+          this._updateActiveState({
             type: "SET_GENERATOR_CONFIG",
             param: "frequency",
             position: "start",
@@ -1896,8 +2010,9 @@ var ControlClient = class {
     }
     if (startNumBehaviorSelect) {
       startNumBehaviorSelect.addEventListener("change", () => {
+        this._sendSubParameterUpdate("frequency.startValueGenerator.numeratorBehavior", startNumBehaviorSelect.value);
         if (!this.isPlaying) {
-          this._applyHRGChangeWithPortamento({
+          this._updateActiveState({
             type: "SET_GENERATOR_CONFIG",
             param: "frequency",
             position: "start",
@@ -2116,6 +2231,8 @@ var ControlClient = class {
     if (inputValue.includes("-")) {
       const [min, max] = inputValue.split("-").map((v) => parseFloat(v.trim()));
       if (!isNaN(min) && !isNaN(max)) {
+        const behaviorSelect = document.getElementById(`${paramName}-${position}-rbg-behavior`);
+        const behavior = behaviorSelect ? behaviorSelect.value : "static";
         this._updatePendingState({
           type: "SET_GENERATOR_CONFIG",
           param: paramName,
@@ -2126,7 +2243,7 @@ var ControlClient = class {
               min: Math.min(min, max),
               max: Math.max(min, max)
             },
-            sequenceBehavior: "static"
+            sequenceBehavior: behavior
           }
         });
       }
@@ -2143,26 +2260,6 @@ var ControlClient = class {
             sequenceBehavior: "static"
           }
         });
-        if (position === "start") {
-          const state = this.pendingMusicalState[paramName];
-          const needsEndMirror = state.interpolation !== "step" && state.endValueGenerator?.type === "normalised" && typeof state.endValueGenerator.range !== "number";
-          if (needsEndMirror) {
-            const endInput = document.getElementById(`${paramName}-end-value`);
-            const raw = (endInput?.value || "").trim();
-            if (!raw || raw === "0-1") {
-              this._updatePendingState({
-                type: "SET_GENERATOR_CONFIG",
-                param: paramName,
-                position: "end",
-                config: {
-                  type: "normalised",
-                  range: value,
-                  sequenceBehavior: "static"
-                }
-              });
-            }
-          }
-        }
       }
     }
   }
@@ -2255,6 +2352,25 @@ var ControlClient = class {
           if (endDenBeh) {
             endDenBeh.value = endGen.denominatorBehavior ?? "static";
           }
+        }
+      }
+    }
+    if (paramName !== "frequency") {
+      const valueInput2 = document.getElementById(`${paramName}-value`);
+      const endValueInput2 = document.getElementById(`${paramName}-end-value`);
+      if (valueInput2) {
+        const startBehaviorSelect = document.getElementById(`${paramName}-start-rbg-behavior`);
+        if (startBehaviorSelect) {
+          const isRange = this._isRangeValue(valueInput2.value);
+          startBehaviorSelect.style.display = isRange ? "inline-block" : "none";
+        }
+      }
+      if (endValueInput2) {
+        const endBehaviorSelect = document.getElementById(`${paramName}-end-rbg-behavior`);
+        if (endBehaviorSelect) {
+          const isEnvelope2 = paramState.interpolation !== "step";
+          const isRange = isEnvelope2 && this._isRangeValue(endValueInput2.value);
+          endBehaviorSelect.style.display = isRange ? "inline-block" : "none";
         }
       }
     }
@@ -2481,7 +2597,7 @@ var ControlClient = class {
   // Broadcast a single parameter update for staging at EOC (no portamento field)
   broadcastSingleParameterStaged(paramName) {
     if (!this.star) return;
-    const paramState = this.musicalState[paramName];
+    const paramState = this.pendingMusicalState[paramName];
     if ("scope" in paramState) {
       throw new Error(`CRITICAL: Parameter '${paramName}' has forbidden 'scope' field`);
     }
@@ -2509,8 +2625,19 @@ var ControlClient = class {
       endValueGenerator: endGen,
       baseValue: paramState.baseValue
     };
-    const message = MessageBuilder.createParameterUpdate(MessageTypes.PROGRAM_UPDATE, wirePayload);
+    const resolvedValues = this.resolveParameterValues(paramName, paramState);
+    const message = MessageBuilder.unifiedParamUpdate(
+      paramName,
+      resolvedValues.start,
+      resolvedValues.end,
+      paramState.interpolation,
+      this.isPlaying,
+      100,
+      this.phasor
+      // current phase
+    );
     this.star.broadcastToType("synth", message, "control");
+    this.log(`\u{1F4E1} Broadcasted staged ${paramName} interpolation change`, "info");
   }
   // Removed splitParametersByMode - no longer needed with separated state
   // Phasor Management Methods
@@ -2816,9 +2943,14 @@ var ControlClient = class {
         end: void 0
       };
     }
+    const startValue = this.resolveGeneratorValue(paramState.startValueGenerator, paramState.baseValue);
+    const endValue = this.resolveGeneratorValue(paramState.endValueGenerator, paramState.baseValue);
+    if (paramName === "whiteNoise") {
+      console.log(`\u{1F50D} Resolving whiteNoise: start=${startValue}, end=${endValue}, endGen=${JSON.stringify(paramState.endValueGenerator)}`);
+    }
     return {
-      start: this.resolveGeneratorValue(paramState.startValueGenerator, paramState.baseValue),
-      end: this.resolveGeneratorValue(paramState.endValueGenerator, paramState.baseValue)
+      start: startValue,
+      end: endValue
     };
   }
   resolveGeneratorValue(generator, baseValue) {
@@ -3245,6 +3377,52 @@ var ControlClient = class {
     if (controlsElement.style.display !== "none") {
       setupElementNavigation();
     }
+  }
+  /**
+   * Update the state of the apply bulk button based on accumulated changes
+   */
+  updateBulkButtonState() {
+    if (this.elements.applyBulkBtn) {
+      const hasChanges = this.bulkChanges.length > 0;
+      this.elements.applyBulkBtn.disabled = !hasChanges;
+      this.elements.applyBulkBtn.textContent = hasChanges ? `apply bulk (${this.bulkChanges.length})` : "apply bulk";
+    }
+  }
+  /**
+   * Apply all accumulated bulk changes at once
+   */
+  applyBulkChanges() {
+    if (this.bulkChanges.length === 0) {
+      console.log("\u{1F504} No bulk changes to apply");
+      return;
+    }
+    console.log(`\u{1F504} Applying ${this.bulkChanges.length} bulk changes`);
+    this.bulkChanges.forEach((change) => {
+      if (change.type === "sub-param-update") {
+        const message = MessageBuilder.subParamUpdate(change.paramPath, change.value, change.portamentoTime);
+        if (this.star) {
+          this.star.broadcastToType("synth", message, "control");
+        }
+      }
+    });
+    this.bulkChanges = [];
+    this.updateBulkButtonState();
+    console.log("\u{1F504} Bulk changes applied and cleared");
+  }
+  /**
+   * Add a change to the bulk accumulation queue
+   */
+  addToBulkChanges(change) {
+    if (!this.bulkModeEnabled) {
+      return false;
+    }
+    if (change.paramPath) {
+      this.bulkChanges = this.bulkChanges.filter((c) => c.paramPath !== change.paramPath);
+    }
+    this.bulkChanges.push(change);
+    this.updateBulkButtonState();
+    console.log(`\u{1F4CB} Added to bulk queue: ${change.paramPath} = ${change.value} (${this.bulkChanges.length} total)`);
+    return true;
   }
 };
 console.log("About to create ControlClient");
