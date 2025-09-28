@@ -53,6 +53,8 @@ class UnifiedSynthWorklet extends AudioWorkletProcessor {
 
   constructor() {
     super();
+    
+    console.log("🏗️ UnifiedSynthWorklet constructor called");
 
     // ===== PARAMETER GENERATION (from program-worklet) =====
     
@@ -161,10 +163,12 @@ class UnifiedSynthWorklet extends AudioWorkletProcessor {
 
     // Message handling for program configuration
     this.port.onmessage = this.handleMessage.bind(this);
+    console.log("🏗️ Message handler set up in worklet constructor");
   }
 
   handleMessage(event) {
     const message = event.data;
+    console.log("🎯 Worklet received message:", message.type);
 
     switch (message.type) {
       case "SET_PROGRAM_CONFIG":
@@ -174,11 +178,16 @@ class UnifiedSynthWorklet extends AudioWorkletProcessor {
         
       case "SET_INTERPOLATION_TYPES":
         // Receive per-parameter interpolation types (e.g., step, cosine)
+        console.log("🎯 Processing SET_INTERPOLATION_TYPES, message.params:", message.params);
         if (message.params && typeof message.params === 'object') {
+          console.log("🎯 Before update:", this.interpolationTypes);
           this.interpolationTypes = {
             ...this.interpolationTypes,
             ...message.params,
           };
+          console.log("🎯 After update:", this.interpolationTypes);
+        } else {
+          console.log("🚨 Invalid SET_INTERPOLATION_TYPES message format");
         }
         break;
 
@@ -190,6 +199,10 @@ class UnifiedSynthWorklet extends AudioWorkletProcessor {
         if (message.param && Number.isFinite(message.value)) {
           this.currentValues[message.param] = message.value;
         }
+        break;
+        
+      case "TEST_MESSAGE":
+        console.log("🧪 Worklet received test message:", message.data);
         break;
         
       // Portamento is now handled by AudioParam ramping
@@ -535,19 +548,21 @@ class UnifiedSynthWorklet extends AudioWorkletProcessor {
     const phaseValues = parameters.phase;
     const activeValues = parameters.active;
     
-    // Get current phase and active state (sample-accurate)
-    const currentPhase = phaseValues.length > 1 ? phaseValues[0] : phaseValues[0];
+    
+    // Get active state for this block
     const active = activeValues.length > 1 ? activeValues[0] : activeValues[0];
-    this.lastPhase = currentPhase;
     this.currentValues.active = active;
     
-    // Generate parameter values using AudioParams and interpolation types
+    // Get parameter arrays for interpolation
     const paramNames = ['frequency', 'zingMorph', 'zingAmount', 'vowelX', 'vowelY', 'symmetry', 'amplitude', 'whiteNoise'];
+    const paramArrays = {};
     
+    // Validate parameters and prepare arrays for per-sample processing
     for (const paramName of paramNames) {
       const startParam = parameters[`${paramName}_start`];
       const endParam = parameters[`${paramName}_end`];
       const interpolationType = this.interpolationTypes[paramName];
+      
       
       // Strict validation: require proper AudioParam values
       if (!startParam || startParam[0] === undefined) {
@@ -555,56 +570,99 @@ class UnifiedSynthWorklet extends AudioWorkletProcessor {
           console.error(`CRITICAL: Worklet missing ${paramName}_start parameter - outputting silence`);
           this.errorLogged = true;
         }
-        this.currentValues[paramName] = 0;
+        paramArrays[paramName] = Array(blockSize).fill(0);
         continue;
       }
       
-      const startValue = startParam[0];
-      let value;
+      paramArrays[paramName] = new Array(blockSize);
       
       if (interpolationType === 'step') {
-        value = startValue;
+        // Step interpolation: use start value for entire block
+        const startValue = startParam[0];
+        paramArrays[paramName].fill(startValue);
       } else if (interpolationType === 'cosine') {
+        if (paramName === 'zingMorph') {
+          console.log(`🔧 Processing cosine interpolation for ${paramName}`);
+        }
+        // Cosine interpolation: calculate per-sample based on phase
         if (!endParam || endParam[0] === undefined) {
           if (!this.errorLogged) {
             console.error(`CRITICAL: Worklet missing ${paramName}_end for cosine interpolation - using start value`);
             this.errorLogged = true;
           }
-          value = startValue;
+          const startValue = startParam[0];
+          paramArrays[paramName].fill(startValue);
         } else {
+          const startValue = startParam[0];
           const endValue = endParam[0];
-          const shapedProgress = 0.5 - Math.cos(currentPhase * Math.PI) * 0.5;
-          value = startValue + (endValue - startValue) * shapedProgress;
+          
+          // Calculate interpolated values per-sample
+          for (let i = 0; i < blockSize; i++) {
+            const currentPhase = phaseValues.length > 1 ? phaseValues[i] : phaseValues[0];
+            const shapedProgress = 0.5 - Math.cos(currentPhase * Math.PI) * 0.5;
+            paramArrays[paramName][i] = startValue + (endValue - startValue) * shapedProgress;
+            
+            // Debug phase array usage and calculations for first few samples
+            if (paramName === 'zingMorph' && i <= 2) {
+              console.log(`🔧 ${paramName} sample [${i}]: phase=${currentPhase.toFixed(6)}, cos(${(currentPhase * Math.PI).toFixed(3)})=${Math.cos(currentPhase * Math.PI).toFixed(6)}, progress=${shapedProgress.toFixed(6)}, value=${paramArrays[paramName][i].toFixed(6)} (${startValue.toFixed(3)} → ${endValue.toFixed(3)})`);
+            }
+            
+            // Debug envelope behavior for all cosine interpolation parameters
+            if (i === 0 && currentPhase < 0.05) {
+              console.log(`🎬 CYCLE START: ${paramName} phase=${currentPhase.toFixed(6)}, value=${paramArrays[paramName][i].toFixed(3)} (start=${startValue.toFixed(3)}, end=${endValue.toFixed(3)})`);
+            } else if (i === 0 && currentPhase > 0.95) {
+              console.log(`🏁 CYCLE END: ${paramName} phase=${currentPhase.toFixed(6)}, value=${paramArrays[paramName][i].toFixed(3)} (start=${startValue.toFixed(3)}, end=${endValue.toFixed(3)})`);
+            } else if (i === 0 && Math.abs(currentPhase - 0.5) < 0.05) {
+              console.log(`🔄 CYCLE MID: ${paramName} phase=${currentPhase.toFixed(6)}, value=${paramArrays[paramName][i].toFixed(3)} (start=${startValue.toFixed(3)}, end=${endValue.toFixed(3)})`);
+            }
+          }
         }
       } else {
         if (!this.errorLogged) {
           console.error(`CRITICAL: Unknown interpolation type '${interpolationType}' for ${paramName} - using step`);
           this.errorLogged = true;
         }
-        value = startValue;
+        const startValue = startParam[0];
+        paramArrays[paramName].fill(startValue);
+        if (paramName === 'zingMorph') {
+          console.log(`⚠️ Using fallback step interpolation for ${paramName} (type: ${interpolationType})`);
+        }
       }
-      
-      this.currentValues[paramName] = value;
     }
     
-    // Get generated parameter values
-    const frequency = this.currentValues.frequency;
-    const vowelX = this.currentValues.vowelX;
-    const vowelY = this.currentValues.vowelY;
-    const amplitude = this.currentValues.amplitude;
-    const zingAmount = this.currentValues.zingAmount;
-    const zingMorph = this.currentValues.zingMorph;
-    const symmetry = this.currentValues.symmetry;
-
-    // Convert single values to arrays for a-rate processing
-    const zingAmountArray = Array(blockSize).fill(zingAmount);
-    const zingMorphArray = Array(blockSize).fill(zingMorph);
-    const symmetryArray = Array(blockSize).fill(symmetry);
+    // Store first sample values for legacy compatibility
+    this.currentValues.frequency = paramArrays.frequency[0];
+    this.currentValues.vowelX = paramArrays.vowelX[0];
+    this.currentValues.vowelY = paramArrays.vowelY[0];
+    this.currentValues.amplitude = paramArrays.amplitude[0];
+    this.currentValues.zingAmount = paramArrays.zingAmount[0];
+    this.currentValues.zingMorph = paramArrays.zingMorph[0];
+    this.currentValues.symmetry = paramArrays.symmetry[0];
+    
+    // Store current phase for debugging
+    this.lastPhase = phaseValues.length > 1 ? phaseValues[0] : phaseValues[0];
+    
+    // Get arrays for processing
+    const frequencyArray = paramArrays.frequency;
+    const vowelXArray = paramArrays.vowelX;
+    const vowelYArray = paramArrays.vowelY;
+    const amplitudeArray = paramArrays.amplitude;
+    const zingAmountArray = paramArrays.zingAmount;
+    const zingMorphArray = paramArrays.zingMorph;
+    const symmetryArray = paramArrays.symmetry;
+    
+    // Debug parameter array progression every 1000 blocks
+    this.debugParamCounter = (this.debugParamCounter || 0) + 1;
+    if (this.debugParamCounter % 1000 === 0 && zingMorphArray) {
+      const samples = [0, 32, 64, 96, 127];
+      const morphDetails = samples.map(i => `[${i}]=${zingMorphArray[i]?.toFixed(4)}`).join(', ');
+      console.log(`🎵 ZingMorph array progression: ${morphDetails}`);
+    }
 
     // Debug frequency every ~1 second
     this.debugCounter++;
     if (this.debugCounter % 44100 === 0) {
-      console.log(`🎵 Unified Voice: frequency=${frequency}Hz, active=${active}`);
+      console.log(`🎵 Unified Voice: frequency=${frequencyArray[0]}Hz, active=${active}`);
     }
 
     // Internal gain compensation constants
@@ -612,13 +670,15 @@ class UnifiedSynthWorklet extends AudioWorkletProcessor {
     const zingGain = 0.4;
     const modDepth = 0.5; // Fixed at optimal value
 
-    // Update frequency-dependent calculations
-    if (frequency !== this.fundamentalFreq) {
-      this.fundamentalFreq = frequency;
-      this.updateFormantCarriers(frequency);
+    // Update frequency-dependent calculations (use first sample for block-level updates)
+    const firstFrequency = frequencyArray[0];
+    if (firstFrequency !== this.fundamentalFreq) {
+      this.fundamentalFreq = firstFrequency;
+      this.updateFormantCarriers(firstFrequency);
     }
 
-    if (!active || frequency <= 0 || amplitude <= 0) {
+    // Check if we should output silence (using first sample values)
+    if (!active || firstFrequency <= 0 || amplitudeArray[0] <= 0) {
       outputChannel.fill(0);
       if (outputDuplicate) outputDuplicate.fill(0);
       if (f1FullChannel) f1FullChannel.fill(0);
@@ -627,13 +687,17 @@ class UnifiedSynthWorklet extends AudioWorkletProcessor {
       return true;
     }
 
-    // Update vowel formants once per block
-    this.updateVowelFormants(vowelX, vowelY);
-
-    // Calculate frequency increment per sample
-    const freqIncrement = frequency / this.sampleRate;
+    // Update vowel formants once per block (using first sample values)
+    this.updateVowelFormants(vowelXArray[0], vowelYArray[0]);
 
     for (let sample = 0; sample < blockSize; sample++) {
+      // Get per-sample parameter values
+      const currentFrequency = frequencyArray[sample];
+      const currentAmplitude = amplitudeArray[sample];
+      
+      // Calculate frequency increment per sample (can vary per sample)
+      const freqIncrement = currentFrequency / this.sampleRate;
+      
       // Update shared master phasor (UPHO architecture)
       this.masterPhase = (this.masterPhase + freqIncrement) % 1.0;
 
@@ -682,16 +746,16 @@ class UnifiedSynthWorklet extends AudioWorkletProcessor {
       const blendedF3 = scaledFormantF3 * (1.0 - blend) + scaledZingF3 * blend;
 
       // Apply overall level adjustment and amplitude envelope
-      const finalOutput = blendedOutput * 10.0 * amplitude;
+      const finalOutput = blendedOutput * 10.0 * currentAmplitude;
       outputChannel[sample] = finalOutput;
 
       // Duplicate main output on channel 1
       if (outputDuplicate) outputDuplicate[sample] = finalOutput;
 
       // Output amplitude-modulated formants for visualization
-      if (f1FullChannel) f1FullChannel[sample] = blendedF1 * 10.0 * amplitude;
-      if (f2FullChannel) f2FullChannel[sample] = blendedF2 * 10.0 * amplitude;
-      if (f3FullChannel) f3FullChannel[sample] = blendedF3 * 10.0 * amplitude;
+      if (f1FullChannel) f1FullChannel[sample] = blendedF1 * 10.0 * currentAmplitude;
+      if (f2FullChannel) f2FullChannel[sample] = blendedF2 * 10.0 * currentAmplitude;
+      if (f3FullChannel) f3FullChannel[sample] = blendedF3 * 10.0 * currentAmplitude;
     }
 
     return true;

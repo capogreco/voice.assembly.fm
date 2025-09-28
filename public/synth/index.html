@@ -164,6 +164,36 @@
         color: #fff;
       }
 
+      /* Phase indicator styles */
+      .phase-indicator {
+        margin-top: 4px;
+        font-size: 8px;
+        color: #444;
+      }
+
+      .phase-value {
+        background: #111;
+        border: 1px solid #333;
+        padding: 2px 6px;
+        font-family: inherit;
+        margin-bottom: 2px;
+      }
+
+      .phase-bar-container {
+        background: #0a0a0a;
+        border: 1px solid #333;
+        height: 3px;
+        width: 100%;
+        overflow: hidden;
+      }
+
+      .phase-bar {
+        background: #4a7c8a;
+        height: 100%;
+        width: 0%;
+        /* Remove transition for precise animation */
+      }
+
       /* Long press feedback for synth ID */
       #synth-id {
         transition: transform 0.1s ease, opacity 0.1s ease;
@@ -263,6 +293,12 @@
         </div>
         <div class="synthesis-status" id="synthesis-status">
           synthesis off
+        </div>
+        <div class="phase-indicator" id="phase-indicator">
+          <div class="phase-value" id="phase-value">φ: 0.000</div>
+          <div class="phase-bar-container">
+            <div class="phase-bar" id="phase-bar"></div>
+          </div>
         </div>
       </div>
 

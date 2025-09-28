@@ -108,6 +108,8 @@ class SynthClient {
       connectionStatus: document.getElementById("connection-status"),
       synthId: document.getElementById("synth-id"),
       synthesisStatus: document.getElementById("synthesis-status"),
+      phaseValue: document.getElementById("phase-value"),
+      phaseBar: document.getElementById("phase-bar"),
       loading: document.getElementById("loading"),
       canvas: document.getElementById("oscilloscope-canvas"),
     };
@@ -211,7 +213,7 @@ class SynthClient {
 
       // Show join button for audio initialization
       this.setState("join");
-      this.updateConnectionStatus("connected", "Connected - Tap to join");
+      this.updateConnectionStatus("connected", "Connected");
     } catch (error) {
       console.error("❌ Auto-connect failed:", error);
       this.updateConnectionStatus("error", `Error: ${error.message}`);
@@ -305,6 +307,14 @@ class SynthClient {
       // Store references for backward compatibility (some methods may still reference these)
       this.voiceNode = this.unifiedSynthNode; // Main audio node
       this.programNode = this.unifiedSynthNode; // Same node handles program logic
+      
+      // Send a test message to verify message passing works
+      console.log("🧪 Sending test message to newly created worklet");
+      this.unifiedSynthNode.port.postMessage({
+        type: "TEST_MESSAGE",
+        data: "hello from main thread"
+      });
+      console.log("🧪 Test message sent");
       
       // Track current parameter values for portamento (strict - no defaults)
       this.lastResolvedValues = {};
@@ -660,10 +670,13 @@ class SynthClient {
         }
       }
       
+      console.log("🎯 [Immediate] About to send SET_INTERPOLATION_TYPES message:", interpolationTypes);
+      
       this.unifiedSynthNode.port.postMessage({
         type: "SET_INTERPOLATION_TYPES",
         params: interpolationTypes
       });
+      console.log("🎯 [Immediate] SET_INTERPOLATION_TYPES message sent");
       
       // Set initial parameter values at current phase
       const now = this.audioContext.currentTime;
@@ -728,10 +741,12 @@ class SynthClient {
       }
     }
     
+    console.log("🎯 About to send SET_INTERPOLATION_TYPES message:", interpolationTypes);
     this.unifiedSynthNode.port.postMessage({
       type: "SET_INTERPOLATION_TYPES",
       params: interpolationTypes
     });
+    console.log("🎯 SET_INTERPOLATION_TYPES message sent");
     
     // Calculate portamento duration in seconds
     const portamentoDurationSec = portamentoTime / 1000;
@@ -952,6 +967,21 @@ class SynthClient {
           // Apply single parameter with portamento
           this.applySingleParamWithPortamento(paramName, pt);
         }
+        
+        // Send updated interpolation types to worklet after processing all parameters
+        const interpolationTypes = {};
+        for (const [paramName, paramConfig] of Object.entries(this.programConfig)) {
+          if (paramConfig.interpolation) {
+            interpolationTypes[paramName] = paramConfig.interpolation;
+          }
+        }
+        
+        console.log("🎯 [Paused] About to send SET_INTERPOLATION_TYPES message:", interpolationTypes);
+        this.unifiedSynthNode.port.postMessage({
+          type: "SET_INTERPOLATION_TYPES",
+          params: interpolationTypes
+        });
+        console.log("🎯 [Paused] SET_INTERPOLATION_TYPES message sent");
       }
     }
   }
@@ -1068,8 +1098,8 @@ class SynthClient {
     // Send phase correction to worklet (PLL behavior)
     this.sendPhaseCorrection();
 
-    // Start interpolation if not already running (optional debug display)
-    if (this.verbose && !this.phasorUpdateId) {
+    // Start interpolation if not already running (for phase display)
+    if (!this.phasorUpdateId) {
       this.startPhasorInterpolation();
     }
   }
@@ -1107,6 +1137,9 @@ class SynthClient {
     if (this.interpolatedPhasor >= 1.0) {
       this.interpolatedPhasor -= Math.floor(this.interpolatedPhasor);
     }
+
+    // Update phase display
+    this.updatePhaseDisplay();
 
     // Update connection status display
     if (this.elements.connectionStatus && this.verbose) {
@@ -1163,6 +1196,9 @@ class SynthClient {
             this.workletPhasor,
           );
 
+          // Update phase display
+          this.updatePhaseDisplay();
+          
           // Update display to show worklet phasor with error info
           if (this.elements.connectionStatus && this.verbose) {
             const errorDisplay = Math.abs(phaseError) > 0.001
@@ -1176,7 +1212,7 @@ class SynthClient {
           }
         } else if (event.data.type === "cycle-reset") {
           // Phasor worklet has reset - trigger new program worklet ramp
-          // console.log('🔄 Phasor reset detected');
+          console.log(`🔄 Cycle reset received: sample ${event.data.sampleIndex}/${event.data.blockSize}, cycle ${event.data.cycleLength}s`);
           this.handleCycleReset(event.data);
         } else if (event.data.type === "step-trigger") {
           this.onStepTrigger(event.data.step, event.data.stepsPerCycle);
@@ -1325,6 +1361,8 @@ class SynthClient {
           const startParam = this.unifiedSynthNode.parameters.get(`${param}_start`);
           const endParam = this.unifiedSynthNode.parameters.get(`${param}_end`);
           
+          console.log(`🎯 ${param} cosine envelope: start=${startValue?.toFixed(3)}, end=${endValue?.toFixed(3)}`);
+          
           if (startParam && startValue !== undefined) {
             startParam.setValueAtTime(startValue, resetTime);
           }
@@ -1335,6 +1373,21 @@ class SynthClient {
           resolvedValues[param] = { start: startValue, end: endValue };
         }
     }
+    
+    // Send updated interpolation types to worklet after processing all parameters at EOC
+    const interpolationTypes = {};
+    for (const [paramName, paramConfig] of Object.entries(this.programConfig)) {
+      if (paramConfig.interpolation) {
+        interpolationTypes[paramName] = paramConfig.interpolation;
+      }
+    }
+    
+    console.log("🎯 [EOC] About to send SET_INTERPOLATION_TYPES message:", interpolationTypes);
+    this.unifiedSynthNode.port.postMessage({
+      type: "SET_INTERPOLATION_TYPES",
+      params: interpolationTypes
+    });
+    console.log("🎯 [EOC] SET_INTERPOLATION_TYPES message sent");
 
     // Log resolved values for debugging
     if (Object.keys(resolvedValues).length > 0) {
@@ -1522,6 +1575,22 @@ class SynthClient {
     } else {
       element.classList.remove("active");
       element.textContent = "synthesis off";
+    }
+  }
+
+  updatePhaseDisplay() {
+    // Prioritize worklet phasor for accuracy, fallback to interpolated
+    const phaseToShow = this.workletPhasor !== undefined ? this.workletPhasor : this.interpolatedPhasor || 0;
+    
+    // Update phase value text with higher precision
+    if (this.elements.phaseValue) {
+      this.elements.phaseValue.textContent = `φ: ${phaseToShow.toFixed(4)}`;
+    }
+
+    // Update phase bar width with precise percentage
+    if (this.elements.phaseBar) {
+      const percentage = Math.max(0, Math.min(100, phaseToShow * 100)); // Clamp 0-100
+      this.elements.phaseBar.style.width = `${percentage}%`;
     }
   }
 
@@ -1862,23 +1931,19 @@ class SynthClient {
   // Transport control methods
   handleTransport(message) {
     console.log(`🎮 Transport: ${message.action}`);
-    if (!this.phasorWorklet) return;
+    if (!this.phasorWorklet || !this.unifiedSynthNode) return;
 
     switch (message.action) {
       case 'play':
+        // Update isPlaying parameter
+        this.unifiedSynthNode.parameters.get('isPlaying').value = 1;
+        this.isPlaying = true;
+        
         this.phasorWorklet.port.postMessage({ type: 'start' });
         
         if (this.isPaused) {
           // Resume from paused position
           console.log(`🎯 Resuming from paused phase: ${this.pausedPhase}`);
-          const phaseParam = this.programNode.parameters.get("phase");
-          const currentTime = this.audioContext.currentTime;
-          const remainingCycleTime = (1.0 - this.pausedPhase) * this.receivedCycleLength;
-          
-          phaseParam.cancelScheduledValues(currentTime);
-          phaseParam.setValueAtTime(this.pausedPhase, currentTime);
-          phaseParam.linearRampToValueAtTime(1.0, currentTime + remainingCycleTime);
-          
           this.isPaused = false;
         } else if (this.receivedPhasor === 0.0 || this.receivedPhasor === undefined) {
           // Starting from beginning
@@ -1888,11 +1953,19 @@ class SynthClient {
         break;
         
       case 'pause':
+        // Update isPlaying parameter
+        this.unifiedSynthNode.parameters.get('isPlaying').value = 0;
+        this.isPlaying = false;
+        
         this.phasorWorklet.port.postMessage({ type: 'stop' });
         this.pauseEnvelopes();
         break;
         
       case 'stop':
+        // Update isPlaying parameter
+        this.unifiedSynthNode.parameters.get('isPlaying').value = 0;
+        this.isPlaying = false;
+        
         this.phasorWorklet.port.postMessage({ type: 'stop' });
         this.phasorWorklet.port.postMessage({ type: 'reset' });
         this.stopEnvelopes();
@@ -1955,20 +2028,20 @@ class SynthClient {
   }
 
   applyParameterUpdate(param, startValue, endValue, interpolation, portamentoTime = 0, currentPhase = null) {
-    if (!this.programNode) return;
+    if (!this.unifiedSynthNode) return;
 
-    const phaseParam = this.programNode.parameters.get("phase");
+    const phaseParam = this.unifiedSynthNode.parameters.get("phase");
     const phase = currentPhase !== null ? currentPhase : phaseParam.value;
     
     if (interpolation === "step") {
-      // Step interpolation - use constant value with portamento
-      if (portamentoTime > 0) {
-        this.applyWithPortamento(param, startValue, portamentoTime);
-      } else {
-        this.programNode.port.postMessage({
-          type: "SET_STEP_VALUES",
-          params: { [param]: startValue }
-        });
+      // Step interpolation - set AudioParam directly
+      const startParam = this.unifiedSynthNode.parameters.get(`${param}_start`);
+      if (startParam) {
+        if (portamentoTime > 0) {
+          this.applyWithPortamento(param, startValue, portamentoTime);
+        } else {
+          startParam.setValueAtTime(startValue, this.audioContext.currentTime);
+        }
       }
     } else if (!this.isPlaying && endValue !== undefined) {
       // Paused with cosine interpolation - calculate interpolated value at current phase
@@ -1977,27 +2050,25 @@ class SynthClient {
       
       console.log(`🎯 Interpolating ${param} at phase ${phase.toFixed(3)}: ${startValue} → ${endValue} = ${interpolatedValue.toFixed(3)}`);
       
-      if (portamentoTime > 0) {
-        this.applyWithPortamento(param, interpolatedValue, portamentoTime);
-      } else {
-        this.programNode.port.postMessage({
-          type: "SET_INTERPOLATED_VALUE",
-          param: param,
-          value: interpolatedValue
-        });
+      const startParam = this.unifiedSynthNode.parameters.get(`${param}_start`);
+      if (startParam) {
+        if (portamentoTime > 0) {
+          this.applyWithPortamento(param, interpolatedValue, portamentoTime);
+        } else {
+          startParam.setValueAtTime(interpolatedValue, this.audioContext.currentTime);
+        }
       }
     } else {
-      // Playing with cosine interpolation - set up envelope for next cycle
+      // Playing with cosine interpolation - set start and end AudioParams
       if (endValue !== undefined) {
-        this.programNode.port.postMessage({
-          type: "SET_COS_SEGMENTS", 
-          params: { 
-            [param]: { 
-              start: startValue, 
-              end: endValue 
-            } 
-          }
-        });
+        const startParam = this.unifiedSynthNode.parameters.get(`${param}_start`);
+        const endParam = this.unifiedSynthNode.parameters.get(`${param}_end`);
+        
+        if (startParam && endParam) {
+          const now = this.audioContext.currentTime;
+          startParam.setValueAtTime(startValue, now);
+          endParam.setValueAtTime(endValue, now);
+        }
       }
     }
   }
@@ -2593,13 +2664,17 @@ class SynthClient {
 
   // Resolve RBG value
   _resolveRBG(generator) {
+    let result;
     if (typeof generator.range === "number") {
-      return generator.range;
+      result = generator.range;
     } else if (generator.range && typeof generator.range === "object") {
       const range = generator.range.max - generator.range.min;
-      return generator.range.min + (Math.random() * range);
+      result = generator.range.min + (Math.random() * range);
+    } else {
+      throw new Error(`CRITICAL: RBG generator missing range - ${JSON.stringify(generator)}`);
     }
-    throw new Error(`CRITICAL: RBG generator missing range - ${JSON.stringify(generator)}`);
+    console.log(`🎲 RBG resolved: ${JSON.stringify(generator.range)} → ${result.toFixed(3)}`);
+    return result;
   }
 
   // Apply direct value to parameter

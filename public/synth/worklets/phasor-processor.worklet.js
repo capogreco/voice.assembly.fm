@@ -75,7 +75,7 @@ class PhasorProcessor extends AudioWorkletProcessor {
 
     // Send phasor updates back to main thread periodically
     this.updateCounter = 0;
-    this.updateInterval = 128; // Send update every 128 samples (~2.7ms at 48kHz)
+    this.updateInterval = 64; // Send update every 64 samples (~1.3ms at 48kHz) for smoother display
   }
 
   applyPhaseCorrection(targetPhase, correctionFactor = 0.1) {
@@ -121,13 +121,21 @@ class PhasorProcessor extends AudioWorkletProcessor {
     const phaseIncrement = this.isRunning ? 1.0 / (cycleLength * sampleRate) : 0.0;
 
     for (let i = 0; i < bufferSize; i++) {
+      // Output current phase BEFORE incrementing for this sample
+      if (outputs[0][0]) {
+        outputs[0][0][i] = this.phase;
+      }
+
       // Update phase only when running
       if (this.isRunning) {
         this.phase += phaseIncrement;
 
         // Wrap around at 1.0 and send cycle reset
         if (this.phase >= 1.0) {
+          const oldPhase = this.phase;
           this.phase -= 1.0;
+          
+          console.log(`🔄 PHASOR RESET: ${oldPhase.toFixed(6)} → ${this.phase.toFixed(6)} at sample ${i}/${bufferSize}`);
 
           // Send cycle reset message immediately
           this.port.postMessage({
@@ -148,11 +156,6 @@ class PhasorProcessor extends AudioWorkletProcessor {
             this.lastStep = this.currentStep;
           }
         }
-      }
-
-      // Always output current phase (frozen when not running, advancing when running)
-      if (outputs[0][0]) {
-        outputs[0][0][i] = this.phase;
       }
     }
 
