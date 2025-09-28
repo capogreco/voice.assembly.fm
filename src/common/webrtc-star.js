@@ -545,7 +545,24 @@ export class WebRTCStar extends EventTarget {
       return;
     }
 
-    await peer.connection.setRemoteDescription(answer);
+    try {
+      const pc = peer.connection;
+
+      if (pc.signalingState !== "have-local-offer") {
+        if (this.verbose) {
+          console.warn(
+            `⚠️ Received answer while signaling state is ${pc.signalingState}, ignoring`,
+          );
+        }
+        return;
+      }
+
+      await pc.setRemoteDescription(answer);
+      
+      if (this.verbose) console.log(`✅ Set answer from ${fromPeerId}`);
+    } catch (error) {
+      console.error(`❌ Error handling answer from ${fromPeerId}:`, error);
+    }
   }
 
   /**
@@ -575,15 +592,28 @@ export class WebRTCStar extends EventTarget {
 
     try {
       if (candidate) {
-        // Add the ICE candidate. RTCPeerConnection will buffer candidates if the remote description isn't set yet
-        await peer.connection.addIceCandidate(new RTCIceCandidate(candidate));
+        const pc = peer.connection;
+        
+        // Check if we have a remote description before adding the candidate
+        if (!pc.remoteDescription) {
+          if (this.verbose) {
+            console.warn(
+              `⚠️ Received ICE candidate from ${fromPeerId} before remote description, ignoring`,
+            );
+          }
+          return;
+        }
+        
+        // Add the ICE candidate
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        
+        if (this.verbose) console.log(`✅ Added ICE candidate from ${fromPeerId}`);
       }
       // A null candidate indicates the end of the gathering process
     } catch (error) {
       if (
-        !error.message.includes(
-          "Cannot add ICE candidate before a remote description",
-        )
+        !error.message.includes("Cannot add ICE candidate") &&
+        !error.message.includes("No remoteDescription")
       ) {
         console.error(
           `❌ Error adding ICE candidate for ${fromPeerId}:`,
