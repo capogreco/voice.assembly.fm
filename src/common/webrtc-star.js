@@ -221,24 +221,24 @@ export class WebRTCStar extends EventTarget {
           }
           
           if (message.ctrls.length === 0) {
-            // Empty controller list - schedule retry if we haven't exceeded max attempts
+            // If we get an empty list, a ctrl client may be in the process of reconnecting.
+            // We will retry requesting the list a few times.
             if (this.ctrlRetryCount < this.maxCtrlRetries) {
               this.ctrlRetryCount++;
-              const retryDelay = 1000 + Math.random() * 500; // 1-1.5s with jitter
-              
-              if (this.verbose) {
-                console.log(`🔄 No controllers found, retrying in ${Math.round(retryDelay)}ms (attempt ${this.ctrlRetryCount}/${this.maxCtrlRetries})`);
-              }
+              // Use a shorter, more aggressive retry delay to catch the reconnecting ctrl client quickly.
+              const retryDelay = 500 + Math.random() * 250; // 500-750ms with jitter
+
+              // Use console.log directly so this vital message always appears.
+              console.log(`[SYNTH-RETRY] No controllers found. Retrying in ${Math.round(retryDelay)}ms (attempt ${this.ctrlRetryCount}/${this.maxCtrlRetries})`);
               
               this.ctrlRetryTimeout = setTimeout(() => {
                 if (this.signalingSocket && this.signalingSocket.readyState === WebSocket.OPEN) {
-                  this.signalingSocket.send(JSON.stringify({ type: "request-ctrls" }));
+                  console.log("[SYNTH-RETRY] Executing retry request for controllers.");
+                  this.sendSignalingMessage({ type: "request-ctrls" });
                 }
               }, retryDelay);
             } else {
-              if (this.verbose) {
-                console.log(`⚠️ No controllers found after ${this.maxCtrlRetries} attempts, giving up`);
-              }
+              console.warn(`[SYNTH-RETRY] No controllers found after ${this.maxCtrlRetries} attempts. Giving up.`);
             }
           } else {
             // Reset retry counter on successful response
