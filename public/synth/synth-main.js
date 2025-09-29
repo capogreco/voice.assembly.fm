@@ -1461,36 +1461,35 @@ class SynthClient {
     // Phase is now controlled entirely by the phasor worklet
     // No manual phase ramping needed
 
-    // Handle re-resolve request (re-randomize static HRG indices)
+    // Handle re-resolve request (uniform re-initialization of all stochastic generators)
     if (this.reresolveAtNextEOC) {
-      console.log(`🔀 Re-randomizing static HRG indices at EOC`);
-      for (const [param, hrgData] of Object.entries(this.hrgState)) {
-        if (hrgData.start?.numeratorBehavior === "static") {
-          const numerators = hrgData.start.numerators;
-          hrgData.start.indexN = Math.floor(Math.random() * numerators.length);
-          console.log(
-            `🎲 ${param} numerator: new static index ${hrgData.start.indexN} (value: ${
-              numerators[hrgData.start.indexN]
-            })`,
-          );
+      console.log("🔀 Re-initializing all stochastic generators at EOC");
+
+      // Re-initialize HRG indices for all parameters
+      for (const paramName in this.programConfig) {
+        const paramConfig = this.programConfig[paramName];
+
+        // Re-init start position if it uses HRG
+        if (paramConfig.startValueGenerator?.type === "periodic") {
+          this._reinitHRGPosition(paramName, "start");
         }
-        if (hrgData.start?.denominatorBehavior === "static") {
-          const denominators = hrgData.start.denominators;
-          hrgData.start.indexD = Math.floor(
-            Math.random() * denominators.length,
-          );
-          console.log(
-            `🎲 ${param} denominator: new static index ${hrgData.start.indexD} (value: ${
-              denominators[hrgData.start.indexD]
-            })`,
-          );
+
+        // Re-init end position if it uses HRG with cosine interpolation
+        if (
+          paramConfig.endValueGenerator?.type === "periodic" &&
+          paramConfig.interpolation === "cosine"
+        ) {
+          this._reinitHRGPosition(paramName, "end");
         }
       }
 
-      // Also clear static RBG values to force re-generation
+      // Clear all cached RBG values
       this.rbgState = {};
-      console.log(`🎲 Cleared static RBG values for re-resolution`);
+      if (this.verbose) {
+        console.log("🎲 Cleared all RBG cached values for re-resolution");
+      }
 
+      // Clear flag before resolving to avoid double-application
       this.reresolveAtNextEOC = false;
     }
 
@@ -1539,11 +1538,12 @@ class SynthClient {
           );
         }
 
-        if (stepValue !== undefined) {
+        if (stepValue !== undefined && Number.isFinite(stepValue)) {
           const startParam = this.unifiedSynthNode.parameters.get(
             `${param}_start`,
           );
           if (startParam) {
+            startParam.cancelScheduledValues(resetTime);
             startParam.setValueAtTime(stepValue, resetTime);
             resolvedValues[param] = stepValue;
           }
@@ -1588,10 +1588,13 @@ class SynthClient {
           }`,
         );
 
-        if (startParam && startValue !== undefined) {
+        // Always schedule both start and end for consistency
+        if (startParam && Number.isFinite(startValue)) {
+          startParam.cancelScheduledValues(resetTime);
           startParam.setValueAtTime(startValue, resetTime);
         }
-        if (endParam && endValue !== undefined) {
+        if (endParam && Number.isFinite(endValue)) {
+          endParam.cancelScheduledValues(resetTime);
           endParam.setValueAtTime(endValue, resetTime);
         }
 
@@ -2053,9 +2056,30 @@ class SynthClient {
       }
     }
 
-    // Re-resolve and apply immediately
-    const resolved = this._resolveProgram(this.programConfig);
-    this.applyResolvedState(resolved);
+    // Branch based on play state
+    if (this.isPlaying) {
+      // Playing: restart envelope engine
+      if (!this.unifiedSynthNode || !this.programNode) {
+        const msg =
+          "❌ Immediate reinitialize failed: unified worklet not ready while playing";
+        console.error(msg);
+        if (this.log) this.log(msg, "error");
+        return; // fail loudly
+      }
+      console.log("🔄 Restarting envelope engine for immediate effect");
+      this.triggerImmediateCycleReset();
+    } else {
+      // Paused: directly apply values
+      if (!this.voiceNode) {
+        const msg =
+          "❌ Immediate reinitialize failed: voice node not ready while paused";
+        console.error(msg);
+        if (this.log) this.log(msg, "error");
+        return; // fail loudly
+      }
+      const resolved = this._resolveProgram(this.programConfig);
+      this.applyResolvedState(resolved);
+    }
 
     // Update status
     this.updateSynthesisStatus(
