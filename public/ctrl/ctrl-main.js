@@ -1643,6 +1643,11 @@ var ControlClient = class {
     }
   }
   constructor() {
+    if (globalThis.__CTRL_CLIENT_INSTANCE) {
+      console.warn("ControlClient is being re-instantiated. This should not happen. Trace:");
+      console.trace();
+    }
+    globalThis.__CTRL_CLIENT_INSTANCE = this;
     console.log("ControlClient constructor starting");
     const urlParams = new URLSearchParams(globalThis.location.search);
     this.forceTakeover = urlParams.get("force") === "true";
