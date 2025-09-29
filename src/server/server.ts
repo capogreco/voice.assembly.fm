@@ -6,9 +6,14 @@
 import { serveDir } from "std/http/file_server.ts";
 import { load } from "std/dotenv/mod.ts";
 import { getLocalIPs } from "./utils.ts";
+import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 
 // Load environment variables from .env file
 const env = await load();
+
+// Define project root directory based on script location
+const __dirname = path.dirname(path.fromFileUrl(import.meta.url));
+const ROOT_DIR = path.join(__dirname, "..", ".."); // Navigate from src/server up to project root
 
 const port = parseInt(env.PORT || Deno.env.get("PORT") || "3456");
 
@@ -667,19 +672,14 @@ async function handleRequest(request: Request): Promise<Response> {
   } else if (url.pathname.startsWith("/src/")) {
     // Serve from project root for src files
     response = await serveDir(request, {
-      fsRoot: ".",
-      headers: ["access-control-allow-origin: *"],
-    });
-  } else if (url.pathname.startsWith("/worklets/")) {
-    // Serve worklets from public directories
-    response = await serveDir(request, {
-      fsRoot: "./public",
+      fsRoot: ROOT_DIR,
+      urlRoot: "",
       headers: ["access-control-allow-origin: *"],
     });
   } else {
-    // Serve everything else from public
+    // Serve everything else from public (including worklets)
     response = await serveDir(request, {
-      fsRoot: "./public",
+      fsRoot: path.join(ROOT_DIR, "public"),
       headers: ["access-control-allow-origin: *"],
     });
   }
