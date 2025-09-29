@@ -19,9 +19,7 @@ var MessageTypes = {
   CALIBRATION_MODE: "calibration-mode",
   SYNTH_READY: "synth-ready",
   PROGRAM: "program",
-  // Worklet Control
-  SET_STEP_VALUES: "set-step-values",
-  SET_COS_SEGMENTS: "set-cos-segments",
+  // Worklet Control (obsolete message types removed - now using SET_ENV/SET_ALL_ENV)
   RESTORE_SEQUENCE_STATE: "restore-sequence-state",
   RERESOLVE_AT_EOC: "reresolve-at-eoc",
   IMMEDIATE_REINITIALIZE: "immediate-reinitialize",
@@ -108,20 +106,7 @@ var MessageBuilder = class {
       timestamp: performance.now()
     };
   }
-  static setStepValues(params) {
-    return {
-      type: MessageTypes.SET_STEP_VALUES,
-      params,
-      timestamp: performance.now()
-    };
-  }
-  static setCosSegments(params) {
-    return {
-      type: MessageTypes.SET_COS_SEGMENTS,
-      params,
-      timestamp: performance.now()
-    };
-  }
+  // setStepValues and setCosSegments removed - use SET_ENV/SET_ALL_ENV instead
   static restoreSequenceState(sequences) {
     return {
       type: MessageTypes.RESTORE_SEQUENCE_STATE,
@@ -286,12 +271,7 @@ function validateMessage(message) {
         throw new Error("Program message must have config object");
       }
       break;
-    case MessageTypes.SET_STEP_VALUES:
-    case MessageTypes.SET_COS_SEGMENTS:
-      if (!message.params || typeof message.params !== "object") {
-        throw new Error(`${message.type} message must have params object`);
-      }
-      break;
+    // SET_STEP_VALUES and SET_COS_SEGMENTS validation removed - obsolete message types
     case MessageTypes.RESTORE_SEQUENCE_STATE:
       if (!message.sequences || typeof message.sequences !== "object") {
         throw new Error("Restore sequence state message must have sequences object");
@@ -2865,7 +2845,7 @@ var ControlClient = class {
   _getWirePayload(portamentoTime) {
     for (const key in this.musicalState) {
       const paramState = this.musicalState[key];
-      if ("scope" in paramState) {
+      if (typeof paramState === "object" && paramState !== null && "scope" in paramState) {
         throw new Error(`CRITICAL: Parameter '${key}' has forbidden 'scope' field`);
       }
     }
@@ -2879,6 +2859,13 @@ var ControlClient = class {
     for (const key in this.musicalState) {
       const paramKey = key;
       const paramState = this.musicalState[paramKey];
+      
+      // Skip parameters that aren't proper objects (defensive programming)
+      if (typeof paramState !== "object" || paramState === null) {
+        console.warn(`⚠️ Parameter '${paramKey}' is not an object (value: ${paramState}), skipping`);
+        continue;
+      }
+      
       if (!paramState.interpolation || ![
         "step",
         "cosine"

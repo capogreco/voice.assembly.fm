@@ -29,9 +29,7 @@ export const MessageTypes = {
   SYNTH_READY: "synth-ready",
   PROGRAM: "program",
 
-  // Worklet Control
-  SET_STEP_VALUES: "set-step-values",
-  SET_COS_SEGMENTS: "set-cos-segments",
+  // Worklet Control (obsolete message types removed - now using SET_ENV/SET_ALL_ENV)
   RESTORE_SEQUENCE_STATE: "restore-sequence-state",
   RERESOLVE_AT_EOC: "reresolve-at-eoc",
   IMMEDIATE_REINITIALIZE: "immediate-reinitialize",
@@ -129,21 +127,7 @@ export class MessageBuilder {
     };
   }
 
-  static setStepValues(params) {
-    return {
-      type: MessageTypes.SET_STEP_VALUES,
-      params,
-      timestamp: performance.now(),
-    };
-  }
-
-  static setCosSegments(params) {
-    return {
-      type: MessageTypes.SET_COS_SEGMENTS,
-      params,
-      timestamp: performance.now(),
-    };
-  }
+  // setStepValues and setCosSegments removed - use SET_ENV/SET_ALL_ENV instead
 
   static restoreSequenceState(sequences) {
     return {
@@ -386,12 +370,7 @@ export function validateMessage(message) {
       }
       break;
 
-    case MessageTypes.SET_STEP_VALUES:
-    case MessageTypes.SET_COS_SEGMENTS:
-      if (!message.params || typeof message.params !== "object") {
-        throw new Error(`${message.type} message must have params object`);
-      }
-      break;
+    // SET_STEP_VALUES and SET_COS_SEGMENTS validation removed - obsolete message types
 
     case MessageTypes.RESTORE_SEQUENCE_STATE:
       if (!message.sequences || typeof message.sequences !== "object") {
