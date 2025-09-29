@@ -1091,7 +1091,7 @@ var WebRTCStar = class extends EventTarget {
     }, delay);
   }
 
-  attemptPeerReconnect(peerId) {
+  async attemptPeerReconnect(peerId) {
     const peer = this.peers.get(peerId);
     if (!peer) return;
 

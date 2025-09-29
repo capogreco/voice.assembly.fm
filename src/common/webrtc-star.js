@@ -949,7 +949,7 @@ export class WebRTCStar extends EventTarget {
   /**
    * Attempt to reconnect to a failed peer in-place
    */
-  attemptPeerReconnect(peerId) {
+  async attemptPeerReconnect(peerId) {
     const peer = this.peers.get(peerId);
     if (!peer) return;
 
