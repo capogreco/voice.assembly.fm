@@ -50,10 +50,12 @@ class ControlClient {
   pendingParameterChanges: Set<keyof IMusicalState>; // Track which parameters have pending changes
   elements: any;
   synthesisActive: boolean;
-  
+
   // Bulk mode properties
   bulkModeEnabled: boolean;
-  bulkChanges: Array<{type: string, paramPath?: string, value?: any, portamentoTime?: number}>;
+  bulkChanges: Array<
+    { type: string; paramPath?: string; value?: any; portamentoTime?: number }
+  >;
 
   private _createDefaultState(): IMusicalState {
     // Helper for frequency (uses HRG)
@@ -83,7 +85,7 @@ class ControlClient {
       },
     });
 
-    // Helper for simple constant parameters  
+    // Helper for simple constant parameters
     const defaultConstantState = (value: number): ParameterState => ({
       interpolation: "step",
       baseValue: value,
@@ -175,14 +177,14 @@ class ControlClient {
             param.endValueGenerator.baseValue = param.baseValue;
           }
         }
-        
+
         break;
       }
     }
 
     // Update state before broadcasting to ensure fresh values are read
     this.pendingMusicalState = newState;
-    
+
     // Broadcast the parameter change if playing (after state update)
     if (action.type === "SET_GENERATOR_CONFIG" && this.isPlaying) {
       this.broadcastSingleParameterStaged(action.param);
@@ -203,11 +205,12 @@ class ControlClient {
   private _applyHRGChangeWithPortamento(action: any) {
     // Update active state with the HRG change (no pending state when paused)
     this._updateActiveState(action);
-    
+
     // Get portamento time from UI
-    const portamentoTime = this.elements.portamentoTime ? 
-      parseInt(this.elements.portamentoTime.value) : 100;
-    
+    const portamentoTime = this.elements.portamentoTime
+      ? parseInt(this.elements.portamentoTime.value)
+      : 100;
+
     // Use targeted parameter update instead of broadcasting entire program
     // This avoids re-randomizing unchanged parameters
     this.broadcastSingleParameterUpdate(action.param, portamentoTime);
@@ -221,15 +224,15 @@ class ControlClient {
   private _isRangeValue(value: string): boolean {
     const trimmed = value.trim();
     if (!trimmed.includes("-")) return false;
-    
+
     // Simple range detection: split on hyphen and check if both parts are numbers
     const parts = trimmed.split("-");
     if (parts.length !== 2) return false;
-    
-    const [min, max] = parts.map(p => p.trim());
+
+    const [min, max] = parts.map((p) => p.trim());
     const minNum = parseFloat(min);
     const maxNum = parseFloat(max);
-    
+
     return !isNaN(minNum) && !isNaN(maxNum);
   }
 
@@ -239,24 +242,36 @@ class ControlClient {
    * @param value New value to set
    * @param portamentoTime Optional portamento duration (defaults to UI value)
    */
-  private _sendSubParameterUpdate(paramPath: string, value: any, portamentoTime?: number) {
-    const finalPortamentoTime = portamentoTime ?? (this.elements.portamentoTime ? 
-      parseInt(this.elements.portamentoTime.value) : 100);
+  private _sendSubParameterUpdate(
+    paramPath: string,
+    value: any,
+    portamentoTime?: number,
+  ) {
+    const finalPortamentoTime = portamentoTime ??
+      (this.elements.portamentoTime
+        ? parseInt(this.elements.portamentoTime.value)
+        : 100);
 
     // Check if we should accumulate this change for bulk mode
-    if (this.addToBulkChanges({
-      type: "sub-param-update",
-      paramPath: paramPath,
-      value: value,
-      portamentoTime: finalPortamentoTime
-    })) {
+    if (
+      this.addToBulkChanges({
+        type: "sub-param-update",
+        paramPath: paramPath,
+        value: value,
+        portamentoTime: finalPortamentoTime,
+      })
+    ) {
       // Successfully added to bulk queue, don't send immediately
       return;
     }
 
     // Not in bulk mode, send immediately
-    const message = MessageBuilder.subParamUpdate(paramPath, value, finalPortamentoTime);
-    
+    const message = MessageBuilder.subParamUpdate(
+      paramPath,
+      value,
+      finalPortamentoTime,
+    );
+
     // Send to all connected synths
     if (this.star) {
       this.star.broadcastToType("synth", message, "control");
@@ -276,7 +291,7 @@ class ControlClient {
       case "SET_BASE_VALUE": {
         const param = newState[action.param];
         param.baseValue = action.value;
-        
+
         // Update baseValue for periodic generators
         if (param.startValueGenerator?.type === "periodic") {
           param.startValueGenerator.baseValue = action.value;
@@ -351,7 +366,6 @@ class ControlClient {
     }
   }
 
-
   constructor() {
     console.log("ControlClient constructor starting");
     // Check for force takeover mode
@@ -385,7 +399,7 @@ class ControlClient {
     // Parameter staging for EOC application
     this.hasPendingChanges = false; // Track if there are pending parameter changes
     this.pendingParameterChanges = new Set(); // Track which specific parameters have pending changes
-    
+
     // Bulk mode initialization
     this.bulkModeEnabled = false;
     this.bulkChanges = [];
@@ -418,7 +432,7 @@ class ControlClient {
       // Phasor controls
       periodInput: document.getElementById("period-seconds"),
       stepsInput: document.getElementById("steps-per-cycle"),
-      
+
       // Transport controls
       playBtn: document.getElementById("play-btn"),
       stopBtn: document.getElementById("stop-btn"),
@@ -443,7 +457,7 @@ class ControlClient {
       synthCount: document.getElementById("synth-count"),
       debugLog: document.getElementById("debug-log"),
       clearLogBtn: document.getElementById("clear-log-btn"), // Note: removed from layout
-      
+
       // Scene memory
       clearBanksBtn: document.getElementById("clear-banks-btn"),
     };
@@ -455,12 +469,12 @@ class ControlClient {
     this.calculateCycleLength();
     this.initializePhasor();
     this.updatePlayPauseButton(); // Set initial button text
-    
+
     // Initialize UI to match default parameter state
     Object.keys(this.musicalState).forEach((paramName) => {
       this._updateUIFromState(paramName as keyof IMusicalState);
     });
-    
+
     this.log("Control client initialized", "info");
 
     // Auto-connect on page load
@@ -489,12 +503,18 @@ class ControlClient {
     // Debug log
     // Clear log button (removed from layout)
     if (this.elements.clearLogBtn) {
-      this.elements.clearLogBtn.addEventListener("click", () => this.clearLog());
+      this.elements.clearLogBtn.addEventListener(
+        "click",
+        () => this.clearLog(),
+      );
     }
-    
+
     // Clear banks button
     if (this.elements.clearBanksBtn) {
-      this.elements.clearBanksBtn.addEventListener("click", () => this.clearSceneBanks());
+      this.elements.clearBanksBtn.addEventListener(
+        "click",
+        () => this.clearSceneBanks(),
+      );
     }
 
     // Portamento controls
@@ -509,8 +529,8 @@ class ControlClient {
     if (this.elements.reresolveBtn) {
       console.log("✅ Re-resolve button found, adding click handler");
       this.elements.reresolveBtn.addEventListener("click", () => {
-        console.log("🔀 Re-resolve button clicked!");
-        this.reresolveAtEOC();
+        console.log("⚡ Re-resolve button clicked!");
+        this.triggerImmediateReinitialize();
       });
     } else {
       console.error("❌ Re-resolve button not found in DOM");
@@ -537,6 +557,17 @@ class ControlClient {
     );
   }
 
+  triggerImmediateReinitialize() {
+    console.log("⚡ Triggering immediate re-initialization");
+    if (!this.star) {
+      this.log("No network available", "error");
+      return;
+    }
+    const message = MessageBuilder.immediateReinitialize();
+    const sent = this.star.broadcastToType("synth", message, "control");
+    this.log(`Sent IMMEDIATE_REINITIALIZE to ${sent} synth(s)`, "info");
+  }
+
   setupMusicalControls() {
     // Note: All synthesis parameters are now handled by setupEnvelopeControls()
 
@@ -561,7 +592,6 @@ class ControlClient {
         this.log(`Steps staged for EOC: ${newSteps} (pending)`, "info");
       });
     }
-
 
     // Transport controls
     if (this.elements.playBtn) {
@@ -609,17 +639,21 @@ class ControlClient {
     if (this.elements.bulkModeCheckbox) {
       this.elements.bulkModeCheckbox.addEventListener("change", () => {
         this.bulkModeEnabled = this.elements.bulkModeCheckbox.checked;
-        
+
         // Show/hide apply bulk button
         if (this.elements.applyBulkBtn) {
-          this.elements.applyBulkBtn.style.display = this.bulkModeEnabled ? "inline-block" : "none";
+          this.elements.applyBulkBtn.style.display = this.bulkModeEnabled
+            ? "inline-block"
+            : "none";
         }
-        
+
         // Clear any accumulated changes when toggling mode
         this.bulkChanges = [];
         this.updateBulkButtonState();
-        
-        console.log(`🔄 Bulk mode ${this.bulkModeEnabled ? 'enabled' : 'disabled'}`);
+
+        console.log(
+          `🔄 Bulk mode ${this.bulkModeEnabled ? "enabled" : "disabled"}`,
+        );
       });
     }
 
@@ -638,7 +672,10 @@ class ControlClient {
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
         this.log("⌨️ Cmd+Enter pressed", "info");
         // Apply Changes button removed - no longer needed in unified system
-        this.log("⌨️ Cmd+Enter no longer triggers Apply Changes (unified system)", "info");
+        this.log(
+          "⌨️ Cmd+Enter no longer triggers Apply Changes (unified system)",
+          "info",
+        );
       }
 
       // Scene Memory keyboard shortcuts (0-9 to load, Shift+0-9 to save)
@@ -722,7 +759,7 @@ class ControlClient {
         // UI will be updated automatically by _updatePendingState → _updateUIFromState
 
         this.markPendingChanges();
-        
+
         // Send unified parameter update during playback
         if (this.isPlaying) {
           this.broadcastSingleParameterStaged(paramName);
@@ -747,11 +784,14 @@ class ControlClient {
           "invalid-input",
           !isValid && endValueInput.value !== "",
         );
-        
+
         // Show/hide end RBG behavior selector based on range detection
-        const endBehaviorSelect = document.getElementById(`${paramName}-end-rbg-behavior`) as HTMLSelectElement;
+        const endBehaviorSelect = document.getElementById(
+          `${paramName}-end-rbg-behavior`,
+        ) as HTMLSelectElement;
         if (endBehaviorSelect) {
-          endBehaviorSelect.style.display = this._isRangeValue(endValueInput.value) ? "inline-block" : "none";
+          endBehaviorSelect.style.display =
+            this._isRangeValue(endValueInput.value) ? "inline-block" : "none";
         }
       });
     }
@@ -759,36 +799,49 @@ class ControlClient {
     // Add dynamic show/hide logic for start value RBG behavior selector
     if (textInput) {
       textInput.addEventListener("input", () => {
-        const startBehaviorSelect = document.getElementById(`${paramName}-start-rbg-behavior`) as HTMLSelectElement;
+        const startBehaviorSelect = document.getElementById(
+          `${paramName}-start-rbg-behavior`,
+        ) as HTMLSelectElement;
         if (startBehaviorSelect) {
-          startBehaviorSelect.style.display = this._isRangeValue(textInput.value) ? "inline-block" : "none";
+          startBehaviorSelect.style.display =
+            this._isRangeValue(textInput.value) ? "inline-block" : "none";
         }
       });
     }
 
     // Handle position-specific RBG behavior changes
-    const startRbgBehaviorSelect = document.getElementById(`${paramName}-start-rbg-behavior`) as HTMLSelectElement;
-    const endRbgBehaviorSelect = document.getElementById(`${paramName}-end-rbg-behavior`) as HTMLSelectElement;
-    
+    const startRbgBehaviorSelect = document.getElementById(
+      `${paramName}-start-rbg-behavior`,
+    ) as HTMLSelectElement;
+    const endRbgBehaviorSelect = document.getElementById(
+      `${paramName}-end-rbg-behavior`,
+    ) as HTMLSelectElement;
+
     // Handle start RBG behavior changes
     if (startRbgBehaviorSelect) {
       startRbgBehaviorSelect.addEventListener("change", () => {
         // Send sub-parameter update for the behavior change
-        this._sendSubParameterUpdate(`${paramName}.startValueGenerator.sequenceBehavior`, startRbgBehaviorSelect.value);
-        
+        this._sendSubParameterUpdate(
+          `${paramName}.startValueGenerator.sequenceBehavior`,
+          startRbgBehaviorSelect.value,
+        );
+
         // Re-apply the current start value with the new behavior
         const currentValue = textInput.value;
         this._handleValueInput(paramName, currentValue, "start");
         this.markPendingChanges();
       });
     }
-    
+
     // Handle end RBG behavior changes
     if (endRbgBehaviorSelect) {
       endRbgBehaviorSelect.addEventListener("change", () => {
         // Send sub-parameter update for the behavior change
-        this._sendSubParameterUpdate(`${paramName}.endValueGenerator.sequenceBehavior`, endRbgBehaviorSelect.value);
-        
+        this._sendSubParameterUpdate(
+          `${paramName}.endValueGenerator.sequenceBehavior`,
+          endRbgBehaviorSelect.value,
+        );
+
         // Re-apply the current end value with the new behavior
         const currentValue = endValueInput.value;
         this._handleValueInput(paramName, currentValue, "end");
@@ -798,16 +851,23 @@ class ControlClient {
 
     // Initialize behavior selector visibility based on current input values
     if (textInput) {
-      const startBehaviorSelect = document.getElementById(`${paramName}-start-rbg-behavior`) as HTMLSelectElement;
+      const startBehaviorSelect = document.getElementById(
+        `${paramName}-start-rbg-behavior`,
+      ) as HTMLSelectElement;
       if (startBehaviorSelect) {
-        startBehaviorSelect.style.display = this._isRangeValue(textInput.value) ? "inline-block" : "none";
+        startBehaviorSelect.style.display = this._isRangeValue(textInput.value)
+          ? "inline-block"
+          : "none";
       }
     }
-    
+
     if (endValueInput) {
-      const endBehaviorSelect = document.getElementById(`${paramName}-end-rbg-behavior`) as HTMLSelectElement;
+      const endBehaviorSelect = document.getElementById(
+        `${paramName}-end-rbg-behavior`,
+      ) as HTMLSelectElement;
       if (endBehaviorSelect) {
-        endBehaviorSelect.style.display = this._isRangeValue(endValueInput.value) ? "inline-block" : "none";
+        endBehaviorSelect.style.display =
+          this._isRangeValue(endValueInput.value) ? "inline-block" : "none";
       }
     }
 
@@ -900,7 +960,7 @@ class ControlClient {
         startNumeratorsInput.addEventListener("input", () => {
           const { ok } = this._validateSINString(startNumeratorsInput.value);
           startNumeratorsInput.classList.toggle("invalid-input", !ok);
-          
+
           // Only update state when playing (for EOC staging)
           if (this.isPlaying) {
             this._updatePendingState({
@@ -912,7 +972,7 @@ class ControlClient {
             this.markPendingChanges();
           }
         });
-        
+
         // Commit complete value on blur
         startNumeratorsInput.addEventListener("blur", () => {
           if (!this.isPlaying) {
@@ -940,7 +1000,7 @@ class ControlClient {
         startDenominatorsInput.addEventListener("input", () => {
           const { ok } = this._validateSINString(startDenominatorsInput.value);
           startDenominatorsInput.classList.toggle("invalid-input", !ok);
-          
+
           // Only update state when playing (for EOC staging)
           if (this.isPlaying) {
             this._updatePendingState({
@@ -952,7 +1012,7 @@ class ControlClient {
             this.markPendingChanges();
           }
         });
-        
+
         // Commit complete value on blur
         startDenominatorsInput.addEventListener("blur", () => {
           if (!this.isPlaying) {
@@ -1040,7 +1100,7 @@ class ControlClient {
         endNumeratorsInput.addEventListener("input", () => {
           const { ok } = this._validateSINString(endNumeratorsInput.value);
           endNumeratorsInput.classList.toggle("invalid-input", !ok);
-          
+
           // Only update state when playing (for EOC staging)
           if (this.isPlaying) {
             this._updatePendingState({
@@ -1052,7 +1112,7 @@ class ControlClient {
             this.markPendingChanges();
           }
         });
-        
+
         // Commit complete value on blur
         endNumeratorsInput.addEventListener("blur", () => {
           if (!this.isPlaying) {
@@ -1080,7 +1140,7 @@ class ControlClient {
         endDenominatorsInput.addEventListener("input", () => {
           const { ok } = this._validateSINString(endDenominatorsInput.value);
           endDenominatorsInput.classList.toggle("invalid-input", !ok);
-          
+
           // Only update state when playing (for EOC staging)
           if (this.isPlaying) {
             this._updatePendingState({
@@ -1092,7 +1152,7 @@ class ControlClient {
             this.markPendingChanges();
           }
         });
-        
+
         // Commit complete value on blur
         endDenominatorsInput.addEventListener("blur", () => {
           if (!this.isPlaying) {
@@ -1169,21 +1229,41 @@ class ControlClient {
 
   setupFrequencyControls() {
     const paramName = "frequency" as keyof IMusicalState;
-    const baseInput = document.getElementById("frequency-base") as HTMLInputElement | null;
-    const interpSelect = document.getElementById("frequency-interpolation") as HTMLSelectElement | null;
+    const baseInput = document.getElementById("frequency-base") as
+      | HTMLInputElement
+      | null;
+    const interpSelect = document.getElementById("frequency-interpolation") as
+      | HTMLSelectElement
+      | null;
 
     // HRG controls are managed identically to before
     // Reuse the HRG listeners from setupCompactParameterControls
     // Start HRG inputs
-    const startNumeratorsInput = document.getElementById("frequency-start-numerators") as HTMLInputElement | null;
-    const startDenominatorsInput = document.getElementById("frequency-start-denominators") as HTMLInputElement | null;
-    const startNumBehaviorSelect = document.getElementById("frequency-start-numerators-behavior") as HTMLSelectElement | null;
-    const startDenBehaviorSelect = document.getElementById("frequency-start-denominators-behavior") as HTMLSelectElement | null;
+    const startNumeratorsInput = document.getElementById(
+      "frequency-start-numerators",
+    ) as HTMLInputElement | null;
+    const startDenominatorsInput = document.getElementById(
+      "frequency-start-denominators",
+    ) as HTMLInputElement | null;
+    const startNumBehaviorSelect = document.getElementById(
+      "frequency-start-numerators-behavior",
+    ) as HTMLSelectElement | null;
+    const startDenBehaviorSelect = document.getElementById(
+      "frequency-start-denominators-behavior",
+    ) as HTMLSelectElement | null;
     // End HRG inputs
-    const endNumeratorsInput = document.getElementById("frequency-end-numerators") as HTMLInputElement | null;
-    const endDenominatorsInput = document.getElementById("frequency-end-denominators") as HTMLInputElement | null;
-    const endNumBehaviorSelect = document.getElementById("frequency-end-numerators-behavior") as HTMLSelectElement | null;
-    const endDenBehaviorSelect = document.getElementById("frequency-end-denominators-behavior") as HTMLSelectElement | null;
+    const endNumeratorsInput = document.getElementById(
+      "frequency-end-numerators",
+    ) as HTMLInputElement | null;
+    const endDenominatorsInput = document.getElementById(
+      "frequency-end-denominators",
+    ) as HTMLInputElement | null;
+    const endNumBehaviorSelect = document.getElementById(
+      "frequency-end-numerators-behavior",
+    ) as HTMLSelectElement | null;
+    const endDenBehaviorSelect = document.getElementById(
+      "frequency-end-denominators-behavior",
+    ) as HTMLSelectElement | null;
 
     // Base frequency input (Hz)
     if (baseInput) {
@@ -1191,7 +1271,10 @@ class ControlClient {
       baseInput.addEventListener("input", () => {
         const v = parseFloat(baseInput.value);
         const isValid = Number.isFinite(v);
-        baseInput.classList.toggle("invalid-input", !isValid && baseInput.value.trim() !== "");
+        baseInput.classList.toggle(
+          "invalid-input",
+          !isValid && baseInput.value.trim() !== "",
+        );
       });
 
       const applyBase = () => {
@@ -1203,16 +1286,36 @@ class ControlClient {
 
         if (this.isPlaying) {
           // Playing: update pending state and send sub-parameter update for staging
-          this._updatePendingState({ type: "SET_BASE_VALUE", param: paramName, value: v });
-          const portamentoTime = this.elements.portamentoTime ? parseInt(this.elements.portamentoTime.value) : 100;
-          this._sendSubParameterUpdate(`${paramName}.baseValue`, v, portamentoTime);
+          this._updatePendingState({
+            type: "SET_BASE_VALUE",
+            param: paramName,
+            value: v,
+          });
+          const portamentoTime = this.elements.portamentoTime
+            ? parseInt(this.elements.portamentoTime.value)
+            : 100;
+          this._sendSubParameterUpdate(
+            `${paramName}.baseValue`,
+            v,
+            portamentoTime,
+          );
           this.pendingParameterChanges.add(paramName);
           this.updateParameterVisualFeedback(paramName);
         } else {
           // Paused: update active state directly for immediate application
-          this._updateActiveState({ type: "SET_BASE_VALUE", param: paramName, value: v });
-          const portamentoTime = this.elements.portamentoTime ? parseInt(this.elements.portamentoTime.value) : 100;
-          this.broadcastSubParameterUpdate(`${paramName}.baseValue`, v, portamentoTime);
+          this._updateActiveState({
+            type: "SET_BASE_VALUE",
+            param: paramName,
+            value: v,
+          });
+          const portamentoTime = this.elements.portamentoTime
+            ? parseInt(this.elements.portamentoTime.value)
+            : 100;
+          this.broadcastSubParameterUpdate(
+            `${paramName}.baseValue`,
+            v,
+            portamentoTime,
+          );
           this.pendingParameterChanges.delete(paramName);
           this.updateParameterVisualFeedback(paramName);
         }
@@ -1224,10 +1327,18 @@ class ControlClient {
     // Interpolation changes (step/cosine) still apply to frequency envelopes
     if (interpSelect) {
       interpSelect.addEventListener("change", () => {
-        const interpolation = interpSelect.value as "step" | "linear" | "cosine" | "parabolic";
-        this._updatePendingState({ type: "SET_INTERPOLATION", param: paramName, interpolation });
+        const interpolation = interpSelect.value as
+          | "step"
+          | "linear"
+          | "cosine"
+          | "parabolic";
+        this._updatePendingState({
+          type: "SET_INTERPOLATION",
+          param: paramName,
+          interpolation,
+        });
         this.markPendingChanges();
-        
+
         // Send appropriate update based on playback state
         if (this.isPlaying) {
           // During playback: stage change for EOC
@@ -1246,21 +1357,39 @@ class ControlClient {
         startNumeratorsInput.classList.toggle("invalid-input", !ok);
         if (this.isPlaying) {
           // Stage change for EOC during play
-          this._updatePendingState({ type: "SET_GENERATOR_CONFIG", param: "frequency", position: "start", config: { numerators: startNumeratorsInput.value } });
+          this._updatePendingState({
+            type: "SET_GENERATOR_CONFIG",
+            param: "frequency",
+            position: "start",
+            config: { numerators: startNumeratorsInput.value },
+          });
           this.markPendingChanges();
           this.broadcastSingleParameterStaged("frequency");
         }
       });
       startNumeratorsInput.addEventListener("blur", () => {
         // Send sub-parameter update for immediate application or staging
-        this._sendSubParameterUpdate("frequency.startValueGenerator.numerators", startNumeratorsInput.value);
-        
+        this._sendSubParameterUpdate(
+          "frequency.startValueGenerator.numerators",
+          startNumeratorsInput.value,
+        );
+
         if (!this.isPlaying) {
           // Update local state immediately when paused
-          this._updateActiveState({ type: "SET_GENERATOR_CONFIG", param: "frequency", position: "start", config: { numerators: startNumeratorsInput.value } });
+          this._updateActiveState({
+            type: "SET_GENERATOR_CONFIG",
+            param: "frequency",
+            position: "start",
+            config: { numerators: startNumeratorsInput.value },
+          });
         } else {
           // Update pending state for EOC application when playing
-          this._updatePendingState({ type: "SET_GENERATOR_CONFIG", param: "frequency", position: "start", config: { numerators: startNumeratorsInput.value } });
+          this._updatePendingState({
+            type: "SET_GENERATOR_CONFIG",
+            param: "frequency",
+            position: "start",
+            config: { numerators: startNumeratorsInput.value },
+          });
           this.markPendingChanges();
         }
       });
@@ -1271,21 +1400,39 @@ class ControlClient {
         startDenominatorsInput.classList.toggle("invalid-input", !ok);
         if (this.isPlaying) {
           // Stage change for EOC during play
-          this._updatePendingState({ type: "SET_GENERATOR_CONFIG", param: "frequency", position: "start", config: { denominators: startDenominatorsInput.value } });
+          this._updatePendingState({
+            type: "SET_GENERATOR_CONFIG",
+            param: "frequency",
+            position: "start",
+            config: { denominators: startDenominatorsInput.value },
+          });
           this.markPendingChanges();
           this.broadcastSingleParameterStaged("frequency");
         }
       });
       startDenominatorsInput.addEventListener("blur", () => {
         // Send sub-parameter update for immediate application or staging
-        this._sendSubParameterUpdate("frequency.startValueGenerator.denominators", startDenominatorsInput.value);
-        
+        this._sendSubParameterUpdate(
+          "frequency.startValueGenerator.denominators",
+          startDenominatorsInput.value,
+        );
+
         if (!this.isPlaying) {
           // Update local state immediately when paused
-          this._updateActiveState({ type: "SET_GENERATOR_CONFIG", param: "frequency", position: "start", config: { denominators: startDenominatorsInput.value } });
+          this._updateActiveState({
+            type: "SET_GENERATOR_CONFIG",
+            param: "frequency",
+            position: "start",
+            config: { denominators: startDenominatorsInput.value },
+          });
         } else {
           // Update pending state for EOC application when playing
-          this._updatePendingState({ type: "SET_GENERATOR_CONFIG", param: "frequency", position: "start", config: { denominators: startDenominatorsInput.value } });
+          this._updatePendingState({
+            type: "SET_GENERATOR_CONFIG",
+            param: "frequency",
+            position: "start",
+            config: { denominators: startDenominatorsInput.value },
+          });
           this.markPendingChanges();
         }
       });
@@ -1293,14 +1440,27 @@ class ControlClient {
     if (startNumBehaviorSelect) {
       startNumBehaviorSelect.addEventListener("change", () => {
         // Send sub-parameter update for immediate application or staging
-        this._sendSubParameterUpdate("frequency.startValueGenerator.numeratorBehavior", startNumBehaviorSelect.value);
-        
+        this._sendSubParameterUpdate(
+          "frequency.startValueGenerator.numeratorBehavior",
+          startNumBehaviorSelect.value,
+        );
+
         if (!this.isPlaying) {
           // Update local state immediately when paused
-          this._updateActiveState({ type: "SET_GENERATOR_CONFIG", param: "frequency", position: "start", config: { numeratorBehavior: startNumBehaviorSelect.value } });
+          this._updateActiveState({
+            type: "SET_GENERATOR_CONFIG",
+            param: "frequency",
+            position: "start",
+            config: { numeratorBehavior: startNumBehaviorSelect.value },
+          });
         } else {
           // Update pending state for EOC application when playing
-          this._updatePendingState({ type: "SET_GENERATOR_CONFIG", param: "frequency", position: "start", config: { numeratorBehavior: startNumBehaviorSelect.value } });
+          this._updatePendingState({
+            type: "SET_GENERATOR_CONFIG",
+            param: "frequency",
+            position: "start",
+            config: { numeratorBehavior: startNumBehaviorSelect.value },
+          });
           this.markPendingChanges();
           this.broadcastSingleParameterStaged("frequency");
         }
@@ -1309,9 +1469,19 @@ class ControlClient {
     if (startDenBehaviorSelect) {
       startDenBehaviorSelect.addEventListener("change", () => {
         if (!this.isPlaying) {
-          this._applyHRGChangeWithPortamento({ type: "SET_GENERATOR_CONFIG", param: "frequency", position: "start", config: { denominatorBehavior: startDenBehaviorSelect.value } });
+          this._applyHRGChangeWithPortamento({
+            type: "SET_GENERATOR_CONFIG",
+            param: "frequency",
+            position: "start",
+            config: { denominatorBehavior: startDenBehaviorSelect.value },
+          });
         } else {
-          this._updatePendingState({ type: "SET_GENERATOR_CONFIG", param: "frequency", position: "start", config: { denominatorBehavior: startDenBehaviorSelect.value } });
+          this._updatePendingState({
+            type: "SET_GENERATOR_CONFIG",
+            param: "frequency",
+            position: "start",
+            config: { denominatorBehavior: startDenBehaviorSelect.value },
+          });
           this.markPendingChanges();
           this.broadcastSingleParameterStaged("frequency");
         }
@@ -1323,16 +1493,31 @@ class ControlClient {
         const { ok } = this._validateSINString(endNumeratorsInput.value);
         endNumeratorsInput.classList.toggle("invalid-input", !ok);
         if (this.isPlaying) {
-          this._updatePendingState({ type: "SET_GENERATOR_CONFIG", param: "frequency", position: "end", config: { numerators: endNumeratorsInput.value } });
+          this._updatePendingState({
+            type: "SET_GENERATOR_CONFIG",
+            param: "frequency",
+            position: "end",
+            config: { numerators: endNumeratorsInput.value },
+          });
           this.markPendingChanges();
           this.broadcastSingleParameterStaged("frequency");
         }
       });
       endNumeratorsInput.addEventListener("blur", () => {
         if (!this.isPlaying) {
-          this._applyHRGChangeWithPortamento({ type: "SET_GENERATOR_CONFIG", param: "frequency", position: "end", config: { numerators: endNumeratorsInput.value } });
+          this._applyHRGChangeWithPortamento({
+            type: "SET_GENERATOR_CONFIG",
+            param: "frequency",
+            position: "end",
+            config: { numerators: endNumeratorsInput.value },
+          });
         } else {
-          this._updatePendingState({ type: "SET_GENERATOR_CONFIG", param: "frequency", position: "end", config: { numerators: endNumeratorsInput.value } });
+          this._updatePendingState({
+            type: "SET_GENERATOR_CONFIG",
+            param: "frequency",
+            position: "end",
+            config: { numerators: endNumeratorsInput.value },
+          });
           this.markPendingChanges();
         }
       });
@@ -1342,16 +1527,31 @@ class ControlClient {
         const { ok } = this._validateSINString(endDenominatorsInput.value);
         endDenominatorsInput.classList.toggle("invalid-input", !ok);
         if (this.isPlaying) {
-          this._updatePendingState({ type: "SET_GENERATOR_CONFIG", param: "frequency", position: "end", config: { denominators: endDenominatorsInput.value } });
+          this._updatePendingState({
+            type: "SET_GENERATOR_CONFIG",
+            param: "frequency",
+            position: "end",
+            config: { denominators: endDenominatorsInput.value },
+          });
           this.markPendingChanges();
           this.broadcastSingleParameterStaged("frequency");
         }
       });
       endDenominatorsInput.addEventListener("blur", () => {
         if (!this.isPlaying) {
-          this._applyHRGChangeWithPortamento({ type: "SET_GENERATOR_CONFIG", param: "frequency", position: "end", config: { denominators: endDenominatorsInput.value } });
+          this._applyHRGChangeWithPortamento({
+            type: "SET_GENERATOR_CONFIG",
+            param: "frequency",
+            position: "end",
+            config: { denominators: endDenominatorsInput.value },
+          });
         } else {
-          this._updatePendingState({ type: "SET_GENERATOR_CONFIG", param: "frequency", position: "end", config: { denominators: endDenominatorsInput.value } });
+          this._updatePendingState({
+            type: "SET_GENERATOR_CONFIG",
+            param: "frequency",
+            position: "end",
+            config: { denominators: endDenominatorsInput.value },
+          });
           this.markPendingChanges();
         }
       });
@@ -1359,9 +1559,19 @@ class ControlClient {
     if (endNumBehaviorSelect) {
       endNumBehaviorSelect.addEventListener("change", () => {
         if (!this.isPlaying) {
-          this._applyHRGChangeWithPortamento({ type: "SET_GENERATOR_CONFIG", param: "frequency", position: "end", config: { numeratorBehavior: endNumBehaviorSelect.value } });
+          this._applyHRGChangeWithPortamento({
+            type: "SET_GENERATOR_CONFIG",
+            param: "frequency",
+            position: "end",
+            config: { numeratorBehavior: endNumBehaviorSelect.value },
+          });
         } else {
-          this._updatePendingState({ type: "SET_GENERATOR_CONFIG", param: "frequency", position: "end", config: { numeratorBehavior: endNumBehaviorSelect.value } });
+          this._updatePendingState({
+            type: "SET_GENERATOR_CONFIG",
+            param: "frequency",
+            position: "end",
+            config: { numeratorBehavior: endNumBehaviorSelect.value },
+          });
           this.markPendingChanges();
           this.broadcastSingleParameterStaged("frequency");
         }
@@ -1370,9 +1580,19 @@ class ControlClient {
     if (endDenBehaviorSelect) {
       endDenBehaviorSelect.addEventListener("change", () => {
         if (!this.isPlaying) {
-          this._applyHRGChangeWithPortamento({ type: "SET_GENERATOR_CONFIG", param: "frequency", position: "end", config: { denominatorBehavior: endDenBehaviorSelect.value } });
+          this._applyHRGChangeWithPortamento({
+            type: "SET_GENERATOR_CONFIG",
+            param: "frequency",
+            position: "end",
+            config: { denominatorBehavior: endDenBehaviorSelect.value },
+          });
         } else {
-          this._updatePendingState({ type: "SET_GENERATOR_CONFIG", param: "frequency", position: "end", config: { denominatorBehavior: endDenBehaviorSelect.value } });
+          this._updatePendingState({
+            type: "SET_GENERATOR_CONFIG",
+            param: "frequency",
+            position: "end",
+            config: { denominatorBehavior: endDenBehaviorSelect.value },
+          });
           this.markPendingChanges();
           this.broadcastSingleParameterStaged("frequency");
         }
@@ -1449,9 +1669,11 @@ class ControlClient {
       const [min, max] = inputValue.split("-").map((v) => parseFloat(v.trim()));
       if (!isNaN(min) && !isNaN(max)) {
         // Get behavior from position-specific dropdown (default to "static" if not found)
-        const behaviorSelect = document.getElementById(`${paramName}-${position}-rbg-behavior`) as HTMLSelectElement;
+        const behaviorSelect = document.getElementById(
+          `${paramName}-${position}-rbg-behavior`,
+        ) as HTMLSelectElement;
         const behavior = behaviorSelect ? behaviorSelect.value : "static";
-        
+
         this._updatePendingState({
           type: "SET_GENERATOR_CONFIG",
           param: paramName,
@@ -1618,23 +1840,31 @@ class ControlClient {
         }
       }
     }
-    
+
     // Update RBG behavior selector visibility based on current input values
     // This needs to happen AFTER input fields are populated with actual values
     if (paramName !== "frequency") { // frequency uses HRG, not RBG
-      const valueInput = document.getElementById(`${paramName}-value`) as HTMLInputElement;
-      const endValueInput = document.getElementById(`${paramName}-end-value`) as HTMLInputElement;
-      
+      const valueInput = document.getElementById(
+        `${paramName}-value`,
+      ) as HTMLInputElement;
+      const endValueInput = document.getElementById(
+        `${paramName}-end-value`,
+      ) as HTMLInputElement;
+
       if (valueInput) {
-        const startBehaviorSelect = document.getElementById(`${paramName}-start-rbg-behavior`) as HTMLSelectElement;
+        const startBehaviorSelect = document.getElementById(
+          `${paramName}-start-rbg-behavior`,
+        ) as HTMLSelectElement;
         if (startBehaviorSelect) {
           const isRange = this._isRangeValue(valueInput.value);
           startBehaviorSelect.style.display = isRange ? "inline-block" : "none";
         }
       }
-      
+
       if (endValueInput) {
-        const endBehaviorSelect = document.getElementById(`${paramName}-end-rbg-behavior`) as HTMLSelectElement;
+        const endBehaviorSelect = document.getElementById(
+          `${paramName}-end-rbg-behavior`,
+        ) as HTMLSelectElement;
         if (endBehaviorSelect) {
           // Hide end behavior selector if interpolation is "step" (no end value) OR if end value is not a range
           const isEnvelope = paramState.interpolation !== "step";
@@ -1648,7 +1878,9 @@ class ControlClient {
   // Capture current HRG inputs into pending state before apply
   private _syncHRGStateFromInputs() {
     const freqState = this.pendingMusicalState.frequency as any;
-    if (!freqState || freqState.startValueGenerator?.type !== "periodic") return;
+    if (!freqState || freqState.startValueGenerator?.type !== "periodic") {
+      return;
+    }
 
     let anyInvalid = false;
 
@@ -1834,7 +2066,9 @@ class ControlClient {
     for (const key in this.musicalState) {
       const paramState = this.musicalState[key as keyof IMusicalState] as any;
       if ("scope" in paramState) {
-        throw new Error(`CRITICAL: Parameter '${key}' has forbidden 'scope' field`);
+        throw new Error(
+          `CRITICAL: Parameter '${key}' has forbidden 'scope' field`,
+        );
       }
     }
 
@@ -1842,7 +2076,7 @@ class ControlClient {
       synthesisActive: this.synthesisActive,
       isManualMode: this.isManualControlMode,
     };
-    
+
     // Include portamento time when provided (for paused updates)
     if (portamentoTime !== undefined) {
       wirePayload.portamentoTime = portamentoTime;
@@ -1854,27 +2088,45 @@ class ControlClient {
       const paramState = this.musicalState[paramKey];
 
       // Strict validation: require all necessary fields
-      if (!paramState.interpolation || !["step", "cosine"].includes(paramState.interpolation)) {
-        throw new Error(`CRITICAL: Parameter '${paramKey}' missing valid interpolation`);
+      if (
+        !paramState.interpolation ||
+        !["step", "cosine"].includes(paramState.interpolation)
+      ) {
+        throw new Error(
+          `CRITICAL: Parameter '${paramKey}' missing valid interpolation`,
+        );
       }
-      
+
       if (!paramState.startValueGenerator) {
-        throw new Error(`CRITICAL: Parameter '${paramKey}' missing startValueGenerator`);
+        throw new Error(
+          `CRITICAL: Parameter '${paramKey}' missing startValueGenerator`,
+        );
       }
-      
-      if (paramState.interpolation === "cosine" && !paramState.endValueGenerator) {
-        throw new Error(`CRITICAL: Parameter '${paramKey}' cosine interpolation missing endValueGenerator`);
+
+      if (
+        paramState.interpolation === "cosine" && !paramState.endValueGenerator
+      ) {
+        throw new Error(
+          `CRITICAL: Parameter '${paramKey}' cosine interpolation missing endValueGenerator`,
+        );
       }
-      
-      if (paramState.startValueGenerator.type === "periodic" && paramState.baseValue === undefined) {
-        throw new Error(`CRITICAL: Parameter '${paramKey}' periodic generator missing baseValue`);
+
+      if (
+        paramState.startValueGenerator.type === "periodic" &&
+        paramState.baseValue === undefined
+      ) {
+        throw new Error(
+          `CRITICAL: Parameter '${paramKey}' periodic generator missing baseValue`,
+        );
       }
 
       // Prepare generators
       const startGen = { ...paramState.startValueGenerator };
 
       let endGen = undefined;
-      if (paramState.interpolation === "cosine" && paramState.endValueGenerator) {
+      if (
+        paramState.interpolation === "cosine" && paramState.endValueGenerator
+      ) {
         endGen = { ...paramState.endValueGenerator };
       }
 
@@ -1900,23 +2152,33 @@ class ControlClient {
       wirePayload,
     );
     this.star.broadcast(message);
-    this.log(`📡 Broadcasted musical parameters${portamentoTime ? ` with ${portamentoTime}ms portamento` : ''}`, "info");
+    this.log(
+      `📡 Broadcasted musical parameters${
+        portamentoTime ? ` with ${portamentoTime}ms portamento` : ""
+      }`,
+      "info",
+    );
   }
 
   /**
    * Broadcast update for a single parameter with portamento
    * More efficient than broadcasting entire state when only one parameter changed
    */
-  broadcastSingleParameterUpdate(paramName: keyof IMusicalState, portamentoTime: number) {
+  broadcastSingleParameterUpdate(
+    paramName: keyof IMusicalState,
+    portamentoTime: number,
+  ) {
     if (!this.star) return;
 
     const paramState = this.pendingMusicalState[paramName];
-    
+
     // Strict validation: reject forbidden scope field
     if ("scope" in (paramState as any)) {
-      throw new Error(`CRITICAL: Parameter '${paramName}' has forbidden 'scope' field`);
+      throw new Error(
+        `CRITICAL: Parameter '${paramName}' has forbidden 'scope' field`,
+      );
     }
-    
+
     // Create minimal payload with only the changed parameter
     const wirePayload: any = {
       synthesisActive: this.synthesisActive,
@@ -1938,49 +2200,64 @@ class ControlClient {
       baseValue: paramState.baseValue,
     };
 
-
     const message = MessageBuilder.createParameterUpdate(
       MessageTypes.PROGRAM_UPDATE,
       wirePayload,
     );
     // Send over control channel for reliability/priority
     this.star.broadcastToType("synth", message, "control");
-    this.log(`📡 Broadcasted ${paramName} update with ${portamentoTime}ms portamento`, "info");
+    this.log(
+      `📡 Broadcasted ${paramName} update with ${portamentoTime}ms portamento`,
+      "info",
+    );
   }
 
   /**
    * Broadcast a sub-parameter update (e.g., frequency.baseValue)
    */
-  broadcastSubParameterUpdate(paramPath: string, value: any, portamentoTime: number) {
+  broadcastSubParameterUpdate(
+    paramPath: string,
+    value: any,
+    portamentoTime: number,
+  ) {
     if (!this.star) return;
 
-    const message = MessageBuilder.subParamUpdate(paramPath, value, portamentoTime);
-    
+    const message = MessageBuilder.subParamUpdate(
+      paramPath,
+      value,
+      portamentoTime,
+    );
+
     // Send over control channel for reliability/priority
     this.star.broadcastToType("synth", message, "control");
-    this.log(`📡 Broadcasted sub-parameter ${paramPath} = ${value} with ${portamentoTime}ms portamento`, "info");
+    this.log(
+      `📡 Broadcasted sub-parameter ${paramPath} = ${value} with ${portamentoTime}ms portamento`,
+      "info",
+    );
   }
 
   // Broadcast a single parameter update for staging at EOC (no portamento field)
   private broadcastSingleParameterStaged(paramName: keyof IMusicalState) {
     if (!this.star) return;
-    
+
     // Use pending state to get the latest changes (interpolation changes, etc.)
     const paramState = this.pendingMusicalState[paramName] as any;
     if ("scope" in paramState) {
-      throw new Error(`CRITICAL: Parameter '${paramName}' has forbidden 'scope' field`);
+      throw new Error(
+        `CRITICAL: Parameter '${paramName}' has forbidden 'scope' field`,
+      );
     }
-    
+
     const wirePayload: any = {
       synthesisActive: this.synthesisActive,
     };
-    
+
     // Emit unified format with interpolation + generators
     const startGen = { ...paramState.startValueGenerator };
     if (startGen.type === "periodic") {
       startGen.baseValue = paramState.baseValue;
     }
-    
+
     let endGen = undefined;
     if (paramState.interpolation === "cosine" && paramState.endValueGenerator) {
       endGen = { ...paramState.endValueGenerator };
@@ -1988,7 +2265,7 @@ class ControlClient {
         endGen.baseValue = paramState.baseValue;
       }
     }
-    
+
     wirePayload[paramName] = {
       interpolation: paramState.interpolation,
       startValueGenerator: startGen,
@@ -1999,7 +2276,7 @@ class ControlClient {
     // For staged updates during playback, we need to send UNIFIED_PARAM_UPDATE messages
     // Get resolved values for this parameter
     const resolvedValues = this.resolveParameterValues(paramName, paramState);
-    
+
     const message = MessageBuilder.unifiedParamUpdate(
       paramName,
       resolvedValues.start,
@@ -2007,15 +2284,14 @@ class ControlClient {
       paramState.interpolation,
       this.isPlaying,
       100, // default portamento time
-      this.phasor // current phase
+      this.phasor, // current phase
     );
-    
+
     this.star.broadcastToType("synth", message, "control");
     this.log(`📡 Broadcasted staged ${paramName} interpolation change`, "info");
   }
 
   // Removed splitParametersByMode - no longer needed with separated state
-
 
   // Phasor Management Methods
   calculateCycleLength() {
@@ -2025,7 +2301,7 @@ class ControlClient {
 
   applyPendingTimingChanges() {
     let changed = false;
-    
+
     if (this.pendingPeriodSec !== null) {
       this.periodSec = this.pendingPeriodSec;
       this.cycleLength = this.periodSec;
@@ -2033,7 +2309,7 @@ class ControlClient {
       this.pendingPeriodSec = null;
       changed = true;
     }
-    
+
     if (this.pendingStepsPerCycle !== null) {
       this.stepsPerCycle = this.pendingStepsPerCycle;
       this.updatePhasorTicks();
@@ -2041,7 +2317,7 @@ class ControlClient {
       this.pendingStepsPerCycle = null;
       changed = true;
     }
-    
+
     if (changed) {
       // Update UI to reflect changes
       if (this.elements.periodInput) {
@@ -2065,12 +2341,12 @@ class ControlClient {
     if (!this.elements.phasorTicks) return;
 
     // Clear existing ticks
-    this.elements.phasorTicks.innerHTML = '';
+    this.elements.phasorTicks.innerHTML = "";
 
     // Generate new ticks based on stepsPerCycle
     for (let i = 0; i < this.stepsPerCycle; i++) {
-      const tick = document.createElement('div');
-      tick.className = 'phasor-tick';
+      const tick = document.createElement("div");
+      tick.className = "phasor-tick";
       tick.style.left = `${(i / this.stepsPerCycle) * 100}%`;
       this.elements.phasorTicks.appendChild(tick);
     }
@@ -2093,10 +2369,10 @@ class ControlClient {
       // Wrap around at 1.0
       if (this.phasor >= 1.0) {
         this.phasor -= 1.0;
-        
+
         // Apply pending timing changes at EOC
         this.applyPendingTimingChanges();
-        
+
         // Clear pending parameter changes at EOC (staged changes have been applied)
         this.clearAllPendingChanges();
       }
@@ -2281,15 +2557,15 @@ class ControlClient {
   // Transport control methods
   handleTransport(action) {
     console.log(`Transport: ${action}`);
-    
+
     const wasAtZero = this.phasor === 0.0;
-    
+
     switch (action) {
-      case 'play':
+      case "play":
         this.isPlaying = true;
         this.lastPhasorTime = performance.now() / 1000.0; // Reset time tracking
         this.log("Global phasor started", "info");
-        
+
         // Fire EOC event if starting from 0.0 (reset position or initial load)
         if (wasAtZero && this.star) {
           console.log("🔄 Triggering EOC event - playing from reset position");
@@ -2297,36 +2573,36 @@ class ControlClient {
           this.star.broadcastToType("synth", eocMessage, "control");
         }
         break;
-      case 'pause':
+      case "pause":
         this.isPlaying = false;
         // Clear all pending changes when paused (changes apply immediately when paused)
         this.clearAllPendingChanges();
         this.log("Global phasor paused", "info");
         break;
-      case 'stop':
+      case "stop":
         this.isPlaying = false;
         this.phasor = 0.0;
         this.lastPhasorTime = performance.now() / 1000.0;
-        // Clear all pending changes when stopped 
+        // Clear all pending changes when stopped
         this.clearAllPendingChanges();
         this.updatePhasorDisplay();
         this.log("Global phasor stopped and reset", "info");
         break;
     }
-    
+
     // Update play/pause button text
     this.updatePlayPauseButton();
-    
+
     // Send immediate transport message to synths for instant response
     if (this.star) {
       const transportMessage = MessageBuilder.transport(action);
       this.star.broadcastToType("synth", transportMessage, "control");
     }
-    
+
     // Broadcast current phasor state immediately with new playing state
     this.broadcastPhasor(performance.now() / 1000.0);
   }
-  
+
   updatePlayPauseButton() {
     if (this.elements.playBtn) {
       this.elements.playBtn.textContent = this.isPlaying ? "pause" : "play";
@@ -2335,7 +2611,7 @@ class ControlClient {
 
   handleUnifiedParameterUpdate(paramName: keyof IMusicalState, value: string) {
     console.log(`🎛️ Unified parameter update: ${paramName} = ${value}`);
-    
+
     // Update the baseValue in our state
     this._updatePendingState({
       type: "SET_BASE_VALUE",
@@ -2346,11 +2622,12 @@ class ControlClient {
     // Resolve HRG values here in controller
     const paramState = this.pendingMusicalState[paramName];
     const resolvedValues = this.resolveParameterValues(paramName, paramState);
-    
+
     // Get portamento time
-    const portamentoTime = this.elements.portamentoTime ? 
-      parseInt(this.elements.portamentoTime.value) : 100;
-    
+    const portamentoTime = this.elements.portamentoTime
+      ? parseInt(this.elements.portamentoTime.value)
+      : 100;
+
     // Create unified parameter message using message builder
     const message = MessageBuilder.unifiedParamUpdate(
       paramName,
@@ -2359,7 +2636,7 @@ class ControlClient {
       paramState.interpolation,
       this.isPlaying,
       portamentoTime,
-      this.phasor // Include current phase for interpolation
+      this.phasor, // Include current phase for interpolation
     );
 
     // Send immediately - synths will decide when to apply based on transport state
@@ -2378,36 +2655,43 @@ class ControlClient {
     }
 
     const statusIcon = this.isPlaying ? "📋*" : "⚡";
-    this.log(`${statusIcon} ${paramName}: ${resolvedValues.start}${resolvedValues.end !== undefined ? ` → ${resolvedValues.end}` : ''} (${this.isPlaying ? 'staged for EOC' : `immediate +${portamentoTime}ms`})`, "info");
+    this.log(
+      `${statusIcon} ${paramName}: ${resolvedValues.start}${
+        resolvedValues.end !== undefined ? ` → ${resolvedValues.end}` : ""
+      } (${
+        this.isPlaying ? "staged for EOC" : `immediate +${portamentoTime}ms`
+      })`,
+      "info",
+    );
   }
 
   updateParameterVisualFeedback(paramName: keyof IMusicalState) {
     // Find the parameter label and add/remove asterisk for pending changes
-    const paramLabels = document.querySelectorAll('.param-label');
+    const paramLabels = document.querySelectorAll(".param-label");
     for (const label of paramLabels) {
       const labelElement = label as HTMLElement;
-      const labelText = labelElement.textContent || '';
-      
+      const labelText = labelElement.textContent || "";
+
       // Check if this label is for the parameter we're updating
-      const cleanText = labelText.replace('*', '').trim();
+      const cleanText = labelText.replace("*", "").trim();
       const paramDisplayNames: Record<keyof IMusicalState, string> = {
-        frequency: 'freq',
-        vowelX: 'vowel x',
-        vowelY: 'vowel y',
-        symmetry: 'symmetry', 
-        zingAmount: 'z amount',
-        zingMorph: 'z morph',
-        amplitude: 'amp',
-        whiteNoise: 'noise'
+        frequency: "freq",
+        vowelX: "vowel x",
+        vowelY: "vowel y",
+        symmetry: "symmetry",
+        zingAmount: "z amount",
+        zingMorph: "z morph",
+        amplitude: "amp",
+        whiteNoise: "noise",
       };
-      
+
       if (cleanText === paramDisplayNames[paramName]) {
         const hasPendingChanges = this.pendingParameterChanges.has(paramName);
         const shouldShowAsterisk = hasPendingChanges && this.isPlaying;
-        
-        if (shouldShowAsterisk && !labelText.includes('*')) {
-          labelElement.textContent = cleanText + '*';
-        } else if (!shouldShowAsterisk && labelText.includes('*')) {
+
+        if (shouldShowAsterisk && !labelText.includes("*")) {
+          labelElement.textContent = cleanText + "*";
+        } else if (!shouldShowAsterisk && labelText.includes("*")) {
           labelElement.textContent = cleanText;
         }
         break;
@@ -2423,25 +2707,40 @@ class ControlClient {
     this.pendingParameterChanges.clear();
   }
 
-
-  resolveParameterValues(paramName: keyof IMusicalState, paramState: ParameterState) {
+  resolveParameterValues(
+    paramName: keyof IMusicalState,
+    paramState: ParameterState,
+  ) {
     // For step interpolation, only resolve start value
     if (paramState.interpolation === "step") {
       return {
-        start: this.resolveGeneratorValue(paramState.startValueGenerator, paramState.baseValue),
+        start: this.resolveGeneratorValue(
+          paramState.startValueGenerator,
+          paramState.baseValue,
+        ),
         end: undefined,
       };
     }
-    
+
     // For cosine interpolation, resolve both start and end
-    const startValue = this.resolveGeneratorValue(paramState.startValueGenerator, paramState.baseValue);
-    const endValue = this.resolveGeneratorValue(paramState.endValueGenerator!, paramState.baseValue);
-    
+    const startValue = this.resolveGeneratorValue(
+      paramState.startValueGenerator,
+      paramState.baseValue,
+    );
+    const endValue = this.resolveGeneratorValue(
+      paramState.endValueGenerator!,
+      paramState.baseValue,
+    );
+
     // Debug logging for white noise
-    if (paramName === 'whiteNoise') {
-      console.log(`🔍 Resolving whiteNoise: start=${startValue}, end=${endValue}, endGen=${JSON.stringify(paramState.endValueGenerator)}`);
+    if (paramName === "whiteNoise") {
+      console.log(
+        `🔍 Resolving whiteNoise: start=${startValue}, end=${endValue}, endGen=${
+          JSON.stringify(paramState.endValueGenerator)
+        }`,
+      );
     }
-    
+
     return {
       start: startValue,
       end: endValue,
@@ -2453,11 +2752,17 @@ class ControlClient {
       // Parse HRG numerators and denominators
       const numerators = this.parseHRGString(generator.numerators || "1");
       const denominators = this.parseHRGString(generator.denominators || "1");
-      
+
       // Select random values based on behavior
-      const numerator = this.selectHRGValue(numerators, generator.sequenceBehavior);
-      const denominator = this.selectHRGValue(denominators, generator.sequenceBehavior);
-      
+      const numerator = this.selectHRGValue(
+        numerators,
+        generator.sequenceBehavior,
+      );
+      const denominator = this.selectHRGValue(
+        denominators,
+        generator.sequenceBehavior,
+      );
+
       // Calculate ratio and apply to base value
       return (baseValue || 220) * (numerator / denominator);
     } else {
@@ -2476,7 +2781,7 @@ class ControlClient {
     // Parse "1-3,5,7-9" format into [1,2,3,5,7,8,9]
     const result: number[] = [];
     const parts = input.split(",");
-    
+
     for (const part of parts) {
       const trimmed = part.trim();
       if (trimmed.includes("-")) {
@@ -2488,7 +2793,7 @@ class ControlClient {
         result.push(Number(trimmed));
       }
     }
-    
+
     return result;
   }
 
@@ -2504,20 +2809,20 @@ class ControlClient {
     this.phasor = 0.0;
     this.lastPhasorTime = performance.now() / 1000.0;
     this.updatePhasorDisplay();
-    
+
     // Reset stops playback
     this.isPlaying = false;
     this.updatePlayPauseButton();
-    
+
     // Broadcast reset to synths
     if (this.star) {
       const message = MessageBuilder.jumpToEOC();
       this.star.broadcastToType("synth", message, "control");
     }
-    
+
     // Broadcast current phasor state
     this.broadcastPhasor(performance.now() / 1000.0);
-    
+
     this.log("Global phasor reset to 0.0", "info");
   }
 
@@ -2659,7 +2964,7 @@ class ControlClient {
 
     // Broadcast current state to all synths - using unified payload system
     this.broadcastMusicalParameters();
-    
+
     // Send current phasor state so synths know the current phase position
     this.broadcastPhasor(performance.now() / 1000.0);
   }
@@ -2827,12 +3132,12 @@ class ControlClient {
     }[level] || "ℹ️";
 
     const logEntry = `[${timestamp}] ${prefix} ${message}\n`;
-    
+
     if (this.elements.debugLog) {
       this.elements.debugLog.textContent += logEntry;
       this.elements.debugLog.scrollTop = this.elements.debugLog.scrollHeight;
     }
-    
+
     // Also log to console since debug panel was removed
     console.log(`[CTRL] ${message}`);
   }
@@ -2883,7 +3188,7 @@ class ControlClient {
       // 1. Get the current applied program state.
       const programToSave = {
         ...this.musicalState,
-        savedAt: Date.now()
+        savedAt: Date.now(),
       };
 
       // 2. Save it to the controller's local storage.
@@ -2956,12 +3261,12 @@ class ControlClient {
       localStorage.removeItem(`scene_${i}_controller`);
     }
     this.updateSceneMemoryIndicators();
-    this.log('Cleared all scene banks', 'success');
-    
+    this.log("Cleared all scene banks", "success");
+
     // 2) Broadcast clear to synths
     if (this.star) {
       const msg = MessageBuilder.clearBanks();
-      this.star.broadcastToType('synth', msg, 'control');
+      this.star.broadcastToType("synth", msg, "control");
     }
   }
 
@@ -2969,12 +3274,12 @@ class ControlClient {
     // Clear single bank
     localStorage.removeItem(`scene_${memoryLocation}_controller`);
     this.updateSceneMemoryIndicators();
-    this.log(`Cleared scene bank ${memoryLocation}`, 'success');
-    
+    this.log(`Cleared scene bank ${memoryLocation}`, "success");
+
     // Broadcast to synths
     if (this.star) {
       const msg = MessageBuilder.clearScene(memoryLocation);
-      this.star.broadcastToType('synth', msg, 'control');
+      this.star.broadcastToType("synth", msg, "control");
     }
   }
 
@@ -3064,8 +3369,8 @@ class ControlClient {
     if (this.elements.applyBulkBtn) {
       const hasChanges = this.bulkChanges.length > 0;
       this.elements.applyBulkBtn.disabled = !hasChanges;
-      this.elements.applyBulkBtn.textContent = hasChanges 
-        ? `apply bulk (${this.bulkChanges.length})` 
+      this.elements.applyBulkBtn.textContent = hasChanges
+        ? `apply bulk (${this.bulkChanges.length})`
         : "apply bulk";
     }
   }
@@ -3080,13 +3385,17 @@ class ControlClient {
     }
 
     console.log(`🔄 Applying ${this.bulkChanges.length} bulk changes`);
-    
+
     // Send all accumulated changes
-    this.bulkChanges.forEach(change => {
+    this.bulkChanges.forEach((change) => {
       if (change.type === "sub-param-update") {
         // Send the actual message that was deferred
-        const message = MessageBuilder.subParamUpdate(change.paramPath!, change.value, change.portamentoTime);
-        
+        const message = MessageBuilder.subParamUpdate(
+          change.paramPath!,
+          change.value,
+          change.portamentoTime,
+        );
+
         if (this.star) {
           this.star.broadcastToType("synth", message, "control");
         }
@@ -3096,27 +3405,38 @@ class ControlClient {
     // Clear the accumulated changes
     this.bulkChanges = [];
     this.updateBulkButtonState();
-    
+
     console.log("🔄 Bulk changes applied and cleared");
   }
 
   /**
    * Add a change to the bulk accumulation queue
    */
-  addToBulkChanges(change: {type: string, paramPath?: string, value?: any, portamentoTime?: number}) {
+  addToBulkChanges(
+    change: {
+      type: string;
+      paramPath?: string;
+      value?: any;
+      portamentoTime?: number;
+    },
+  ) {
     if (!this.bulkModeEnabled) {
       return false; // Not in bulk mode
     }
 
     // Remove any existing change for the same path to avoid duplicates
     if (change.paramPath) {
-      this.bulkChanges = this.bulkChanges.filter(c => c.paramPath !== change.paramPath);
+      this.bulkChanges = this.bulkChanges.filter((c) =>
+        c.paramPath !== change.paramPath
+      );
     }
 
     this.bulkChanges.push(change);
     this.updateBulkButtonState();
-    
-    console.log(`📋 Added to bulk queue: ${change.paramPath} = ${change.value} (${this.bulkChanges.length} total)`);
+
+    console.log(
+      `📋 Added to bulk queue: ${change.paramPath} = ${change.value} (${this.bulkChanges.length} total)`,
+    );
     return true; // Successfully added to bulk queue
   }
 }

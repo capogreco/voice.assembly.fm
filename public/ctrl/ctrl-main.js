@@ -24,6 +24,7 @@ var MessageTypes = {
   SET_COS_SEGMENTS: "set-cos-segments",
   RESTORE_SEQUENCE_STATE: "restore-sequence-state",
   RERESOLVE_AT_EOC: "reresolve-at-eoc",
+  IMMEDIATE_REINITIALIZE: "immediate-reinitialize",
   // Scene Memory
   SAVE_SCENE: "save-scene",
   LOAD_SCENE: "load-scene",
@@ -131,6 +132,12 @@ var MessageBuilder = class {
   static reresolveAtEOC() {
     return {
       type: MessageTypes.RERESOLVE_AT_EOC,
+      timestamp: performance.now()
+    };
+  }
+  static immediateReinitialize() {
+    return {
+      type: MessageTypes.IMMEDIATE_REINITIALIZE,
       timestamp: performance.now()
     };
   }
@@ -291,6 +298,8 @@ function validateMessage(message) {
       }
       break;
     case MessageTypes.RERESOLVE_AT_EOC:
+      break;
+    case MessageTypes.IMMEDIATE_REINITIALIZE:
       break;
     case MessageTypes.SAVE_SCENE:
       if (typeof message.memoryLocation !== "number" || message.memoryLocation < 0 || message.memoryLocation > 9) {
@@ -1701,8 +1710,8 @@ var ControlClient = class {
     if (this.elements.reresolveBtn) {
       console.log("\u2705 Re-resolve button found, adding click handler");
       this.elements.reresolveBtn.addEventListener("click", () => {
-        console.log("\u{1F500} Re-resolve button clicked!");
-        this.reresolveAtEOC();
+        console.log("\u26A1 Re-resolve button clicked!");
+        this.triggerImmediateReinitialize();
       });
     } else {
       console.error("\u274C Re-resolve button not found in DOM");
@@ -1721,6 +1730,16 @@ var ControlClient = class {
     const sent = this.star.broadcastToType("synth", message, "control");
     console.log(`\u2705 Re-resolve message sent to ${sent} synths`);
     this.log(`\u{1F500} Re-resolve requested for ${sent} synths at next EOC`, "info");
+  }
+  triggerImmediateReinitialize() {
+    console.log("\u26A1 Triggering immediate re-initialization");
+    if (!this.star) {
+      this.log("No network available", "error");
+      return;
+    }
+    const message = MessageBuilder.immediateReinitialize();
+    const sent = this.star.broadcastToType("synth", message, "control");
+    this.log(`Sent IMMEDIATE_REINITIALIZE to ${sent} synth(s)`, "info");
   }
   setupMusicalControls() {
     this.setupEnvelopeControls();

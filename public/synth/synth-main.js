@@ -49,7 +49,6 @@ class SynthClient {
     this.lastSynthParams = null;
     this.lastProgramUpdate = null; // Cache PROGRAM_UPDATE until audio/worklets are ready
 
-
     // Program configuration
     this.program = null;
     this.randomSeed = this.hashString(this.peerId); // Unique seed per synth
@@ -67,7 +66,7 @@ class SynthClient {
     this.phasorRate = 0.5; // Phasor increment per second (1.0 / cycleLength)
     this.interpolatedPhasor = 0.0; // Current interpolated phasor value
     this.phasorUpdateId = null; // RequestAnimationFrame ID for interpolation
-    
+
     // Envelope control state
     this.isPaused = false;
     this.pausedPhase = 0;
@@ -155,7 +154,7 @@ class SynthClient {
     // Scene Memory: Simple in-memory snapshots (ephemeral)
     this.sceneSnapshots = []; // Array of 10 scene slots, lost on refresh
     this.currentResolvedState = {};
-    this.pendingCaptureBank = null;  // Bank to capture on next EOC
+    this.pendingCaptureBank = null; // Bank to capture on next EOC
 
     // Musical brain state (main thread owns resolution)
     this.programConfig = {}; // Current program configuration from controller
@@ -308,8 +307,7 @@ class SynthClient {
       // Store references for backward compatibility (some methods may still reference these)
       this.voiceNode = this.unifiedSynthNode; // Main audio node
       this.programNode = this.unifiedSynthNode; // Same node handles program logic
-      
-      
+
       // Track current parameter values for portamento (strict - no defaults)
       this.lastResolvedValues = {};
 
@@ -397,8 +395,14 @@ class SynthClient {
 
       // Connect phasor worklet to unified synth worklet if both exist
       if (this.phasorWorklet && this.unifiedSynthNode) {
-        this.phasorWorklet.connect(this.unifiedSynthNode.parameters.get("phase"));
-        if (this.verbose) console.log("🔗 Phasor worklet connected to unified synth worklet phase parameter");
+        this.phasorWorklet.connect(
+          this.unifiedSynthNode.parameters.get("phase"),
+        );
+        if (this.verbose) {
+          console.log(
+            "🔗 Phasor worklet connected to unified synth worklet phase parameter",
+          );
+        }
       }
 
       // Apply any stored state that was received before audio was ready
@@ -486,8 +490,14 @@ class SynthClient {
         break;
 
       case MessageTypes.RERESOLVE_AT_EOC:
-        console.log("🔀 RERESOLVE_AT_EOC received - will re-randomize static HRG indices at next EOC");
+        console.log(
+          "🔀 RERESOLVE_AT_EOC received - will re-randomize static HRG indices at next EOC",
+        );
         this.reresolveAtNextEOC = true;
+        break;
+
+      case MessageTypes.IMMEDIATE_REINITIALIZE:
+        this.handleImmediateReinitialize();
         break;
 
       case MessageTypes.SAVE_SCENE:
@@ -644,76 +654,106 @@ class SynthClient {
    */
   activateImmediateSynthesis() {
     console.log("🎵 Activating immediate synthesis...");
-    
+
     // Ensure unified synth worklet is active
-    if (this.unifiedSynthNode && this.unifiedSynthNode.parameters.has("active")) {
+    if (
+      this.unifiedSynthNode && this.unifiedSynthNode.parameters.has("active")
+    ) {
       this.unifiedSynthNode.parameters.get("active").value = 1;
     }
-    
+
     // Send interpolation types and resolve values to AudioParams
     if (!this.programConfig || Object.keys(this.programConfig).length === 0) {
-      console.error("🚨 CRITICAL: Synth activated WITHOUT program config! Using emergency defaults.");
-      console.error("🚨 This means controller→synth communication failed or synth activated too early");
-      throw new Error("Synth activation without program config - this should never happen!");
+      console.error(
+        "🚨 CRITICAL: Synth activated WITHOUT program config! Using emergency defaults.",
+      );
+      console.error(
+        "🚨 This means controller→synth communication failed or synth activated too early",
+      );
+      throw new Error(
+        "Synth activation without program config - this should never happen!",
+      );
     }
-    
+
     if (this.unifiedSynthNode) {
-      console.log("🎼 Setting parameter values and interpolation types for immediate synthesis");
-      
+      console.log(
+        "🎼 Setting parameter values and interpolation types for immediate synthesis",
+      );
+
       // Send interpolation types configuration
       const interpolationTypes = {};
-      for (const [paramName, paramConfig] of Object.entries(this.programConfig)) {
+      for (
+        const [paramName, paramConfig] of Object.entries(this.programConfig)
+      ) {
         if (paramConfig.interpolation) {
           interpolationTypes[paramName] = paramConfig.interpolation;
         }
       }
-      
-      console.log("🎯 [Immediate] About to send SET_INTERPOLATION_TYPES message:", interpolationTypes);
-      
+
+      console.log(
+        "🎯 [Immediate] About to send SET_INTERPOLATION_TYPES message:",
+        interpolationTypes,
+      );
+
       this.unifiedSynthNode.port.postMessage({
         type: "SET_INTERPOLATION_TYPES",
-        params: interpolationTypes
+        params: interpolationTypes,
       });
       console.log("🎯 [Immediate] SET_INTERPOLATION_TYPES message sent");
-      
+
       // Set initial parameter values at current phase
       const now = this.audioContext.currentTime;
-      
+
       // Get phase for interpolation
       const phaseParam = this.unifiedSynthNode.parameters.get("phase");
       const phase = phaseParam ? phaseParam.value : 0;
-      
+
       for (const [paramName, cfg] of Object.entries(this.programConfig)) {
-        const startParam = this.unifiedSynthNode.parameters.get(`${paramName}_start`);
+        const startParam = this.unifiedSynthNode.parameters.get(
+          `${paramName}_start`,
+        );
         if (!startParam) {
           throw new Error(`Missing AudioParam ${paramName}_start`);
         }
-        
+
         // Resolve using _resolveParameterValue (uses _resolveHRG for periodic)
-        const startValue = this._resolveParameterValue(cfg.startValueGenerator, paramName, "start");
-        
+        const startValue = this._resolveParameterValue(
+          cfg.startValueGenerator,
+          paramName,
+          "start",
+        );
+
         let valueNow = startValue;
         if (cfg.interpolation === "cosine") {
           if (!cfg.endValueGenerator) {
             throw new Error(`Missing end generator for ${paramName} (cosine)`);
           }
-          const endValue = this._resolveParameterValue(cfg.endValueGenerator, paramName, "end");
-          
-          const endParam = this.unifiedSynthNode.parameters.get(`${paramName}_end`);
+          const endValue = this._resolveParameterValue(
+            cfg.endValueGenerator,
+            paramName,
+            "end",
+          );
+
+          const endParam = this.unifiedSynthNode.parameters.get(
+            `${paramName}_end`,
+          );
           if (endParam) {
             endParam.setValueAtTime(endValue, now);
           }
-          
+
           // Interpolate for current phase
           const shaped = 0.5 - Math.cos(phase * Math.PI) * 0.5;
           valueNow = startValue + (endValue - startValue) * shaped;
         }
-        
+
         startParam.setValueAtTime(valueNow, now);
         this.lastResolvedValues[paramName] = valueNow;
       }
-      
-      console.log("🎛️ Updated AudioParam values for immediate synthesis:", this.lastResolvedValues);
+
+      console.log(
+        "🎛️ Updated AudioParam values for immediate synthesis:",
+        this.lastResolvedValues,
+      );
     } else {
       console.log("⚠️ No program config available for immediate synthesis");
     }
@@ -729,8 +769,10 @@ class SynthClient {
       return;
     }
 
-    console.log(`🎵 Applying parameter changes with ${portamentoTime}ms portamento`);
-    
+    console.log(
+      `🎵 Applying parameter changes with ${portamentoTime}ms portamento`,
+    );
+
     // Send interpolation types configuration
     const interpolationTypes = {};
     for (const [paramName, paramConfig] of Object.entries(this.programConfig)) {
@@ -738,70 +780,104 @@ class SynthClient {
         interpolationTypes[paramName] = paramConfig.interpolation;
       }
     }
-    
-    console.log("🎯 About to send SET_INTERPOLATION_TYPES message:", interpolationTypes);
+
+    console.log(
+      "🎯 About to send SET_INTERPOLATION_TYPES message:",
+      interpolationTypes,
+    );
     this.unifiedSynthNode.port.postMessage({
       type: "SET_INTERPOLATION_TYPES",
-      params: interpolationTypes
+      params: interpolationTypes,
     });
     console.log("🎯 SET_INTERPOLATION_TYPES message sent");
-    
+
     // Calculate portamento duration in seconds
     const portamentoDurationSec = portamentoTime / 1000;
     const targetTime = this.audioContext.currentTime + portamentoDurationSec;
-    
+
     // For each parameter, resolve new values and apply with AudioParam ramping
     for (const [paramName, paramData] of Object.entries(this.programConfig)) {
       if (this.lastResolvedValues.hasOwnProperty(paramName)) {
         let startValue, endValue;
-        
+
         // Resolve parameter values using unified format
-        
+
         if (paramData.interpolation === "step") {
           // Step interpolation - only need start value
-          startValue = this._resolveParameterValue(paramData.startValueGenerator, paramName, 'start');
+          startValue = this._resolveParameterValue(
+            paramData.startValueGenerator,
+            paramName,
+            "start",
+          );
           endValue = startValue;
         } else {
           // Cosine/other interpolation - need start and end values
-          startValue = this._resolveParameterValue(paramData.startValueGenerator, paramName, 'start');
-          endValue = paramData.endValueGenerator ? 
-            this._resolveParameterValue(paramData.endValueGenerator, paramName, 'end') : 
-            startValue;
+          startValue = this._resolveParameterValue(
+            paramData.startValueGenerator,
+            paramName,
+            "start",
+          );
+          endValue = paramData.endValueGenerator
+            ? this._resolveParameterValue(
+              paramData.endValueGenerator,
+              paramName,
+              "end",
+            )
+            : startValue;
         }
-        
+
         if (startValue !== undefined) {
-          const startParam = this.unifiedSynthNode.parameters.get(`${paramName}_start`);
-          const endParam = this.unifiedSynthNode.parameters.get(`${paramName}_end`);
-          
+          const startParam = this.unifiedSynthNode.parameters.get(
+            `${paramName}_start`,
+          );
+          const endParam = this.unifiedSynthNode.parameters.get(
+            `${paramName}_end`,
+          );
+
           if (startParam) {
             // Get current value as starting point for ramping
-            const currentValue = this.lastResolvedValues[paramName] || startParam.value;
+            const currentValue = this.lastResolvedValues[paramName] ||
+              startParam.value;
             if (!currentValue) {
-              console.error(`🚨 CRITICAL: No current value for portamento ${paramName}!`);
-              throw new Error(`Missing current value for ${paramName} portamento - parameter not initialized?`);
+              console.error(
+                `🚨 CRITICAL: No current value for portamento ${paramName}!`,
+              );
+              throw new Error(
+                `Missing current value for ${paramName} portamento - parameter not initialized?`,
+              );
             }
-            
+
             // Set starting point for ramp
-            startParam.setValueAtTime(currentValue, this.audioContext.currentTime);
-            
+            startParam.setValueAtTime(
+              currentValue,
+              this.audioContext.currentTime,
+            );
+
             // Use exponential ramping for frequency (if > 0), linear for normalized parameters
-            if (paramName === 'frequency' && startValue > 0 && currentValue > 0) {
+            if (
+              paramName === "frequency" && startValue > 0 && currentValue > 0
+            ) {
               startParam.exponentialRampToValueAtTime(startValue, targetTime);
             } else {
               startParam.linearRampToValueAtTime(startValue, targetTime);
             }
-            
+
             this.lastResolvedValues[paramName] = startValue;
           }
-          
+
           if (endParam) {
             // Get current end value as starting point
             const currentEndValue = endParam.value || endValue;
-            
+
             // Set starting point for end parameter ramp
-            endParam.setValueAtTime(currentEndValue, this.audioContext.currentTime);
-            
-            if (paramName === 'frequency' && endValue > 0 && currentEndValue > 0) {
+            endParam.setValueAtTime(
+              currentEndValue,
+              this.audioContext.currentTime,
+            );
+
+            if (
+              paramName === "frequency" && endValue > 0 && currentEndValue > 0
+            ) {
               endParam.exponentialRampToValueAtTime(endValue, targetTime);
             } else {
               endParam.linearRampToValueAtTime(endValue, targetTime);
@@ -817,44 +893,53 @@ class SynthClient {
    * Applies smooth transition for individual parameter changes
    */
   applyWithPortamento(param, value, portamentoTime) {
-    console.log(`🎵 Applying ${param} = ${value} with ${portamentoTime}ms portamento`);
-    
+    console.log(
+      `🎵 Applying ${param} = ${value} with ${portamentoTime}ms portamento`,
+    );
 
     if (!this.unifiedSynthNode) {
-      console.log("⚠️ No unified synth node available for portamento application");
+      console.log(
+        "⚠️ No unified synth node available for portamento application",
+      );
       return;
     }
-    
+
     // Calculate portamento duration in seconds
     const portamentoDurationSec = portamentoTime / 1000;
     const targetTime = this.audioContext.currentTime + portamentoDurationSec;
-    
+
     // Get the start parameter for this param
     const startParam = this.unifiedSynthNode.parameters.get(`${param}_start`);
-    
+
     if (startParam) {
       // Get current value as starting point for ramping
       const currentValue = this.lastResolvedValues[param] || startParam.value;
-      if (currentValue === undefined || (param === 'frequency' && currentValue <= 0)) {
-        throw new Error(`CRITICAL: Paused portamento for ${param} - no valid current value to ramp from`);
+      if (
+        currentValue === undefined ||
+        (param === "frequency" && currentValue <= 0)
+      ) {
+        throw new Error(
+          `CRITICAL: Paused portamento for ${param} - no valid current value to ramp from`,
+        );
       }
-      
+
       // Set starting point for ramp
       startParam.setValueAtTime(currentValue, this.audioContext.currentTime);
-      
+
       // Use exponential ramping for frequency (if > 0), linear for normalized parameters
-      if (param === 'frequency' && value > 0 && currentValue > 0) {
+      if (param === "frequency" && value > 0 && currentValue > 0) {
         startParam.exponentialRampToValueAtTime(value, targetTime);
       } else {
         startParam.linearRampToValueAtTime(value, targetTime);
       }
-      
-      
+
       // Update tracked value
       this.lastResolvedValues = this.lastResolvedValues || {};
       this.lastResolvedValues[param] = value;
     } else {
-      console.warn(`⚠️ Parameter ${param}_start not found for portamento application`);
+      console.warn(
+        `⚠️ Parameter ${param}_start not found for portamento application`,
+      );
     }
   }
 
@@ -862,7 +947,7 @@ class SynthClient {
 
   handleProgramUpdate(message) {
     if (this.verbose) console.log("📨 PROGRAM_UPDATE received:", message);
-    
+
     if (!this.voiceNode || !this.programNode) {
       // Cache and apply after audio/worklets are initialized
       console.warn("⚠️ Worklets not ready; caching PROGRAM_UPDATE for later");
@@ -875,7 +960,7 @@ class SynthClient {
 
     // Store program config in main thread (we are the musical brain now)
     this.programConfig = {};
-    
+
     // Handle synthesis active state
     if (message.synthesisActive !== undefined) {
       if (this.voiceNode && this.voiceNode.parameters.has("active")) {
@@ -893,7 +978,13 @@ class SynthClient {
     for (const paramName in message) {
       // Skip non-parameter fields
       if (
-        ["type", "timestamp", "synthesisActive", "isManualMode", "portamentoTime"].includes(
+        [
+          "type",
+          "timestamp",
+          "synthesisActive",
+          "isManualMode",
+          "portamentoTime",
+        ].includes(
           paramName,
         )
       ) continue;
@@ -905,29 +996,46 @@ class SynthClient {
 
       // Error guard: reject messages with scope field
       if ("scope" in paramData) {
-        console.error(`BREAKING: Parameter '${paramName}' contains forbidden 'scope' field. Ignoring message.`);
-        throw new Error(`Parameter '${paramName}' has scope field - this is forbidden`);
+        console.error(
+          `BREAKING: Parameter '${paramName}' contains forbidden 'scope' field. Ignoring message.`,
+        );
+        throw new Error(
+          `Parameter '${paramName}' has scope field - this is forbidden`,
+        );
       }
-      
+
       // Handle unified format with interpolation + generators
-      
+
       // Validate baseValue for periodic generators
-      if (paramData.startValueGenerator?.type === 'periodic' && paramData.baseValue === undefined) {
-        console.error(`🚨 CRITICAL: Periodic generator for ${paramName} missing baseValue!`);
-        console.error(`🚨 This means controller sent incomplete parameter data`);
-        throw new Error(`Missing baseValue for periodic generator ${paramName} - controller bug?`);
+      if (
+        paramData.startValueGenerator?.type === "periodic" &&
+        paramData.baseValue === undefined
+      ) {
+        console.error(
+          `🚨 CRITICAL: Periodic generator for ${paramName} missing baseValue!`,
+        );
+        console.error(
+          `🚨 This means controller sent incomplete parameter data`,
+        );
+        throw new Error(
+          `Missing baseValue for periodic generator ${paramName} - controller bug?`,
+        );
       }
 
       // Initialize HRG state for periodic generators
       this._initializeHRGState(paramName, paramData);
-      
+
       if (this.verbose) {
-        console.log(`🎼 ${paramData.interpolation} interpolation for ${paramName}`);
+        console.log(
+          `🎼 ${paramData.interpolation} interpolation for ${paramName}`,
+        );
       }
     }
 
-    console.log("✅ Program config stored in main thread, HRG states initialized");
-    
+    console.log(
+      "✅ Program config stored in main thread, HRG states initialized",
+    );
+
     // New paradigm: play vs pause governs application timing
     // - Playing: stage for EOC (handled in handleCycleReset)
     // - Paused: apply immediately with global portamento
@@ -937,45 +1045,60 @@ class SynthClient {
         // Nothing to do now; handleCycleReset will push start/end AudioParams
       } else {
         const pt = message.portamentoTime ?? 0;
-        console.log(`⚡ Applying program update now with ${pt}ms portamento (paused)`);
-        
+        console.log(
+          `⚡ Applying program update now with ${pt}ms portamento (paused)`,
+        );
+
         // Call activateImmediateSynthesis only when synthesis is being enabled for the first time
         if (message.synthesisActive && !this.synthesisActive) {
           this.activateImmediateSynthesis();
         }
-        
+
         // Apply changed parameters with portamento (for all paused updates, regardless of synthesis state)
         for (const paramName in message) {
-          if (['type', 'timestamp', 'synthesisActive', 'isManualMode', 'portamentoTime'].includes(paramName)) {
+          if (
+            [
+              "type",
+              "timestamp",
+              "synthesisActive",
+              "isManualMode",
+              "portamentoTime",
+            ].includes(paramName)
+          ) {
             continue; // Skip meta fields
           }
-          
+
           // Standard parameter update: update config first
           this.programConfig[paramName] = message[paramName];
-          
+
           // Selectively refresh HRG state for changed positions only
-          if (message[paramName].startValueGenerator?.type === 'periodic') {
-            this._reinitHRGPosition(paramName, 'start');
+          if (message[paramName].startValueGenerator?.type === "periodic") {
+            this._reinitHRGPosition(paramName, "start");
           }
-          if (message[paramName].endValueGenerator?.type === 'periodic' && this.programConfig[paramName].interpolation === 'cosine') {
-            this._reinitHRGPosition(paramName, 'end');
+          if (
+            message[paramName].endValueGenerator?.type === "periodic" &&
+            this.programConfig[paramName].interpolation === "cosine"
+          ) {
+            this._reinitHRGPosition(paramName, "end");
           }
-          
+
           // Apply single parameter with portamento
           this.applySingleParamWithPortamento(paramName, pt);
         }
-        
+
         // Send updated interpolation types to worklet after processing all parameters
         const interpolationTypes = {};
-        for (const [paramName, paramConfig] of Object.entries(this.programConfig)) {
+        for (
+          const [paramName, paramConfig] of Object.entries(this.programConfig)
+        ) {
           if (paramConfig.interpolation) {
             interpolationTypes[paramName] = paramConfig.interpolation;
           }
         }
-        
+
         this.unifiedSynthNode.port.postMessage({
           type: "SET_INTERPOLATION_TYPES",
-          params: interpolationTypes
+          params: interpolationTypes,
         });
       }
     }
@@ -983,16 +1106,18 @@ class SynthClient {
 
   handleSubParameterUpdate(message) {
     if (!this.programConfig) {
-      console.warn("⚠️ Sub-parameter update received before program initialization");
+      console.warn(
+        "⚠️ Sub-parameter update received before program initialization",
+      );
       return;
     }
 
     const { paramPath, value, portamentoTime } = message;
-    const pathParts = paramPath.split('.');
+    const pathParts = paramPath.split(".");
     const paramName = pathParts[0];
-    
+
     console.log(`🔧 Sub-parameter update: ${paramPath} = ${value}`);
-    
+
     if (!this.programConfig[paramName]) {
       throw new Error(`CRITICAL: Unknown parameter ${paramName}`);
     }
@@ -1001,46 +1126,55 @@ class SynthClient {
     if (!this._setByPath(this.programConfig, paramPath, value)) {
       throw new Error(`CRITICAL: Failed to update path ${paramPath}`);
     }
-    
+
     // Re-randomize HRG indices for SIN or behavior changes
-    if (paramPath.includes('.numerators') || 
-        paramPath.includes('.denominators') || 
-        paramPath.includes('Behavior')) {
-      if (paramPath.startsWith('frequency.startValueGenerator.')) {
-        this._reinitHRGPosition('frequency', 'start');
-      } else if (paramPath.startsWith('frequency.endValueGenerator.')) {
-        this._reinitHRGPosition('frequency', 'end');
+    if (
+      paramPath.includes(".numerators") ||
+      paramPath.includes(".denominators") ||
+      paramPath.includes("Behavior")
+    ) {
+      if (paramPath.startsWith("frequency.startValueGenerator.")) {
+        this._reinitHRGPosition("frequency", "start");
+      } else if (paramPath.startsWith("frequency.endValueGenerator.")) {
+        this._reinitHRGPosition("frequency", "end");
       }
     }
-    
+
     // Clear RBG state for behavior changes to allow random behavior to take effect
-    if (paramPath.includes('.sequenceBehavior')) {
-      const pathParts = paramPath.split('.');
+    if (paramPath.includes(".sequenceBehavior")) {
+      const pathParts = paramPath.split(".");
       const paramName = pathParts[0];
       const generatorType = pathParts[1]; // 'startValueGenerator' or 'endValueGenerator'
-      
-      if (generatorType === 'startValueGenerator') {
+
+      if (generatorType === "startValueGenerator") {
         const stateKey = `${paramName}_start`;
         delete this.rbgState[stateKey];
-        console.log(`🎲 Cleared RBG state for ${stateKey} due to behavior change to ${value}`);
-      } else if (generatorType === 'endValueGenerator') {
+        console.log(
+          `🎲 Cleared RBG state for ${stateKey} due to behavior change to ${value}`,
+        );
+      } else if (generatorType === "endValueGenerator") {
         const stateKey = `${paramName}_end`;
         delete this.rbgState[stateKey];
-        console.log(`🎲 Cleared RBG state for ${stateKey} due to behavior change to ${value}`);
+        console.log(
+          `🎲 Cleared RBG state for ${stateKey} due to behavior change to ${value}`,
+        );
       }
     }
-    
+
     // Apply immediately if paused, stage for EOC if playing
     if (this.isPlaying) {
-      console.log(`📋 Staging sub-parameter update for EOC: ${paramPath} = ${value}`);
+      console.log(
+        `📋 Staging sub-parameter update for EOC: ${paramPath} = ${value}`,
+      );
       // Store the change to be applied at next EOC
       // The config is already updated above, so EOC will pick up the new values
     } else {
-      console.log(`⚡ Applying sub-parameter update immediately: ${paramPath} = ${value}`);
+      console.log(
+        `⚡ Applying sub-parameter update immediately: ${paramPath} = ${value}`,
+      );
       this.applySingleParamWithPortamento(paramName, portamentoTime);
     }
   }
-
 
   // OBSOLETE - These methods were used by the old monolithic worklet
   // applyProgramUpdateFromWorklet(parameters) {
@@ -1056,7 +1190,9 @@ class SynthClient {
     this.receivedCpm = message.cpm; // Legacy, may be null
     this.receivedStepsPerCycle = message.stepsPerCycle;
     this.receivedCycleLength = message.cycleLength;
-    this.receivedIsPlaying = message.isPlaying !== undefined ? message.isPlaying : true; // Default to true for backward compatibility
+    this.receivedIsPlaying = message.isPlaying !== undefined
+      ? message.isPlaying
+      : true; // Default to true for backward compatibility
     this.lastPhasorMessage = performance.now();
 
     // Calculate phasor rate
@@ -1064,9 +1200,11 @@ class SynthClient {
 
     // Update phasor worklet parameters
     if (this.phasorWorklet) {
-      this.phasorWorklet.parameters.get('cycleLength').value = this.receivedCycleLength;
-      this.phasorWorklet.parameters.get('stepsPerCycle').value = this.receivedStepsPerCycle;
-      
+      this.phasorWorklet.parameters.get("cycleLength").value =
+        this.receivedCycleLength;
+      this.phasorWorklet.parameters.get("stepsPerCycle").value =
+        this.receivedStepsPerCycle;
+
       // Control phasor playback based on global playing state
       if (this.receivedIsPlaying) {
         this.phasorWorklet.port.postMessage({ type: "start" });
@@ -1074,15 +1212,20 @@ class SynthClient {
         this.phasorWorklet.port.postMessage({ type: "stop" });
       }
     }
-    
+
     // Update unified synth worklet with playing state for portamento behavior
-    if (this.unifiedSynthNode && this.unifiedSynthNode.parameters.has('isPlaying')) {
-      this.unifiedSynthNode.parameters.get('isPlaying').value = this.receivedIsPlaying ? 1 : 0;
+    if (
+      this.unifiedSynthNode && this.unifiedSynthNode.parameters.has("isPlaying")
+    ) {
+      this.unifiedSynthNode.parameters.get("isPlaying").value =
+        this.receivedIsPlaying ? 1 : 0;
     }
 
     // Store official timing and start look-ahead scheduler if needed
     if (this.programNode) {
-      const periodDisplay = message.cpm ? `${message.cpm} CPM` : `${this.receivedCycleLength}s period`;
+      const periodDisplay = message.cpm
+        ? `${message.cpm} CPM`
+        : `${this.receivedCycleLength}s period`;
       console.log(`⏰ Received phasor sync: ${periodDisplay}`);
 
       // Check if timing has changed significantly
@@ -1210,7 +1353,7 @@ class SynthClient {
 
           // Update phase display
           this.updatePhaseDisplay();
-          
+
           // Update display to show worklet phasor with error info
           if (this.elements.connectionStatus && this.verbose) {
             const errorDisplay = Math.abs(phaseError) > 0.001
@@ -1224,7 +1367,9 @@ class SynthClient {
           }
         } else if (event.data.type === "cycle-reset") {
           // Phasor worklet has reset - trigger new program worklet ramp
-          console.log(`🔄 Cycle reset received: sample ${event.data.sampleIndex}/${event.data.blockSize}, cycle ${event.data.cycleLength}s`);
+          console.log(
+            `🔄 Cycle reset received: sample ${event.data.sampleIndex}/${event.data.blockSize}, cycle ${event.data.cycleLength}s`,
+          );
           this.handleCycleReset(event.data);
         } else if (event.data.type === "step-trigger") {
           this.onStepTrigger(event.data.step, event.data.stepsPerCycle);
@@ -1233,8 +1378,14 @@ class SynthClient {
 
       // Connect phasor worklet output to unified synth worklet phase parameter
       if (this.unifiedSynthNode) {
-        this.phasorWorklet.connect(this.unifiedSynthNode.parameters.get("phase"));
-        if (this.verbose) console.log("🔗 Phasor worklet connected to unified synth worklet phase parameter");
+        this.phasorWorklet.connect(
+          this.unifiedSynthNode.parameters.get("phase"),
+        );
+        if (this.verbose) {
+          console.log(
+            "🔗 Phasor worklet connected to unified synth worklet phase parameter",
+          );
+        }
       }
 
       // Start the worklet phasor
@@ -1295,7 +1446,9 @@ class SynthClient {
     // Validate program config before EOC resolution
     if (!this.programConfig || Object.keys(this.programConfig).length === 0) {
       console.error("🚨 EOC RESET WITH EMPTY PROGRAM CONFIG!");
-      console.error("🚨 This means synth received EOC before controller sent parameters");
+      console.error(
+        "🚨 This means synth received EOC before controller sent parameters",
+      );
       // Don't throw here, but log loudly - EOC can happen before controller connects
       return;
     }
@@ -1312,36 +1465,56 @@ class SynthClient {
     if (this.reresolveAtNextEOC) {
       console.log(`🔀 Re-randomizing static HRG indices at EOC`);
       for (const [param, hrgData] of Object.entries(this.hrgState)) {
-        if (hrgData.start?.numeratorBehavior === 'static') {
+        if (hrgData.start?.numeratorBehavior === "static") {
           const numerators = hrgData.start.numerators;
           hrgData.start.indexN = Math.floor(Math.random() * numerators.length);
-          console.log(`🎲 ${param} numerator: new static index ${hrgData.start.indexN} (value: ${numerators[hrgData.start.indexN]})`);
+          console.log(
+            `🎲 ${param} numerator: new static index ${hrgData.start.indexN} (value: ${
+              numerators[hrgData.start.indexN]
+            })`,
+          );
         }
-        if (hrgData.start?.denominatorBehavior === 'static') {
+        if (hrgData.start?.denominatorBehavior === "static") {
           const denominators = hrgData.start.denominators;
-          hrgData.start.indexD = Math.floor(Math.random() * denominators.length);
-          console.log(`🎲 ${param} denominator: new static index ${hrgData.start.indexD} (value: ${denominators[hrgData.start.indexD]})`);
+          hrgData.start.indexD = Math.floor(
+            Math.random() * denominators.length,
+          );
+          console.log(
+            `🎲 ${param} denominator: new static index ${hrgData.start.indexD} (value: ${
+              denominators[hrgData.start.indexD]
+            })`,
+          );
         }
       }
-      
+
       // Also clear static RBG values to force re-generation
       this.rbgState = {};
       console.log(`🎲 Cleared static RBG values for re-resolution`);
-      
+
       this.reresolveAtNextEOC = false;
     }
 
     // Apply any staged parameter updates before resolving values
-    if (this.stagedParamUpdates && Object.keys(this.stagedParamUpdates).length > 0) {
-      console.log(`📋 Applying ${Object.keys(this.stagedParamUpdates).length} staged parameter updates at EOC`);
-      
+    if (
+      this.stagedParamUpdates && Object.keys(this.stagedParamUpdates).length > 0
+    ) {
+      console.log(
+        `📋 Applying ${
+          Object.keys(this.stagedParamUpdates).length
+        } staged parameter updates at EOC`,
+      );
+
       for (const [param, update] of Object.entries(this.stagedParamUpdates)) {
-        console.log(`📋 Applying staged update: ${param} = ${update.startValue}${update.endValue !== undefined ? ` → ${update.endValue}` : ''} (${update.interpolation})`);
-        
+        console.log(
+          `📋 Applying staged update: ${param} = ${update.startValue}${
+            update.endValue !== undefined ? ` → ${update.endValue}` : ""
+          } (${update.interpolation})`,
+        );
+
         // The programConfig was already updated in handleUnifiedParamUpdate
         // Just log for confirmation that changes will take effect
       }
-      
+
       // Clear staged updates after applying
       this.stagedParamUpdates = {};
     }
@@ -1351,62 +1524,81 @@ class SynthClient {
 
     for (const [param, config] of Object.entries(this.programConfig)) {
       // All parameters now use unified format with generators
-      if (config.interpolation === 'step') {
-          // Step interpolation - resolve single value and set start parameter
-          let stepValue;
-          if (config.startValueGenerator?.type === 'periodic') {
-            // HRG - use sequence state
-            stepValue = this._resolveHRG(param, 'start');
-          } else if (config.startValueGenerator?.type === 'normalised') {
-            // RBG - resolve scalar
-            stepValue = this._resolveRBG(config.startValueGenerator, param, 'start');
-          }
-          
-          if (stepValue !== undefined) {
-            const startParam = this.unifiedSynthNode.parameters.get(`${param}_start`);
-            if (startParam) {
-              startParam.setValueAtTime(stepValue, resetTime);
-              resolvedValues[param] = stepValue;
-            }
-          }
-        } else if (config.interpolation === 'cosine') {
-          // Cosine interpolation - resolve start and end values
-          let startValue, endValue;
-          
-          if (config.startValueGenerator?.type === 'periodic') {
-            startValue = this._resolveHRG(param, 'start');
-          } else if (config.startValueGenerator?.type === 'normalised') {
-            startValue = this._resolveRBG(config.startValueGenerator, param, 'start');
-          } else {
-            throw new Error(`CRITICAL: Unknown start generator type for ${param}: ${config.startValueGenerator?.type}`);
-          }
-
-          if (config.endValueGenerator?.type === 'periodic') {
-            endValue = this._resolveHRG(param, 'end');
-          } else if (config.endValueGenerator?.type === 'normalised') {
-            endValue = this._resolveRBG(config.endValueGenerator, param, 'end');
-          } else {
-            throw new Error(`CRITICAL: Unknown end generator type for ${param}: ${config.endValueGenerator?.type}`);
-          }
-
-          // Set both start and end AudioParams
-          const startParam = this.unifiedSynthNode.parameters.get(`${param}_start`);
-          const endParam = this.unifiedSynthNode.parameters.get(`${param}_end`);
-          
-          console.log(`🎯 ${param} cosine envelope: start=${startValue?.toFixed(3)}, end=${endValue?.toFixed(3)}`);
-          
-          if (startParam && startValue !== undefined) {
-            startParam.setValueAtTime(startValue, resetTime);
-          }
-          if (endParam && endValue !== undefined) {
-            endParam.setValueAtTime(endValue, resetTime);
-          }
-          
-          resolvedValues[param] = { start: startValue, end: endValue };
+      if (config.interpolation === "step") {
+        // Step interpolation - resolve single value and set start parameter
+        let stepValue;
+        if (config.startValueGenerator?.type === "periodic") {
+          // HRG - use sequence state
+          stepValue = this._resolveHRG(param, "start");
+        } else if (config.startValueGenerator?.type === "normalised") {
+          // RBG - resolve scalar
+          stepValue = this._resolveRBG(
+            config.startValueGenerator,
+            param,
+            "start",
+          );
         }
+
+        if (stepValue !== undefined) {
+          const startParam = this.unifiedSynthNode.parameters.get(
+            `${param}_start`,
+          );
+          if (startParam) {
+            startParam.setValueAtTime(stepValue, resetTime);
+            resolvedValues[param] = stepValue;
+          }
+        }
+      } else if (config.interpolation === "cosine") {
+        // Cosine interpolation - resolve start and end values
+        let startValue, endValue;
+
+        if (config.startValueGenerator?.type === "periodic") {
+          startValue = this._resolveHRG(param, "start");
+        } else if (config.startValueGenerator?.type === "normalised") {
+          startValue = this._resolveRBG(
+            config.startValueGenerator,
+            param,
+            "start",
+          );
+        } else {
+          throw new Error(
+            `CRITICAL: Unknown start generator type for ${param}: ${config.startValueGenerator?.type}`,
+          );
+        }
+
+        if (config.endValueGenerator?.type === "periodic") {
+          endValue = this._resolveHRG(param, "end");
+        } else if (config.endValueGenerator?.type === "normalised") {
+          endValue = this._resolveRBG(config.endValueGenerator, param, "end");
+        } else {
+          throw new Error(
+            `CRITICAL: Unknown end generator type for ${param}: ${config.endValueGenerator?.type}`,
+          );
+        }
+
+        // Set both start and end AudioParams
+        const startParam = this.unifiedSynthNode.parameters.get(
+          `${param}_start`,
+        );
+        const endParam = this.unifiedSynthNode.parameters.get(`${param}_end`);
+
+        console.log(
+          `🎯 ${param} cosine envelope: start=${startValue?.toFixed(3)}, end=${
+            endValue?.toFixed(3)
+          }`,
+        );
+
+        if (startParam && startValue !== undefined) {
+          startParam.setValueAtTime(startValue, resetTime);
+        }
+        if (endParam && endValue !== undefined) {
+          endParam.setValueAtTime(endValue, resetTime);
+        }
+
+        resolvedValues[param] = { start: startValue, end: endValue };
+      }
     }
-    
-    
+
     // Send updated interpolation types to worklet after processing all parameters at EOC
     const interpolationTypes = {};
     for (const [paramName, paramConfig] of Object.entries(this.programConfig)) {
@@ -1414,35 +1606,35 @@ class SynthClient {
         interpolationTypes[paramName] = paramConfig.interpolation;
       }
     }
-    
+
     this.unifiedSynthNode.port.postMessage({
       type: "SET_INTERPOLATION_TYPES",
-      params: interpolationTypes
+      params: interpolationTypes,
     });
 
     // Log resolved values for debugging
     if (Object.keys(resolvedValues).length > 0) {
       console.log(`[EOC] Resolved values:`, resolvedValues);
       // Specific frequency logging
-      if ('frequency' in resolvedValues) {
-        console.log(`[EOC] frequency: ${JSON.stringify(resolvedValues.frequency)}`);
+      if ("frequency" in resolvedValues) {
+        console.log(
+          `[EOC] frequency: ${JSON.stringify(resolvedValues.frequency)}`,
+        );
       }
-      
     }
 
     // Handle scene loading and routing (simplified)
     if (this.pendingSceneState) {
       const snapshot = this.pendingSceneState;
       this.pendingSceneState = null;
-      
+
       // Apply direct values for snapshot params
       for (const [param, value] of Object.entries(snapshot)) {
         this._setDirectValue(param, value);
       }
-      
+
       console.log(`📋 Applied scene snapshot:`, snapshot);
     }
-
 
     // Capture scene if requested
     if (this.pendingCaptureBank !== null) {
@@ -1612,8 +1804,10 @@ class SynthClient {
 
   updatePhaseDisplay() {
     // Prioritize worklet phasor for accuracy, fallback to interpolated
-    const phaseToShow = this.workletPhasor !== undefined ? this.workletPhasor : this.interpolatedPhasor || 0;
-    
+    const phaseToShow = this.workletPhasor !== undefined
+      ? this.workletPhasor
+      : this.interpolatedPhasor || 0;
+
     // Update phase value text with higher precision
     if (this.elements.phaseValue) {
       this.elements.phaseValue.textContent = `φ: ${phaseToShow.toFixed(4)}`;
@@ -1826,6 +2020,50 @@ class SynthClient {
     return min + (max - min) * random;
   }
 
+  // Immediate Re-initialization Methods
+
+  handleImmediateReinitialize() {
+    console.log("⚡ Re-initializing all stochastic generators...");
+
+    // Guard for config presence
+    if (!this.programConfig || Object.keys(this.programConfig).length === 0) {
+      console.warn("No program config available for re-initialization");
+      return;
+    }
+
+    // Clear all cached RBG values
+    this.rbgState = {};
+    console.log("🎲 Cleared all RBG cached values");
+
+    // Re-initialize HRG indices for all parameters
+    for (const paramName in this.programConfig) {
+      const paramConfig = this.programConfig[paramName];
+
+      // Re-init start position if it uses HRG
+      if (paramConfig.startValueGenerator?.type === "periodic") {
+        this._reinitHRGPosition(paramName, "start");
+      }
+
+      // Re-init end position if it uses HRG with cosine interpolation
+      if (
+        paramConfig.endValueGenerator?.type === "periodic" &&
+        paramConfig.interpolation === "cosine"
+      ) {
+        this._reinitHRGPosition(paramName, "end");
+      }
+    }
+
+    // Re-resolve and apply immediately
+    const resolved = this._resolveProgram(this.programConfig);
+    this.applyResolvedState(resolved);
+
+    // Update status
+    this.updateSynthesisStatus(
+      "re-resolved",
+      "Stochastic state re-initialized",
+    );
+  }
+
   // Scene Memory Methods
 
   handleSaveScene(payload) {
@@ -1836,20 +2074,30 @@ class SynthClient {
   captureScene(bank) {
     const snapshot = {};
     const sequences = {};
-    
+
     // Capture minimal scene state based on parameter mode and generator type
-    for (const param of ['frequency', 'vowelX', 'vowelY', 'zingAmount', 
-                          'zingMorph', 'symmetry', 'amplitude', 'whiteNoise']) {
+    for (
+      const param of [
+        "frequency",
+        "vowelX",
+        "vowelY",
+        "zingAmount",
+        "zingMorph",
+        "symmetry",
+        "amplitude",
+        "whiteNoise",
+      ]
+    ) {
       const paramConfig = this.programConfig[param];
-      
+
       if (!paramConfig) {
         // No configuration available
         continue;
       }
-      
-      if (paramConfig.interpolation === 'step') {
+
+      if (paramConfig.interpolation === "step") {
         // Program step mode - check generator type
-        if (paramConfig.startValueGenerator?.type === 'periodic') {
+        if (paramConfig.startValueGenerator?.type === "periodic") {
           // HRG - save sequence state (not values)
           const hrgState = this.hrgState[param]?.start;
           if (hrgState) {
@@ -1859,13 +2107,13 @@ class SynthClient {
               indexN: hrgState.indexN,
               indexD: hrgState.indexD,
               orderN: hrgState.orderN,
-              orderD: hrgState.orderD
+              orderD: hrgState.orderD,
             };
           }
-        } else if (paramConfig.startValueGenerator?.type === 'normalised') {
+        } else if (paramConfig.startValueGenerator?.type === "normalised") {
           // RBG - determine if stat or rand mode
           const generator = paramConfig.startValueGenerator;
-          if (typeof generator.range === 'number') {
+          if (typeof generator.range === "number") {
             // Stat mode - save scalar value
             snapshot[param] = generator.range;
           }
@@ -1874,52 +2122,74 @@ class SynthClient {
       }
       // Skip cosine parameters - they regenerate from program
     }
-    
+
     // Save to in-memory array (ephemeral)
     this.sceneSnapshots[bank] = { snapshot, sequences };
-    
-    console.log(`[SCENE] saved to memory slot ${bank}, sequences.frequency:`, sequences.frequency, `snapshot.frequency:`, snapshot.frequency);
+
+    console.log(
+      `[SCENE] saved to memory slot ${bank}, sequences.frequency:`,
+      sequences.frequency,
+      `snapshot.frequency:`,
+      snapshot.frequency,
+    );
   }
 
   handleLoadScene(payload) {
     const { memoryLocation, program } = payload;
-    
+
     // Check if we have a saved snapshot in memory first
     const saved = this.sceneSnapshots[memoryLocation];
-    
+
     // Only update program config if we don't have saved state
     // (If we have saved state, we want to keep using the config that was active when we saved)
     if (!saved) {
       this.programConfig = {};
       for (const paramName in program) {
-        if (!["type", "timestamp", "synthesisActive", "isManualMode"].includes(paramName)) {
+        if (
+          !["type", "timestamp", "synthesisActive", "isManualMode"].includes(
+            paramName,
+          )
+        ) {
           this.programConfig[paramName] = program[paramName];
         }
       }
     }
-    
+
     if (saved) {
       const { snapshot, sequences } = saved;
-      
-      console.log(`[SCENE] load from memory slot ${memoryLocation}, snapshotKeys:`, Object.keys(snapshot), `hasHRG:`, Object.keys(sequences).length > 0);
-      
+
+      console.log(
+        `[SCENE] load from memory slot ${memoryLocation}, snapshotKeys:`,
+        Object.keys(snapshot),
+        `hasHRG:`,
+        Object.keys(sequences).length > 0,
+      );
+
       // Initialize HRG state - but only for params without saved sequences
       for (const paramName in this.programConfig) {
         if (sequences[paramName]) {
           // Use saved sequence data to restore complete HRG state
-          this._restoreHRGState(paramName, sequences[paramName], this.programConfig[paramName]);
-          
+          this._restoreHRGState(
+            paramName,
+            sequences[paramName],
+            this.programConfig[paramName],
+          );
+
           // Detailed frequency HRG state logging
-          if (paramName === 'frequency') {
+          if (paramName === "frequency") {
             const hrgState = this.hrgState[paramName]?.start;
-            console.log(`[LOAD_SCENE] frequency HRG state - behavior: ${hrgState.numeratorBehavior}/${hrgState.denominatorBehavior}, index: ${hrgState.indexN}/${hrgState.indexD}, arrays: [${hrgState.numerators?.slice(0,3).join(',')}...] / [${hrgState.denominators?.slice(0,3).join(',')}...]`);
+            console.log(
+              `[LOAD_SCENE] frequency HRG state - behavior: ${hrgState.numeratorBehavior}/${hrgState.denominatorBehavior}, index: ${hrgState.indexN}/${hrgState.indexD}, arrays: [${
+                hrgState.numerators?.slice(0, 3).join(",")
+              }...] / [${hrgState.denominators?.slice(0, 3).join(",")}...]`,
+            );
           }
         } else {
           // No saved sequence - initialize fresh with per-synth randomization
           this._initializeHRGState(paramName, this.programConfig[paramName]);
         }
       }
-      
+
       // Handle scalar values - apply immediately if paused, stage if playing
       if (Object.keys(snapshot).length > 0) {
         if (this.isPlaying) {
@@ -1928,7 +2198,10 @@ class SynthClient {
           console.log(`📋 Staged scene snapshot for next EOC:`, snapshot);
         } else {
           // Paused: apply immediately with portamento
-          console.log(`⚡ Applying scene snapshot immediately (paused):`, snapshot);
+          console.log(
+            `⚡ Applying scene snapshot immediately (paused):`,
+            snapshot,
+          );
           for (const [param, value] of Object.entries(snapshot)) {
             // Use portamento for smooth transitions when paused
             const portamentoTime = 100; // Default portamento time
@@ -1937,7 +2210,9 @@ class SynthClient {
         }
       }
     } else {
-      console.log(`[SCENE] load, no data in memory slot ${memoryLocation} - initializing fresh`);
+      console.log(
+        `[SCENE] load, no data in memory slot ${memoryLocation} - initializing fresh`,
+      );
       // No saved scene - initialize fresh HRG state with per-synth randomization
       for (const paramName in this.programConfig) {
         this._initializeHRGState(paramName, this.programConfig[paramName]);
@@ -1947,7 +2222,7 @@ class SynthClient {
 
   clearAllBanks() {
     // Clear all in-memory scene snapshots
-    const clearedCount = this.sceneSnapshots.filter(s => s).length;
+    const clearedCount = this.sceneSnapshots.filter((s) => s).length;
     this.sceneSnapshots = [];
     console.log(`🧹 Cleared ${clearedCount} synth scene bank(s) from memory`);
   }
@@ -1966,40 +2241,44 @@ class SynthClient {
     if (!this.phasorWorklet || !this.unifiedSynthNode) return;
 
     switch (message.action) {
-      case 'play':
+      case "play":
         // Update isPlaying parameter
-        this.unifiedSynthNode.parameters.get('isPlaying').value = 1;
+        this.unifiedSynthNode.parameters.get("isPlaying").value = 1;
         this.isPlaying = true;
-        
-        this.phasorWorklet.port.postMessage({ type: 'start' });
-        
+
+        this.phasorWorklet.port.postMessage({ type: "start" });
+
         if (this.isPaused) {
           // Resume from paused position
           console.log(`🎯 Resuming from paused phase: ${this.pausedPhase}`);
           this.isPaused = false;
-        } else if (this.receivedPhasor === 0.0 || this.receivedPhasor === undefined) {
+        } else if (
+          this.receivedPhasor === 0.0 || this.receivedPhasor === undefined
+        ) {
           // Starting from beginning
-          console.log("🎯 Starting from phase 0.0 - triggering immediate cycle reset");
+          console.log(
+            "🎯 Starting from phase 0.0 - triggering immediate cycle reset",
+          );
           this.triggerImmediateCycleReset();
         }
         break;
-        
-      case 'pause':
+
+      case "pause":
         // Update isPlaying parameter
-        this.unifiedSynthNode.parameters.get('isPlaying').value = 0;
+        this.unifiedSynthNode.parameters.get("isPlaying").value = 0;
         this.isPlaying = false;
-        
-        this.phasorWorklet.port.postMessage({ type: 'stop' });
+
+        this.phasorWorklet.port.postMessage({ type: "stop" });
         this.pauseEnvelopes();
         break;
-        
-      case 'stop':
+
+      case "stop":
         // Update isPlaying parameter
-        this.unifiedSynthNode.parameters.get('isPlaying').value = 0;
+        this.unifiedSynthNode.parameters.get("isPlaying").value = 0;
         this.isPlaying = false;
-        
-        this.phasorWorklet.port.postMessage({ type: 'stop' });
-        this.phasorWorklet.port.postMessage({ type: 'reset' });
+
+        this.phasorWorklet.port.postMessage({ type: "stop" });
+        this.phasorWorklet.port.postMessage({ type: "reset" });
         this.stopEnvelopes();
         break;
     }
@@ -2008,33 +2287,37 @@ class SynthClient {
   handleJumpToEOC(message) {
     console.log("🎮 Jump to EOC / Reset");
     if (this.phasorWorklet) {
-      this.phasorWorklet.port.postMessage({ type: 'reset' });
+      this.phasorWorklet.port.postMessage({ type: "reset" });
     }
-    
+
     // Immediately trigger cycle reset to start envelopes
     this.triggerImmediateCycleReset();
   }
-  
+
   triggerImmediateCycleReset() {
     if (!this.programNode) return;
-    
+
     console.log("🔄 Triggering immediate cycle reset for envelope restart");
-    
+
     // Create synthetic reset data
     const resetData = {
       cycleLength: this.receivedCycleLength || 2.0,
       sampleIndex: 0,
-      blockSize: 128
+      blockSize: 128,
     };
-    
+
     // Call handleCycleReset to start envelopes immediately
     this.handleCycleReset(resetData);
   }
 
   handleUnifiedParamUpdate(message) {
     const statusIcon = message.isPlaying ? "📋*" : "⚡";
-    console.log(`${statusIcon} Unified param update: ${message.param} = ${message.startValue}${message.endValue !== undefined ? ` → ${message.endValue}` : ''}`);
-    
+    console.log(
+      `${statusIcon} Unified param update: ${message.param} = ${message.startValue}${
+        message.endValue !== undefined ? ` → ${message.endValue}` : ""
+      }`,
+    );
+
     if (message.isPlaying) {
       // Playing: Stage for EOC application
       console.log(`📋 Staging ${message.param} for EOC`);
@@ -2045,27 +2328,34 @@ class SynthClient {
         interpolation: message.interpolation,
         portamentoTime: message.portamentoTime,
       };
-      
+
       // Also update programConfig so EOC resolution uses the new values
       if (this.programConfig && this.programConfig[message.param]) {
         console.log(`📋 Updating programConfig.${message.param} for EOC`);
-        
+
         // Update interpolation type
         this.programConfig[message.param].interpolation = message.interpolation;
-        
+
         // Preserve existing generator configuration, only update what's needed
         const existingConfig = this.programConfig[message.param];
-        
-        if (message.interpolation === 'step') {
+
+        if (message.interpolation === "step") {
           // Step interpolation - preserve existing start generator config
           if (existingConfig.startValueGenerator) {
             // Keep existing generator but update for single value if it was resolved from a range
             const startGen = { ...existingConfig.startValueGenerator };
             // If the generator has a range but we got a single resolved value, it means
             // this was an interpolation change, not a range change - keep the original range
-            if (typeof startGen.range === 'object' && startGen.range.min !== undefined) {
+            if (
+              typeof startGen.range === "object" &&
+              startGen.range.min !== undefined
+            ) {
               // Keep the existing range object for proper RBG behavior
-              console.log(`📋 Preserving range ${JSON.stringify(startGen.range)} for ${message.param} step interpolation`);
+              console.log(
+                `📋 Preserving range ${
+                  JSON.stringify(startGen.range)
+                } for ${message.param} step interpolation`,
+              );
             } else {
               // Update with resolved value if it was a single value anyway
               startGen.range = message.startValue;
@@ -2074,59 +2364,84 @@ class SynthClient {
           }
           // Clear end generator for step interpolation
           delete this.programConfig[message.param].endValueGenerator;
-        } else if (message.interpolation === 'cosine') {
+        } else if (message.interpolation === "cosine") {
           // Cosine interpolation - preserve both generators, create end generator if missing
           if (existingConfig.startValueGenerator) {
             const startGen = { ...existingConfig.startValueGenerator };
-            if (typeof startGen.range === 'object' && startGen.range.min !== undefined) {
-              console.log(`📋 Preserving start range ${JSON.stringify(startGen.range)} for ${message.param} cosine interpolation`);
+            if (
+              typeof startGen.range === "object" &&
+              startGen.range.min !== undefined
+            ) {
+              console.log(
+                `📋 Preserving start range ${
+                  JSON.stringify(startGen.range)
+                } for ${message.param} cosine interpolation`,
+              );
             } else {
               startGen.range = message.startValue;
             }
             this.programConfig[message.param].startValueGenerator = startGen;
           }
-          
+
           // Ensure end generator exists for cosine interpolation
           if (existingConfig.endValueGenerator) {
             const endGen = { ...existingConfig.endValueGenerator };
-            if (typeof endGen.range === 'object' && endGen.range.min !== undefined) {
-              console.log(`📋 Preserving end range ${JSON.stringify(endGen.range)} for ${message.param} cosine interpolation`);
+            if (
+              typeof endGen.range === "object" && endGen.range.min !== undefined
+            ) {
+              console.log(
+                `📋 Preserving end range ${
+                  JSON.stringify(endGen.range)
+                } for ${message.param} cosine interpolation`,
+              );
             } else {
               endGen.range = message.endValue;
             }
             this.programConfig[message.param].endValueGenerator = endGen;
           } else {
             // Create end generator based on start generator if missing
-            console.log(`📋 Creating missing end generator for ${message.param} cosine interpolation`);
+            console.log(
+              `📋 Creating missing end generator for ${message.param} cosine interpolation`,
+            );
             this.programConfig[message.param].endValueGenerator = {
-              type: 'normalised',
+              type: "normalised",
               range: message.endValue,
-              sequenceBehavior: existingConfig.startValueGenerator?.sequenceBehavior || 'static'
+              sequenceBehavior:
+                existingConfig.startValueGenerator?.sequenceBehavior ||
+                "static",
             };
           }
         }
       }
     } else {
       // Paused/stopped: Apply immediately at current phase with portamento
-      console.log(`⚡ Applying ${message.param} immediately with ${message.portamentoTime}ms portamento`);
+      console.log(
+        `⚡ Applying ${message.param} immediately with ${message.portamentoTime}ms portamento`,
+      );
       this.applyParameterUpdate(
-        message.param, 
-        message.startValue, 
-        message.endValue, 
-        message.interpolation, 
+        message.param,
+        message.startValue,
+        message.endValue,
+        message.interpolation,
         message.portamentoTime,
-        message.currentPhase
+        message.currentPhase,
       );
     }
   }
 
-  applyParameterUpdate(param, startValue, endValue, interpolation, portamentoTime = 0, currentPhase = null) {
-
+  applyParameterUpdate(
+    param,
+    startValue,
+    endValue,
+    interpolation,
+    portamentoTime = 0,
+    currentPhase = null,
+  ) {
     if (!this.unifiedSynthNode) return;
 
     const phaseParam = this.unifiedSynthNode.parameters.get("phase");
     const phase = currentPhase !== null ? currentPhase : phaseParam.value;
-    
+
     if (interpolation === "step") {
       // Step interpolation - set AudioParam directly
       const startParam = this.unifiedSynthNode.parameters.get(`${param}_start`);
@@ -2137,29 +2452,37 @@ class SynthClient {
           startParam.setValueAtTime(startValue, this.audioContext.currentTime);
         }
       }
-      
     } else if (!this.isPlaying && endValue !== undefined) {
       // Paused with cosine interpolation - calculate interpolated value at current phase
       const shapedProgress = 0.5 - Math.cos(phase * Math.PI) * 0.5;
-      const interpolatedValue = startValue + (endValue - startValue) * shapedProgress;
-      
-      console.log(`🎯 Interpolating ${param} at phase ${phase.toFixed(3)}: ${startValue} → ${endValue} = ${interpolatedValue.toFixed(3)}`);
-      
+      const interpolatedValue = startValue +
+        (endValue - startValue) * shapedProgress;
+
+      console.log(
+        `🎯 Interpolating ${param} at phase ${
+          phase.toFixed(3)
+        }: ${startValue} → ${endValue} = ${interpolatedValue.toFixed(3)}`,
+      );
+
       const startParam = this.unifiedSynthNode.parameters.get(`${param}_start`);
       if (startParam) {
         if (portamentoTime > 0) {
           this.applyWithPortamento(param, interpolatedValue, portamentoTime);
         } else {
-          startParam.setValueAtTime(interpolatedValue, this.audioContext.currentTime);
+          startParam.setValueAtTime(
+            interpolatedValue,
+            this.audioContext.currentTime,
+          );
         }
       }
-      
     } else {
       // Playing with cosine interpolation - set start and end AudioParams
       if (endValue !== undefined) {
-        const startParam = this.unifiedSynthNode.parameters.get(`${param}_start`);
+        const startParam = this.unifiedSynthNode.parameters.get(
+          `${param}_start`,
+        );
         const endParam = this.unifiedSynthNode.parameters.get(`${param}_end`);
-        
+
         if (startParam && endParam) {
           const now = this.audioContext.currentTime;
           startParam.setValueAtTime(startValue, now);
@@ -2170,36 +2493,36 @@ class SynthClient {
   }
 
   // Portamento is now handled entirely within the unified worklet
-  
+
   pauseEnvelopes() {
     if (!this.programNode) return;
-    
+
     console.log("⏸️ Pausing envelopes at current phase");
-    
+
     const phaseParam = this.programNode.parameters.get("phase");
     const currentTime = this.audioContext.currentTime;
-    
+
     // Store current phase value for resume
     this.pausedPhase = phaseParam.value;
     this.isPaused = true;
-    
+
     // Cancel all scheduled automation and hold at current value
     phaseParam.cancelScheduledValues(currentTime);
     phaseParam.setValueAtTime(this.pausedPhase, currentTime);
   }
-  
+
   stopEnvelopes() {
     if (!this.programNode) return;
-    
+
     console.log("⏹️ Stopping envelopes and resetting to phase 0");
-    
+
     const phaseParam = this.programNode.parameters.get("phase");
     const currentTime = this.audioContext.currentTime;
-    
+
     // Reset state
     this.isPaused = false;
     this.pausedPhase = 0;
-    
+
     // Cancel all scheduled automation and set to 0
     phaseParam.cancelScheduledValues(currentTime);
     phaseParam.setValueAtTime(0, currentTime);
@@ -2209,18 +2532,26 @@ class SynthClient {
     if (this.verbose) {
       console.log("🧩 Applying resolved scene state:", resolvedState);
     }
-    
+
     for (const [paramName, value] of Object.entries(resolvedState)) {
       const v = Number.isFinite(value) ? value : 0;
-      
+
       // Snapshot values are applied directly
-      
+
       // Set the value
       if (paramName === "whiteNoise") {
         if (this.whiteNoiseAudioGain) {
-          this.whiteNoiseAudioGain.gain.setTargetAtTime(v, this.audioContext.currentTime, 0.015);
+          this.whiteNoiseAudioGain.gain.setTargetAtTime(
+            v,
+            this.audioContext.currentTime,
+            0.015,
+          );
           if (this.whiteNoiseVizGain) {
-            this.whiteNoiseVizGain.gain.setTargetAtTime(v, this.audioContext.currentTime, 0.015);
+            this.whiteNoiseVizGain.gain.setTargetAtTime(
+              v,
+              this.audioContext.currentTime,
+              0.015,
+            );
           }
           if (this.verbose) console.log(`🎚️ Scene apply: whiteNoise -> ${v}`);
         }
@@ -2252,16 +2583,24 @@ class SynthClient {
     if (this.verbose) {
       console.log("🧩 Applying resolved scene values:", resolvedState);
     }
-    
+
     for (const [paramName, value] of Object.entries(resolvedState)) {
       const v = Number.isFinite(value) ? value : 0;
-      
+
       // Just set the value - routing was already handled
       if (paramName === "whiteNoise") {
         if (this.whiteNoiseAudioGain) {
-          this.whiteNoiseAudioGain.gain.setTargetAtTime(v, this.audioContext.currentTime, 0.015);
+          this.whiteNoiseAudioGain.gain.setTargetAtTime(
+            v,
+            this.audioContext.currentTime,
+            0.015,
+          );
           if (this.whiteNoiseVizGain) {
-            this.whiteNoiseVizGain.gain.setTargetAtTime(v, this.audioContext.currentTime, 0.015);
+            this.whiteNoiseVizGain.gain.setTargetAtTime(
+              v,
+              this.audioContext.currentTime,
+              0.015,
+            );
           }
           if (this.verbose) console.log(`🎚️ Scene apply: whiteNoise -> ${v}`);
         }
@@ -2278,7 +2617,7 @@ class SynthClient {
         }
       }
     }
-    
+
     // Ensure synthesis is active if desired
     if (this.voiceNode && this.voiceNode.parameters.has("active")) {
       const activeParam = this.voiceNode.parameters.get("active");
@@ -2316,7 +2655,7 @@ class SynthClient {
   // Initialize HRG state for a parameter
   _initializeHRGState(param, config) {
     const generator = config.startValueGenerator;
-    if (!generator || generator.type !== 'periodic') return;
+    if (!generator || generator.type !== "periodic") return;
 
     const numerators = this._parseSIN(generator.numerators || "1");
     const denominators = this._parseSIN(generator.denominators || "1");
@@ -2329,15 +2668,26 @@ class SynthClient {
         denominators,
         numeratorBehavior,
         denominatorBehavior,
-        indexN: numeratorBehavior === 'static' ? Math.floor(Math.random() * numerators.length) : 0,
-        indexD: denominatorBehavior === 'static' ? Math.floor(Math.random() * denominators.length) : 0,
-        orderN: numeratorBehavior === 'shuffle' ? this._shuffleArray([...numerators]) : null,
-        orderD: denominatorBehavior === 'shuffle' ? this._shuffleArray([...denominators]) : null
-      }
+        indexN: numeratorBehavior === "static"
+          ? Math.floor(Math.random() * numerators.length)
+          : 0,
+        indexD: denominatorBehavior === "static"
+          ? Math.floor(Math.random() * denominators.length)
+          : 0,
+        orderN: numeratorBehavior === "shuffle"
+          ? this._shuffleArray([...numerators])
+          : null,
+        orderD: denominatorBehavior === "shuffle"
+          ? this._shuffleArray([...denominators])
+          : null,
+      },
     };
 
     // Initialize end state if cosine interpolation
-    if (config.interpolation === 'cosine' && config.endValueGenerator?.type === 'periodic') {
+    if (
+      config.interpolation === "cosine" &&
+      config.endValueGenerator?.type === "periodic"
+    ) {
       const endGen = config.endValueGenerator;
       const endNumerators = this._parseSIN(endGen.numerators || "1");
       const endDenominators = this._parseSIN(endGen.denominators || "1");
@@ -2349,10 +2699,18 @@ class SynthClient {
         denominators: endDenominators,
         numeratorBehavior: endNumBehavior,
         denominatorBehavior: endDenBehavior,
-        indexN: endNumBehavior === 'static' ? Math.floor(Math.random() * endNumerators.length) : 0,
-        indexD: endDenBehavior === 'static' ? Math.floor(Math.random() * endDenominators.length) : 0,
-        orderN: endNumBehavior === 'shuffle' ? this._shuffleArray([...endNumerators]) : null,
-        orderD: endDenBehavior === 'shuffle' ? this._shuffleArray([...endDenominators]) : null
+        indexN: endNumBehavior === "static"
+          ? Math.floor(Math.random() * endNumerators.length)
+          : 0,
+        indexD: endDenBehavior === "static"
+          ? Math.floor(Math.random() * endDenominators.length)
+          : 0,
+        orderN: endNumBehavior === "shuffle"
+          ? this._shuffleArray([...endNumerators])
+          : null,
+        orderD: endDenBehavior === "shuffle"
+          ? this._shuffleArray([...endDenominators])
+          : null,
       };
     }
   }
@@ -2363,56 +2721,72 @@ class SynthClient {
     if (!config) {
       throw new Error(`CRITICAL: Missing config for ${param}`);
     }
-    
-    const generator = position === 'start' ? config.startValueGenerator : config.endValueGenerator;
-    if (!generator || generator.type !== 'periodic') return;
-    
+
+    const generator = position === "start"
+      ? config.startValueGenerator
+      : config.endValueGenerator;
+    if (!generator || generator.type !== "periodic") return;
+
     const numerators = this._parseSIN(generator.numerators || "1");
     const denominators = this._parseSIN(generator.denominators || "1");
     const numeratorBehavior = generator.numeratorBehavior || "static";
     const denominatorBehavior = generator.denominatorBehavior || "static";
-    
+
     // Ensure HRG state exists
     if (!this.hrgState[param]) {
       this.hrgState[param] = {};
     }
-    
+
     // Re-randomize only this position
     this.hrgState[param][position] = {
       numerators,
       denominators,
       numeratorBehavior,
       denominatorBehavior,
-      indexN: numeratorBehavior === 'static' ? Math.floor(Math.random() * numerators.length) : 0,
-      indexD: denominatorBehavior === 'static' ? Math.floor(Math.random() * denominators.length) : 0,
-      orderN: numeratorBehavior === 'shuffle' ? this._shuffleArray([...numerators]) : null,
-      orderD: denominatorBehavior === 'shuffle' ? this._shuffleArray([...denominators]) : null
+      indexN: numeratorBehavior === "static"
+        ? Math.floor(Math.random() * numerators.length)
+        : 0,
+      indexD: denominatorBehavior === "static"
+        ? Math.floor(Math.random() * denominators.length)
+        : 0,
+      orderN: numeratorBehavior === "shuffle"
+        ? this._shuffleArray([...numerators])
+        : null,
+      orderD: denominatorBehavior === "shuffle"
+        ? this._shuffleArray([...denominators])
+        : null,
     };
-    
-    console.log(`🔄 Re-initialized HRG ${position} for ${param}: N=${numeratorBehavior}[${this.hrgState[param][position].indexN}], D=${denominatorBehavior}[${this.hrgState[param][position].indexD}]`);
+
+    console.log(
+      `🔄 Re-initialized HRG ${position} for ${param}: N=${numeratorBehavior}[${
+        this.hrgState[param][position].indexN
+      }], D=${denominatorBehavior}[${this.hrgState[param][position].indexD}]`,
+    );
   }
 
   // Restore HRG state from saved sequence data (preserves per-synth uniqueness)
   _restoreHRGState(param, seqState, config) {
     const generator = config.startValueGenerator;
-    if (!generator || generator.type !== 'periodic') return;
+    if (!generator || generator.type !== "periodic") return;
 
     // Use saved behaviors if available, otherwise fall back to config
-    const numeratorBehavior = seqState.numeratorBehavior || generator.numeratorBehavior || "static";
-    const denominatorBehavior = seqState.denominatorBehavior || generator.denominatorBehavior || "static";
+    const numeratorBehavior = seqState.numeratorBehavior ||
+      generator.numeratorBehavior || "static";
+    const denominatorBehavior = seqState.denominatorBehavior ||
+      generator.denominatorBehavior || "static";
 
     // For shuffle behavior, the saved orderN/orderD ARE the arrays to use
     // For other behaviors, parse from config but use saved indices
     let numerators, denominators;
 
-    if (numeratorBehavior === 'shuffle' && seqState.orderN) {
+    if (numeratorBehavior === "shuffle" && seqState.orderN) {
       numerators = seqState.orderN; // Use saved shuffled array
     } else {
       numerators = this._parseSIN(generator.numerators || "1");
     }
 
-    if (denominatorBehavior === 'shuffle' && seqState.orderD) {
-      denominators = seqState.orderD; // Use saved shuffled array  
+    if (denominatorBehavior === "shuffle" && seqState.orderD) {
+      denominators = seqState.orderD; // Use saved shuffled array
     } else {
       denominators = this._parseSIN(generator.denominators || "1");
     }
@@ -2426,12 +2800,15 @@ class SynthClient {
         indexN: seqState.indexN,
         indexD: seqState.indexD,
         orderN: seqState.orderN,
-        orderD: seqState.orderD
-      }
+        orderD: seqState.orderD,
+      },
     };
 
     // Initialize end state if cosine interpolation
-    if (config.interpolation === 'cosine' && config.endValueGenerator?.type === 'periodic') {
+    if (
+      config.interpolation === "cosine" &&
+      config.endValueGenerator?.type === "periodic"
+    ) {
       const endGen = config.endValueGenerator;
       const endNumerators = this._parseSIN(endGen.numerators || "1");
       const endDenominators = this._parseSIN(endGen.denominators || "1");
@@ -2443,14 +2820,24 @@ class SynthClient {
         denominators: endDenominators,
         numeratorBehavior: endNumBehavior,
         denominatorBehavior: endDenBehavior,
-        indexN: endNumBehavior === 'static' ? Math.floor(Math.random() * endNumerators.length) : 0,
-        indexD: endDenBehavior === 'static' ? Math.floor(Math.random() * endDenominators.length) : 0,
-        orderN: endNumBehavior === 'shuffle' ? this._shuffleArray([...endNumerators]) : null,
-        orderD: endDenBehavior === 'shuffle' ? this._shuffleArray([...endDenominators]) : null
+        indexN: endNumBehavior === "static"
+          ? Math.floor(Math.random() * endNumerators.length)
+          : 0,
+        indexD: endDenBehavior === "static"
+          ? Math.floor(Math.random() * endDenominators.length)
+          : 0,
+        orderN: endNumBehavior === "shuffle"
+          ? this._shuffleArray([...endNumerators])
+          : null,
+        orderD: endDenBehavior === "shuffle"
+          ? this._shuffleArray([...endDenominators])
+          : null,
       };
     }
 
-    console.log(`🔄 Restored HRG state for ${param} using saved sequences - behavior: ${numeratorBehavior}/${denominatorBehavior}, index: ${seqState.indexN}/${seqState.indexD}`);
+    console.log(
+      `🔄 Restored HRG state for ${param} using saved sequences - behavior: ${numeratorBehavior}/${denominatorBehavior}, index: ${seqState.indexN}/${seqState.indexD}`,
+    );
   }
 
   // Shuffle array using Fisher-Yates algorithm
@@ -2467,30 +2854,36 @@ class SynthClient {
     if (!generator) {
       console.error(`🚨 CRITICAL: No generator for ${paramName}/${position}!`);
       console.error(`🚨 This means program config is incomplete or malformed`);
-      throw new Error(`Missing generator for ${paramName}/${position} - program config incomplete`);
+      throw new Error(
+        `Missing generator for ${paramName}/${position} - program config incomplete`,
+      );
     }
-    
-    if (generator.type === 'periodic') {
+
+    if (generator.type === "periodic") {
       // HRG - use sequence state
       return this._resolveHRG(paramName, position);
-    } else if (generator.type === 'normalised') {
+    } else if (generator.type === "normalised") {
       // RBG - resolve scalar
       return this._resolveRBG(generator, paramName, position);
     } else if (generator.value !== undefined) {
       // Direct value
       return generator.value;
     } else {
-      console.error(`🚨 CRITICAL: Unknown generator type for ${paramName}/${position}!`);
+      console.error(
+        `🚨 CRITICAL: Unknown generator type for ${paramName}/${position}!`,
+      );
       console.error(`🚨 Generator:`, generator);
-      throw new Error(`Unknown generator type for ${paramName}/${position} - unsupported generator format`);
+      throw new Error(
+        `Unknown generator type for ${paramName}/${position} - unsupported generator format`,
+      );
     }
   }
 
   // Get current phase from worklet
   getCurrentPhase() {
-    const p = this.unifiedSynthNode?.parameters.get('phase');
+    const p = this.unifiedSynthNode?.parameters.get("phase");
     if (!p) {
-      throw new Error('CRITICAL: No phase parameter available');
+      throw new Error("CRITICAL: No phase parameter available");
     }
     return p.value;
   }
@@ -2502,256 +2895,319 @@ class SynthClient {
     if (!cfg) {
       throw new Error(`CRITICAL: Missing config for ${paramName}`);
     }
-    
+
     const target = this.resolveParameterAtPhase(paramName, cfg, phase);
-    const startParam = this.unifiedSynthNode.parameters.get(`${paramName}_start`);
+    const startParam = this.unifiedSynthNode.parameters.get(
+      `${paramName}_start`,
+    );
     if (!startParam) {
       throw new Error(`CRITICAL: Missing AudioParam ${paramName}_start`);
     }
-    
+
     const current = this.lastResolvedValues[paramName] ?? startParam.value;
     if (!Number.isFinite(current)) {
       throw new Error(`CRITICAL: No valid current value for ${paramName}`);
     }
-    if (paramName === 'frequency' && current <= 0) {
+    if (paramName === "frequency" && current <= 0) {
       throw new Error(`CRITICAL: Invalid frequency ${current}`);
     }
-    
+
     // Add debug logging for frequency HRG changes
-    if (paramName === 'frequency') {
-      console.log(`🐛 HRG DEBUG: current=${current}, target=${target}, portamentoMs=${portamentoMs}`);
+    if (paramName === "frequency") {
+      console.log(
+        `🐛 HRG DEBUG: current=${current}, target=${target}, portamentoMs=${portamentoMs}`,
+      );
     }
-    
+
     const now = this.audioContext.currentTime;
     const targetTime = now + portamentoMs / 1000;
-    
-    if (paramName === 'frequency') {
-      console.log(`🐛 HRG DEBUG: Scheduling ramp from ${current} to ${target} over ${portamentoMs}ms (now=${now}, targetTime=${targetTime})`);
+
+    if (paramName === "frequency") {
+      console.log(
+        `🐛 HRG DEBUG: Scheduling ramp from ${current} to ${target} over ${portamentoMs}ms (now=${now}, targetTime=${targetTime})`,
+      );
     }
-    
+
     startParam.setValueAtTime(current, now);
-    if (paramName === 'frequency' && current > 0 && target > 0) {
+    if (paramName === "frequency" && current > 0 && target > 0) {
       startParam.exponentialRampToValueAtTime(target, targetTime);
       console.log(`🐛 HRG DEBUG: ✅ Exponential ramp scheduled`);
     } else {
       startParam.linearRampToValueAtTime(target, targetTime);
-      if (paramName === 'frequency') {
+      if (paramName === "frequency") {
         console.log(`🐛 HRG DEBUG: ✅ Linear ramp scheduled`);
       }
     }
-    
+
     this.lastResolvedValues[paramName] = target;
   }
 
   // Apply base frequency change with ratio-preserving ramp
   applyBaseChangeWithPortamento(paramName, current, target, portamentoMs) {
-    const startParam = this.unifiedSynthNode.parameters.get(`${paramName}_start`);
+    const startParam = this.unifiedSynthNode.parameters.get(
+      `${paramName}_start`,
+    );
     if (!startParam) {
       throw new Error(`CRITICAL: Missing AudioParam ${paramName}_start`);
     }
-    
+
     if (!Number.isFinite(current) || !Number.isFinite(target)) {
-      throw new Error(`CRITICAL: Invalid values for base change ${paramName}: current=${current}, target=${target}`);
+      throw new Error(
+        `CRITICAL: Invalid values for base change ${paramName}: current=${current}, target=${target}`,
+      );
     }
-    if (paramName === 'frequency' && (current <= 0 || target <= 0)) {
-      throw new Error(`CRITICAL: Invalid frequency for exponential ramp: current=${current}, target=${target}`);
+    if (paramName === "frequency" && (current <= 0 || target <= 0)) {
+      throw new Error(
+        `CRITICAL: Invalid frequency for exponential ramp: current=${current}, target=${target}`,
+      );
     }
-    
+
     const now = this.audioContext.currentTime;
     const targetTime = now + portamentoMs / 1000;
-    
+
     startParam.setValueAtTime(current, now);
-    if (paramName === 'frequency' && current > 0 && target > 0) {
+    if (paramName === "frequency" && current > 0 && target > 0) {
       startParam.exponentialRampToValueAtTime(target, targetTime);
     } else {
       startParam.linearRampToValueAtTime(target, targetTime);
     }
-    
+
     this.lastResolvedValues[paramName] = target;
   }
 
   // Pure parameter resolver at specific phase (no state mutation)
   resolveParameterAtPhase(paramName, config, phase) {
     if (!config) {
-      throw new Error(`CRITICAL: resolveParameterAtPhase - missing config for ${paramName}`);
+      throw new Error(
+        `CRITICAL: resolveParameterAtPhase - missing config for ${paramName}`,
+      );
     }
-    
-    if (config.interpolation === 'step') {
+
+    if (config.interpolation === "step") {
       const gen = config.startValueGenerator;
       if (!gen) {
-        throw new Error(`CRITICAL: Missing startValueGenerator for ${paramName}`);
+        throw new Error(
+          `CRITICAL: Missing startValueGenerator for ${paramName}`,
+        );
       }
-      
-      if (gen.type === 'periodic') {
-        return this.peekHRGValue(paramName, 'start');
-      } else if (gen.type === 'normalised') {
-        if (typeof gen.range === 'number') {
+
+      if (gen.type === "periodic") {
+        return this.peekHRGValue(paramName, "start");
+      } else if (gen.type === "normalised") {
+        if (typeof gen.range === "number") {
           return gen.range;
         }
         if (gen.range?.min !== undefined && gen.range?.max !== undefined) {
-          return gen.range.min + Math.random() * (gen.range.max - gen.range.min);
+          return gen.range.min +
+            Math.random() * (gen.range.max - gen.range.min);
         }
         throw new Error(`CRITICAL: Missing range for normalised ${paramName}`);
       }
-      throw new Error(`CRITICAL: Unknown generator type for ${paramName}: ${gen.type}`);
-    } else if (config.interpolation === 'cosine') {
+      throw new Error(
+        `CRITICAL: Unknown generator type for ${paramName}: ${gen.type}`,
+      );
+    } else if (config.interpolation === "cosine") {
       const startGen = config.startValueGenerator;
       const endGen = config.endValueGenerator;
       if (!startGen) {
-        throw new Error(`CRITICAL: Missing startValueGenerator for ${paramName}`);
+        throw new Error(
+          `CRITICAL: Missing startValueGenerator for ${paramName}`,
+        );
       }
       if (!endGen) {
-        throw new Error(`CRITICAL: Missing endValueGenerator for cosine ${paramName}`);
+        throw new Error(
+          `CRITICAL: Missing endValueGenerator for cosine ${paramName}`,
+        );
       }
-      
+
       let start, end;
-      
+
       // Resolve start value
-      if (startGen.type === 'periodic') {
-        start = this.peekHRGValue(paramName, 'start');
-      } else if (startGen.type === 'normalised') {
-        if (typeof startGen.range === 'number') {
+      if (startGen.type === "periodic") {
+        start = this.peekHRGValue(paramName, "start");
+      } else if (startGen.type === "normalised") {
+        if (typeof startGen.range === "number") {
           start = startGen.range;
-        } else if (startGen.range?.min !== undefined && startGen.range?.max !== undefined) {
-          start = startGen.range.min + Math.random() * (startGen.range.max - startGen.range.min);
+        } else if (
+          startGen.range?.min !== undefined && startGen.range?.max !== undefined
+        ) {
+          start = startGen.range.min +
+            Math.random() * (startGen.range.max - startGen.range.min);
         } else {
-          throw new Error(`CRITICAL: Missing range for normalised start ${paramName}`);
+          throw new Error(
+            `CRITICAL: Missing range for normalised start ${paramName}`,
+          );
         }
       } else {
-        throw new Error(`CRITICAL: Unknown start generator type for ${paramName}: ${startGen.type}`);
+        throw new Error(
+          `CRITICAL: Unknown start generator type for ${paramName}: ${startGen.type}`,
+        );
       }
-      
+
       // Resolve end value
-      if (endGen.type === 'periodic') {
-        end = this.peekHRGValue(paramName, 'end');
-      } else if (endGen.type === 'normalised') {
-        if (typeof endGen.range === 'number') {
+      if (endGen.type === "periodic") {
+        end = this.peekHRGValue(paramName, "end");
+      } else if (endGen.type === "normalised") {
+        if (typeof endGen.range === "number") {
           end = endGen.range;
-        } else if (endGen.range?.min !== undefined && endGen.range?.max !== undefined) {
-          end = endGen.range.min + Math.random() * (endGen.range.max - endGen.range.min);
+        } else if (
+          endGen.range?.min !== undefined && endGen.range?.max !== undefined
+        ) {
+          end = endGen.range.min +
+            Math.random() * (endGen.range.max - endGen.range.min);
         } else {
-          throw new Error(`CRITICAL: Missing range for normalised end ${paramName}`);
+          throw new Error(
+            `CRITICAL: Missing range for normalised end ${paramName}`,
+          );
         }
       } else {
-        throw new Error(`CRITICAL: Unknown end generator type for ${paramName}: ${endGen.type}`);
+        throw new Error(
+          `CRITICAL: Unknown end generator type for ${paramName}: ${endGen.type}`,
+        );
       }
-      
+
       const shapedProgress = 0.5 - Math.cos(phase * Math.PI) * 0.5;
       return start + (end - start) * shapedProgress;
     }
-    throw new Error(`CRITICAL: Unknown interpolation for ${paramName}: ${config.interpolation}`);
+    throw new Error(
+      `CRITICAL: Unknown interpolation for ${paramName}: ${config.interpolation}`,
+    );
   }
 
   // Pure HRG resolver - does NOT advance sequence indices (for paused parameter resolution)
   peekHRGValue(paramName, position) {
     const cfg = this.programConfig[paramName];
     if (!cfg) {
-      throw new Error(`CRITICAL: peekHRGValue - missing config for ${paramName}`);
+      throw new Error(
+        `CRITICAL: peekHRGValue - missing config for ${paramName}`,
+      );
     }
     if (!Number.isFinite(cfg.baseValue)) {
-      throw new Error(`CRITICAL: peekHRGValue - missing baseValue for ${paramName}`);
+      throw new Error(
+        `CRITICAL: peekHRGValue - missing baseValue for ${paramName}`,
+      );
     }
-    
+
     const state = this.hrgState[paramName]?.[position];
     if (!state) {
-      throw new Error(`CRITICAL: peekHRGValue - missing HRG state for ${paramName}/${position}`);
+      throw new Error(
+        `CRITICAL: peekHRGValue - missing HRG state for ${paramName}/${position}`,
+      );
     }
-    
+
     // Get current values WITHOUT advancing indices
-    const { numerators, denominators, numeratorBehavior, denominatorBehavior } = state;
-    
+    const { numerators, denominators, numeratorBehavior, denominatorBehavior } =
+      state;
+
     let numerator, denominator;
-    
+
     // Get current numerator without advancing
-    if (numeratorBehavior === 'static') {
+    if (numeratorBehavior === "static") {
       numerator = numerators[state.indexN];
-    } else if (numeratorBehavior === 'ascending') {
+    } else if (numeratorBehavior === "ascending") {
       numerator = numerators[state.indexN % numerators.length];
-    } else if (numeratorBehavior === 'descending') {
-      numerator = numerators[(numerators.length - 1 - state.indexN) % numerators.length];
-    } else if (numeratorBehavior === 'shuffle') {
+    } else if (numeratorBehavior === "descending") {
+      numerator =
+        numerators[(numerators.length - 1 - state.indexN) % numerators.length];
+    } else if (numeratorBehavior === "shuffle") {
       numerator = state.orderN[state.indexN % state.orderN.length];
-    } else if (numeratorBehavior === 'random') {
+    } else if (numeratorBehavior === "random") {
       numerator = numerators[Math.floor(Math.random() * numerators.length)];
     }
-    
+
     // Get current denominator without advancing
-    if (denominatorBehavior === 'static') {
+    if (denominatorBehavior === "static") {
       denominator = denominators[state.indexD];
-    } else if (denominatorBehavior === 'ascending') {
+    } else if (denominatorBehavior === "ascending") {
       denominator = denominators[state.indexD % denominators.length];
-    } else if (denominatorBehavior === 'descending') {
-      denominator = denominators[(denominators.length - 1 - state.indexD) % denominators.length];
-    } else if (denominatorBehavior === 'shuffle') {
+    } else if (denominatorBehavior === "descending") {
+      denominator = denominators[
+        (denominators.length - 1 - state.indexD) % denominators.length
+      ];
+    } else if (denominatorBehavior === "shuffle") {
       denominator = state.orderD[state.indexD % state.orderD.length];
-    } else if (denominatorBehavior === 'random') {
-      denominator = denominators[Math.floor(Math.random() * denominators.length)];
+    } else if (denominatorBehavior === "random") {
+      denominator =
+        denominators[Math.floor(Math.random() * denominators.length)];
     }
-    
+
     const base = Number(cfg.baseValue);
     return base * (numerator / (denominator || 1));
   }
 
   // Resolve HRG value and advance sequence
-  _resolveHRG(param, position = 'start') {
+  _resolveHRG(param, position = "start") {
     const state = this.hrgState[param]?.[position];
     if (!state) {
       console.error(`🚨 CRITICAL: HRG state missing for ${param}/${position}!`);
-      console.error(`🚨 This means HRG was not initialized - controller message missing or malformed`);
-      throw new Error(`HRG state not initialized for ${param}/${position} - controller message not received?`);
+      console.error(
+        `🚨 This means HRG was not initialized - controller message missing or malformed`,
+      );
+      throw new Error(
+        `HRG state not initialized for ${param}/${position} - controller message not received?`,
+      );
     }
 
-    const { numerators, denominators, numeratorBehavior, denominatorBehavior } = state;
-    
+    const { numerators, denominators, numeratorBehavior, denominatorBehavior } =
+      state;
+
     // Get current values
     let numerator, denominator;
-    
-    if (numeratorBehavior === 'static') {
+
+    if (numeratorBehavior === "static") {
       numerator = numerators[state.indexN];
-    } else if (numeratorBehavior === 'ascending') {
+    } else if (numeratorBehavior === "ascending") {
       numerator = numerators[state.indexN % numerators.length];
       state.indexN++;
-    } else if (numeratorBehavior === 'descending') {
-      numerator = numerators[(numerators.length - 1 - state.indexN) % numerators.length];
+    } else if (numeratorBehavior === "descending") {
+      numerator =
+        numerators[(numerators.length - 1 - state.indexN) % numerators.length];
       state.indexN++;
-    } else if (numeratorBehavior === 'shuffle') {
+    } else if (numeratorBehavior === "shuffle") {
       numerator = state.orderN[state.indexN % state.orderN.length];
       state.indexN++;
       if (state.indexN >= state.orderN.length) {
         state.orderN = this._shuffleArray([...numerators]);
         state.indexN = 0;
       }
-    } else if (numeratorBehavior === 'random') {
+    } else if (numeratorBehavior === "random") {
       numerator = numerators[Math.floor(Math.random() * numerators.length)];
     }
 
-    if (denominatorBehavior === 'static') {
+    if (denominatorBehavior === "static") {
       denominator = denominators[state.indexD];
-    } else if (denominatorBehavior === 'ascending') {
+    } else if (denominatorBehavior === "ascending") {
       denominator = denominators[state.indexD % denominators.length];
       state.indexD++;
-    } else if (denominatorBehavior === 'descending') {
-      denominator = denominators[(denominators.length - 1 - state.indexD) % denominators.length];
+    } else if (denominatorBehavior === "descending") {
+      denominator = denominators[
+        (denominators.length - 1 - state.indexD) % denominators.length
+      ];
       state.indexD++;
-    } else if (denominatorBehavior === 'shuffle') {
+    } else if (denominatorBehavior === "shuffle") {
       denominator = state.orderD[state.indexD % state.orderD.length];
       state.indexD++;
       if (state.indexD >= state.orderD.length) {
         state.orderD = this._shuffleArray([...denominators]);
         state.indexD = 0;
       }
-    } else if (denominatorBehavior === 'random') {
-      denominator = denominators[Math.floor(Math.random() * denominators.length)];
+    } else if (denominatorBehavior === "random") {
+      denominator =
+        denominators[Math.floor(Math.random() * denominators.length)];
     }
 
     const cfg = this.programConfig[param];
     if (!cfg) {
-      throw new Error(`CRITICAL: HRG resolution for ${param} - missing program config`);
+      throw new Error(
+        `CRITICAL: HRG resolution for ${param} - missing program config`,
+      );
     }
     if (!Number.isFinite(cfg.baseValue)) {
-      throw new Error(`CRITICAL: HRG resolution for ${param} - missing baseValue`);
+      throw new Error(
+        `CRITICAL: HRG resolution for ${param} - missing baseValue`,
+      );
     }
-    
+
     const base = Number(cfg.baseValue);
     return base * (numerator / (denominator || 1));
   }
@@ -2759,21 +3215,23 @@ class SynthClient {
   // Resolve RBG value with behavior support
   _resolveRBG(generator, paramName = null, position = null) {
     let result;
-    
+
     // Handle fixed values
     if (typeof generator.range === "number") {
       result = generator.range;
       // RBG resolved (fixed value)
       return result;
     }
-    
+
     if (!generator.range || typeof generator.range !== "object") {
-      throw new Error(`CRITICAL: RBG generator missing range - ${JSON.stringify(generator)}`);
+      throw new Error(
+        `CRITICAL: RBG generator missing range - ${JSON.stringify(generator)}`,
+      );
     }
-    
+
     const behavior = generator.sequenceBehavior || "random"; // Default to randomize each EOC
     const stateKey = paramName && position ? `${paramName}_${position}` : null;
-    
+
     if (behavior === "static" && stateKey) {
       // Static behavior: generate once and reuse
       if (!this.rbgState[stateKey]) {
@@ -2790,7 +3248,7 @@ class SynthClient {
       result = generator.range.min + (Math.random() * range);
       // RBG resolved (random)
     }
-    
+
     return result;
   }
 
@@ -2820,7 +3278,7 @@ class SynthClient {
         0.015,
       );
     }
-    
+
     if (this.verbose) {
       console.log(`🎚️ Applied direct parameter: ${paramName} = ${value}`);
     }
@@ -2860,9 +3318,13 @@ class SynthClient {
       case "periodic": {
         const baseValue = generator.baseValue;
         if (!baseValue) {
-          console.error(`🚨 CRITICAL: Missing baseValue for periodic generator in _resolveGenerator!`);
+          console.error(
+            `🚨 CRITICAL: Missing baseValue for periodic generator in _resolveGenerator!`,
+          );
           console.error(`🚨 Generator:`, generator);
-          throw new Error(`Missing baseValue for periodic generator - baseValue not copied?`);
+          throw new Error(
+            `Missing baseValue for periodic generator - baseValue not copied?`,
+          );
         }
         const numerators = this._parseSIN(generator.numerators || "1");
         const denominators = this._parseSIN(generator.denominators || "1");
@@ -2911,7 +3373,7 @@ class SynthClient {
   }
 
   // Utility functions for path-based config updates
-  
+
   /**
    * Get a value from an object using dot notation path
    * @param {Object} obj - The object to get value from
@@ -2919,16 +3381,18 @@ class SynthClient {
    * @returns {*} The value at the path, or undefined if not found
    */
   _getByPath(obj, path) {
-    const pathParts = path.split('.');
+    const pathParts = path.split(".");
     let target = obj;
-    
+
     for (const part of pathParts) {
-      if (target === null || target === undefined || !target.hasOwnProperty(part)) {
+      if (
+        target === null || target === undefined || !target.hasOwnProperty(part)
+      ) {
         return undefined;
       }
       target = target[part];
     }
-    
+
     return target;
   }
 
@@ -2940,26 +3404,28 @@ class SynthClient {
    * @returns {boolean} True if successfully set, false if path is invalid
    */
   _setByPath(obj, path, value) {
-    const pathParts = path.split('.');
+    const pathParts = path.split(".");
     const finalKey = pathParts[pathParts.length - 1];
     let target = obj;
-    
+
     // Navigate to the parent object
     for (let i = 0; i < pathParts.length - 1; i++) {
       const part = pathParts[i];
-      if (target === null || target === undefined || !target.hasOwnProperty(part)) {
+      if (
+        target === null || target === undefined || !target.hasOwnProperty(part)
+      ) {
         console.warn(`⚠️ Invalid path ${path} - missing ${part}`);
         return false;
       }
       target = target[part];
     }
-    
+
     // Set the final value
     if (target !== null && target !== undefined) {
       target[finalKey] = value;
       return true;
     }
-    
+
     console.warn(`⚠️ Cannot set ${path} - target is null/undefined`);
     return false;
   }

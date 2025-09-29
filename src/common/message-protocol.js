@@ -34,6 +34,7 @@ export const MessageTypes = {
   SET_COS_SEGMENTS: "set-cos-segments",
   RESTORE_SEQUENCE_STATE: "restore-sequence-state",
   RERESOLVE_AT_EOC: "reresolve-at-eoc",
+  IMMEDIATE_REINITIALIZE: "immediate-reinitialize",
 
   // Scene Memory
   SAVE_SCENE: "save-scene",
@@ -159,6 +160,12 @@ export class MessageBuilder {
     };
   }
 
+  static immediateReinitialize() {
+    return {
+      type: MessageTypes.IMMEDIATE_REINITIALIZE,
+      timestamp: performance.now(),
+    };
+  }
 
   static saveScene(memoryLocation) {
     return {
@@ -202,7 +209,15 @@ export class MessageBuilder {
     };
   }
 
-  static unifiedParamUpdate(param, startValue, endValue, interpolation, isPlaying, portamentoTime, currentPhase) {
+  static unifiedParamUpdate(
+    param,
+    startValue,
+    endValue,
+    interpolation,
+    isPlaying,
+    portamentoTime,
+    currentPhase,
+  ) {
     return {
       type: MessageTypes.UNIFIED_PARAM_UPDATE,
       param,
@@ -248,36 +263,64 @@ export function validateMessage(message) {
       }
       break;
 
-
     case MessageTypes.PROGRAM_UPDATE:
       // Enforce unified parameter structure - no scope field allowed
       for (const [key, value] of Object.entries(message)) {
-        if (["type", "timestamp", "synthesisActive", "isManualMode", "portamentoTime"].includes(key)) {
+        if (
+          [
+            "type",
+            "timestamp",
+            "synthesisActive",
+            "isManualMode",
+            "portamentoTime",
+          ].includes(key)
+        ) {
           continue; // Skip non-parameter fields
         }
-        
+
         if (value && typeof value === "object") {
           // Check for forbidden scope field
           if ("scope" in value) {
-            throw new Error(`BREAKING: Parameter '${key}' contains forbidden 'scope' field. Use interpolation + generators instead.`);
+            throw new Error(
+              `BREAKING: Parameter '${key}' contains forbidden 'scope' field. Use interpolation + generators instead.`,
+            );
           }
-          
+
           // Validate unified parameter structure
-          if (!value.interpolation || !["step", "cosine"].includes(value.interpolation)) {
-            throw new Error(`Parameter '${key}' must have interpolation: 'step' or 'cosine'`);
+          if (
+            !value.interpolation ||
+            !["step", "cosine"].includes(value.interpolation)
+          ) {
+            throw new Error(
+              `Parameter '${key}' must have interpolation: 'step' or 'cosine'`,
+            );
           }
-          
-          if (!value.startValueGenerator || typeof value.startValueGenerator !== "object") {
+
+          if (
+            !value.startValueGenerator ||
+            typeof value.startValueGenerator !== "object"
+          ) {
             throw new Error(`Parameter '${key}' must have startValueGenerator`);
           }
-          
-          if (value.interpolation === "cosine" && (!value.endValueGenerator || typeof value.endValueGenerator !== "object")) {
-            throw new Error(`Parameter '${key}' with cosine interpolation must have endValueGenerator`);
+
+          if (
+            value.interpolation === "cosine" &&
+            (!value.endValueGenerator ||
+              typeof value.endValueGenerator !== "object")
+          ) {
+            throw new Error(
+              `Parameter '${key}' with cosine interpolation must have endValueGenerator`,
+            );
           }
-          
+
           // For periodic generators, require baseValue
-          if (value.startValueGenerator.type === "periodic" && value.baseValue === undefined) {
-            throw new Error(`Parameter '${key}' with periodic generator must have baseValue`);
+          if (
+            value.startValueGenerator.type === "periodic" &&
+            value.baseValue === undefined
+          ) {
+            throw new Error(
+              `Parameter '${key}' with periodic generator must have baseValue`,
+            );
           }
         }
       }
@@ -290,16 +333,31 @@ export function validateMessage(message) {
         typeof message.cycleLength !== "number" ||
         typeof message.isPlaying !== "boolean"
       ) {
-        throw new Error("PHASOR_SYNC missing required fields: phasor, stepsPerCycle, cycleLength, isPlaying");
+        throw new Error(
+          "PHASOR_SYNC missing required fields: phasor, stepsPerCycle, cycleLength, isPlaying",
+        );
       }
-      
+
       // For scrubbing, require both scrubbing and scrubMs
-      if (!message.isPlaying && message.scrubbing && typeof message.scrubMs !== "number") {
+      if (
+        !message.isPlaying && message.scrubbing &&
+        typeof message.scrubMs !== "number"
+      ) {
         throw new Error("PHASOR_SYNC scrubbing mode requires scrubMs field");
       }
-      
+
       // Reject unknown fields
-      const allowedFields = ["type", "timestamp", "phasor", "cpm", "stepsPerCycle", "cycleLength", "isPlaying", "scrubbing", "scrubMs"];
+      const allowedFields = [
+        "type",
+        "timestamp",
+        "phasor",
+        "cpm",
+        "stepsPerCycle",
+        "cycleLength",
+        "isPlaying",
+        "scrubbing",
+        "scrubMs",
+      ];
       for (const key of Object.keys(message)) {
         if (!allowedFields.includes(key)) {
           throw new Error(`PHASOR_SYNC contains unknown field: ${key}`);
@@ -312,7 +370,9 @@ export function validateMessage(message) {
         typeof message.action !== "string" ||
         !["play", "pause", "stop"].includes(message.action)
       ) {
-        throw new Error("Transport message must have action: play, pause, or stop");
+        throw new Error(
+          "Transport message must have action: play, pause, or stop",
+        );
       }
       break;
 
@@ -335,11 +395,17 @@ export function validateMessage(message) {
 
     case MessageTypes.RESTORE_SEQUENCE_STATE:
       if (!message.sequences || typeof message.sequences !== "object") {
-        throw new Error("Restore sequence state message must have sequences object");
+        throw new Error(
+          "Restore sequence state message must have sequences object",
+        );
       }
       break;
 
     case MessageTypes.RERESOLVE_AT_EOC:
+      // No required fields - simple trigger message
+      break;
+
+    case MessageTypes.IMMEDIATE_REINITIALIZE:
       // No required fields - simple trigger message
       break;
 
@@ -383,10 +449,16 @@ export function validateMessage(message) {
         message.value === undefined ||
         typeof message.portamentoTime !== "number"
       ) {
-        throw new Error("Sub param update message missing required fields: paramPath, value, portamentoTime");
+        throw new Error(
+          "Sub param update message missing required fields: paramPath, value, portamentoTime",
+        );
       }
       // Validate paramPath format (param.subparam or param.subparam.subsubparam)
-      if (!/^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$/.test(message.paramPath)) {
+      if (
+        !/^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$/.test(
+          message.paramPath,
+        )
+      ) {
         throw new Error(`Invalid paramPath format: ${message.paramPath}`);
       }
       break;
@@ -395,7 +467,8 @@ export function validateMessage(message) {
       if (
         typeof message.param !== "string" ||
         typeof message.startValue !== "number" ||
-        (message.endValue !== undefined && typeof message.endValue !== "number") ||
+        (message.endValue !== undefined &&
+          typeof message.endValue !== "number") ||
         typeof message.interpolation !== "string" ||
         typeof message.isPlaying !== "boolean" ||
         typeof message.portamentoTime !== "number" ||
