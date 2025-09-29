@@ -684,6 +684,13 @@ async function handleRequest(request: Request): Promise<Response> {
     });
   }
 
+  // --- BEGIN MIME TYPE FIX ---
+  // Ensure that all .js files are served with the correct MIME type.
+  if (url.pathname.endsWith(".js")) {
+    response.headers.set("Content-Type", "application/javascript; charset=utf-8");
+  }
+  // --- END MIME TYPE FIX ---
+
   return response;
 }
 
