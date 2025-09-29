@@ -3316,21 +3316,23 @@ class SynthClient {
 
     switch (generator.type) {
       case "periodic": {
-        const baseValue = generator.baseValue;
-        if (!baseValue) {
-          console.error(
-            `🚨 CRITICAL: Missing baseValue for periodic generator in _resolveGenerator!`,
-          );
-          console.error(`🚨 Generator:`, generator);
+        const paramCfg = this.programConfig?.[paramName];
+        const base = Number(paramCfg?.baseValue);
+        if (!Number.isFinite(base)) {
+          console.error("CRITICAL: Missing baseValue at parameter", {
+            paramName,
+            generator,
+            paramCfg,
+          });
           throw new Error(
-            `Missing baseValue for periodic generator - baseValue not copied?`,
+            `Missing baseValue for periodic parameter ${paramName}`,
           );
         }
         const numerators = this._parseSIN(generator.numerators || "1");
         const denominators = this._parseSIN(generator.denominators || "1");
         const numerator = numerators[0]; // Use first value for initial resolution
         const denominator = denominators[0] || 1;
-        return baseValue * (numerator / denominator);
+        return base * (numerator / denominator);
       }
       case "normalised": {
         if (typeof generator.range === "number") {

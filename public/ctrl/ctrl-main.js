@@ -1437,12 +1437,6 @@ var ControlClient = class {
       case "SET_BASE_VALUE": {
         const param = newState[action.param];
         param.baseValue = action.value;
-        if (param.startValueGenerator?.type === "periodic") {
-          param.startValueGenerator.baseValue = action.value;
-        }
-        if (param.endValueGenerator?.type === "periodic") {
-          param.endValueGenerator.baseValue = action.value;
-        }
         break;
       }
       case "SET_INTERPOLATION": {
@@ -1551,12 +1545,6 @@ var ControlClient = class {
       case "SET_BASE_VALUE": {
         const param = newState[action.param];
         param.baseValue = action.value;
-        if (param.startValueGenerator?.type === "periodic") {
-          param.startValueGenerator.baseValue = action.value;
-        }
-        if (param.endValueGenerator?.type === "periodic") {
-          param.endValueGenerator.baseValue = action.value;
-        }
         break;
       }
       case "SET_INTERPOLATION": {
@@ -2731,7 +2719,9 @@ var ControlClient = class {
   // Capture current HRG inputs into pending state before apply
   _syncHRGStateFromInputs() {
     const freqState = this.pendingMusicalState.frequency;
-    if (!freqState || freqState.startValueGenerator?.type !== "periodic") return;
+    if (!freqState || freqState.startValueGenerator?.type !== "periodic") {
+      return;
+    }
     let anyInvalid = false;
     const validateField = (el, label) => {
       if (!el) return true;
@@ -2979,16 +2969,7 @@ var ControlClient = class {
       baseValue: paramState.baseValue
     };
     const resolvedValues = this.resolveParameterValues(paramName, paramState);
-    const message = MessageBuilder.unifiedParamUpdate(
-      paramName,
-      resolvedValues.start,
-      resolvedValues.end,
-      paramState.interpolation,
-      this.isPlaying,
-      100,
-      this.phasor
-      // current phase
-    );
+    const message = MessageBuilder.unifiedParamUpdate(paramName, resolvedValues.start, resolvedValues.end, paramState.interpolation, this.isPlaying, 100, this.phasor);
     this.star.broadcastToType("synth", message, "control");
     this.log(`\u{1F4E1} Broadcasted staged ${paramName} interpolation change`, "info");
   }
@@ -3232,16 +3213,7 @@ var ControlClient = class {
     const paramState = this.pendingMusicalState[paramName];
     const resolvedValues = this.resolveParameterValues(paramName, paramState);
     const portamentoTime = this.elements.portamentoTime ? parseInt(this.elements.portamentoTime.value) : 100;
-    const message = MessageBuilder.unifiedParamUpdate(
-      paramName,
-      resolvedValues.start,
-      resolvedValues.end,
-      paramState.interpolation,
-      this.isPlaying,
-      portamentoTime,
-      this.phasor
-      // Include current phase for interpolation
-    );
+    const message = MessageBuilder.unifiedParamUpdate(paramName, resolvedValues.start, resolvedValues.end, paramState.interpolation, this.isPlaying, portamentoTime, this.phasor);
     if (this.star) {
       this.star.broadcastToType("synth", message, "control");
     }

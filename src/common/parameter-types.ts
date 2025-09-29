@@ -20,7 +20,6 @@ export interface GeneratorConfig {
   // --- If type is 'periodic' (HRG) ---
   numerators?: string; // e.g., "1-3,5"
   denominators?: string; // e.g., "2,4"
-  baseValue?: number; // Base frequency for ratio calculations
 
   // --- If type is 'normalised' (RBG) ---
   range?: number | { min: number; max: number };
@@ -33,14 +32,14 @@ export interface GeneratorConfig {
 export type ParameterState =
   | {
     interpolation: "step"; // Values held constant between events
+    baseValue?: number; // Required when using periodic generators
     startValueGenerator: GeneratorConfig;
-    directValue?: number; // Used as baseValue for HRG
   }
   | {
     interpolation: "cosine"; // Values that glide between events
+    baseValue?: number; // Required when using periodic generators
     startValueGenerator: GeneratorConfig;
     endValueGenerator: GeneratorConfig;
-    directValue?: number; // Used as baseValue for HRG
   };
 
 /**

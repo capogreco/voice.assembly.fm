@@ -118,13 +118,6 @@ class ControlClient {
       case "SET_BASE_VALUE": {
         const param = newState[action.param];
         param.baseValue = action.value;
-        // Update baseValue for periodic generators
-        if (param.startValueGenerator?.type === "periodic") {
-          param.startValueGenerator.baseValue = action.value;
-        }
-        if (param.endValueGenerator?.type === "periodic") {
-          param.endValueGenerator.baseValue = action.value;
-        }
         break;
       }
 
@@ -291,14 +284,6 @@ class ControlClient {
       case "SET_BASE_VALUE": {
         const param = newState[action.param];
         param.baseValue = action.value;
-
-        // Update baseValue for periodic generators
-        if (param.startValueGenerator?.type === "periodic") {
-          param.startValueGenerator.baseValue = action.value;
-        }
-        if (param.endValueGenerator?.type === "periodic") {
-          param.endValueGenerator.baseValue = action.value;
-        }
         break;
       }
 
