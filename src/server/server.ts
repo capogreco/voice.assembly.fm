@@ -242,6 +242,7 @@ async function handleWebSocketMessage(
     if (message.type === "request-ctrls") {
       const ctrlsList = [];
       const activeCtrlEntry = await kv.get(["active_ctrl"]);
+      console.log(`[SERVER-STATE] SYNTH REQUEST from ${sender_id}. Active controller in DB is: ${(activeCtrlEntry?.value as KVCtrlEntry)?.client_id ?? 'null'}`);
 
       if (activeCtrlEntry && activeCtrlEntry.value) {
         const activeCtrl = activeCtrlEntry.value as KVCtrlEntry;
@@ -423,6 +424,7 @@ async function handleRequest(request: Request): Promise<Response> {
           // --- BEGIN NEW, SIMPLIFIED CONTROLLER REGISTRATION LOGIC ---
           const oldCtrlEntry = await kv.get(["active_ctrl"]);
           const oldCtrl = oldCtrlEntry?.value as (KVCtrlEntry | null);
+          console.log(`[SERVER-STATE] REGISTRATION from ${client_id}. Current active_ctrl in DB is: ${oldCtrl?.client_id ?? 'null'}`);
 
           // The new controller registering should ALWAYS become the active one.
           // This is the most robust way to handle the refresh race condition.
@@ -430,7 +432,7 @@ async function handleRequest(request: Request): Promise<Response> {
           if (oldCtrl && oldCtrl.client_id !== client_id) {
             const oldCtrlSocket = connections.get(oldCtrl.client_id)?.socket;
             if (oldCtrlSocket?.readyState === WebSocket.OPEN) {
-              console.log(`👢 Kicking stale controller ${oldCtrl.client_id} due to new registration from ${client_id}.`);
+              console.log(`[SERVER-STATE] Kicking stale controller ${oldCtrl.client_id} due to new registration from ${client_id}.`);
               oldCtrlSocket.send(JSON.stringify({ type: "kicked", reason: "A new controller has connected." }));
             }
           }
@@ -446,6 +448,7 @@ async function handleRequest(request: Request): Promise<Response> {
               timestamp: Date.now(),
               ws_id: temp_id,
             };
+            console.log(`[SERVER-STATE] Setting active_ctrl in DB to: ${client_id}`);
             await kv.set(["active_ctrl"], value);
             console.log(`👑 ${client_id} is now the active controller`);
 
@@ -516,6 +519,7 @@ async function handleRequest(request: Request): Promise<Response> {
         if (activeCtrlEntry && activeCtrlEntry.value) {
           const activeCtrl = activeCtrlEntry.value as KVCtrlEntry;
           if (activeCtrl.client_id === client_id) {
+            console.log(`[SERVER-STATE] Disconnected client ${client_id} was the active controller. Deleting active_ctrl from DB.`);
             await kv.delete(["active_ctrl"]);
             console.log(`👑 Active controller ${client_id} disconnected`);
 
