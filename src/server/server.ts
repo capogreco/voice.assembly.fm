@@ -452,6 +452,26 @@ async function handleRequest(request: Request): Promise<Response> {
             await kv.set(["active_ctrl"], value);
             console.log(`👑 ${client_id} is now the active controller`);
 
+            // --- BEGIN FINAL FIX ---
+            // Immediately send the new controller a list of all current synths.
+            const synthsList = [];
+            for (const [id, conn] of connections.entries()) {
+              if (id.startsWith("synth-") && conn.socket.readyState === WebSocket.OPEN) {
+                synthsList.push(id);
+              }
+            }
+
+            if (synthsList.length > 0) {
+              console.log(`[SERVER-STATE] Proactively sending synth list to new controller ${client_id}:`, synthsList);
+              const notification: SynthsListMessage = {
+                type: "synths-list",
+                synths: synthsList,
+                timestamp: Date.now(),
+              };
+              socket.send(JSON.stringify(notification)); // Send to the new controller's socket
+            }
+            // --- END FINAL FIX ---
+
             // Notify all synths about the new (or re-confirmed) active controller
             const notification: CtrlJoinedMessage = {
               type: "ctrl-joined",
