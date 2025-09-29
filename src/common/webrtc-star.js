@@ -12,11 +12,6 @@ import {
 export class WebRTCStar extends EventTarget {
   constructor(peerId, peerType) {
     super();
-    if (globalThis.__WEBRTC_STAR_SYNTH && peerType === "synth") {
-      console.warn("WebRTCStar synth re-instantiated. This should not happen. Trace:");
-      console.trace();
-    }
-    if (peerType === "synth") globalThis.__WEBRTC_STAR_SYNTH = this;
     this.peerId = peerId;
     this.peerType = peerType; // 'ctrl' or 'synth'
     this.verbose = false; // toggle for noisy logs
@@ -165,7 +160,7 @@ export class WebRTCStar extends EventTarget {
               type: "request-ctrls",
             });
           } else if (this.peerType === "ctrl") {
-            console.log("CTRL-DISCOVERY: Connection open, requesting synth list.");
+            if (this.verbose) console.log("CTRL-DISCOVERY: Connection open, requesting synth list.");
             this.sendSignalingMessage({
               type: "request-synths",
             });
@@ -214,7 +209,7 @@ export class WebRTCStar extends EventTarget {
     switch (message.type) {
       case "ctrls-list":
         if (this.peerType === "synth") {
-          console.log("SYNTH-DISCOVERY: Received ctrls list:", message.ctrls);
+          if (this.verbose) console.log("SYNTH-DISCOVERY: Received ctrls list:", message.ctrls);
           if (this.verbose) {
             console.log("📋 Received ctrls list:", message.ctrls);
           }
@@ -230,20 +225,21 @@ export class WebRTCStar extends EventTarget {
             // We will retry requesting the list a few times.
             if (this.ctrlRetryCount < this.maxCtrlRetries) {
               this.ctrlRetryCount++;
-              // Use a shorter, more aggressive retry delay to catch the reconnecting ctrl client quickly.
-              const retryDelay = 500 + Math.random() * 250; // 500-750ms with jitter
+              // Use a reasonable retry delay with jitter to avoid busy loops.
+              const retryDelay = 1000 + Math.random() * 1000; // 1-2s with jitter
 
-              // Use console.log directly so this vital message always appears.
-              console.log(`[SYNTH-RETRY] No controllers found. Retrying in ${Math.round(retryDelay)}ms (attempt ${this.ctrlRetryCount}/${this.maxCtrlRetries})`);
+              if (this.verbose) {
+                console.log(`[SYNTH-RETRY] No controllers found. Retrying in ${Math.round(retryDelay)}ms (attempt ${this.ctrlRetryCount}/${this.maxCtrlRetries})`);
+              }
               
               this.ctrlRetryTimeout = setTimeout(() => {
                 if (this.signalingSocket && this.signalingSocket.readyState === WebSocket.OPEN) {
-                  console.log("[SYNTH-RETRY] Executing retry request for controllers.");
+                  if (this.verbose) console.log("[SYNTH-RETRY] Executing retry request for controllers.");
                   this.sendSignalingMessage({ type: "request-ctrls" });
                 }
               }, retryDelay);
             } else {
-              console.warn(`[SYNTH-RETRY] No controllers found after ${this.maxCtrlRetries} attempts. Giving up.`);
+              if (this.verbose) console.warn(`[SYNTH-RETRY] No controllers found after ${this.maxCtrlRetries} attempts. Giving up.`);
             }
           } else {
             // Reset retry counter on successful response
@@ -252,10 +248,10 @@ export class WebRTCStar extends EventTarget {
             // We simply ensure a placeholder peer record exists and wait for ctrl to offer.
             for (const ctrlId of message.ctrls) {
               if (!this.peers.has(ctrlId)) {
-                console.log(`[SYNTH-HANDSHAKE] Discovered new controller ${ctrlId}. Creating placeholder peer connection.`);
+                if (this.verbose) console.log(`[SYNTH-HANDSHAKE] Discovered new controller ${ctrlId}. Creating placeholder peer connection.`);
                 await this.createPeerConnection(ctrlId, false);
               } else {
-                console.log(`[SYNTH-HANDSHAKE] Discovered controller ${ctrlId}, but a peer record already exists. Skipping creation.`);
+                if (this.verbose) console.log(`[SYNTH-HANDSHAKE] Discovered controller ${ctrlId}, but a peer record already exists. Skipping creation.`);
               }
             }
           }
@@ -305,17 +301,17 @@ export class WebRTCStar extends EventTarget {
 
       case "synths-list":
         if (this.peerType === "ctrl") {
-          console.log("CTRL-DISCOVERY: Received synths list:", message.synths);
+          if (this.verbose) console.log("CTRL-DISCOVERY: Received synths list:", message.synths);
           if (this.verbose) {
             console.log("📋 Received synths list:", message.synths);
           }
           // Ctrl initiates connections to all synths
           for (const synthId of message.synths) {
             if (!this.peers.has(synthId)) {
-              console.log(`[CTRL-HANDSHAKE] Discovered new synth ${synthId}. Creating peer connection and sending offer.`);
+              if (this.verbose) console.log(`[CTRL-HANDSHAKE] Discovered new synth ${synthId}. Creating peer connection and sending offer.`);
               await this.createPeerConnection(synthId, true);
             } else {
-              console.log(`[CTRL-HANDSHAKE] Discovered synth ${synthId}, but a peer record already exists. Skipping creation.`);
+              if (this.verbose) console.log(`[CTRL-HANDSHAKE] Discovered synth ${synthId}, but a peer record already exists. Skipping creation.`);
             }
           }
         }
@@ -1222,59 +1218,26 @@ export class WebRTCStar extends EventTarget {
    * Remove peer from mesh
    */
   removePeer(peerId) {
-    // --- BEGIN FINAL, MORE ROBUST PEER REMOVAL LOGIC ---
-    const peerToRemove = this.peers.get(peerId);
-    if (!peerToRemove) return;
+    const peer = this.peers.get(peerId);
+    if (!peer) return;
 
-    // If a synth loses its connection to a controller, we perform a more aggressive cleanup.
-    // We remove ALL controller peers to ensure a clean state and prevent stale records.
-    if (this.peerType === 'synth' && peerId.startsWith('ctrl-')) {
-      console.log(`[SYNTH-CLEANUP] Connection to controller ${peerId} lost. Removing all controller peers.`);
-      for (const [id, peer] of this.peers.entries()) {
-        if (id.startsWith('ctrl-')) {
-          // Clear all timers
-          if (peer.restartTimer) {
-            clearTimeout(peer.restartTimer);
-          }
-          if (peer.reconnectTimer) {
-            clearTimeout(peer.reconnectTimer);
-          }
-          // Clear pending candidates buffer
-          peer.pendingCandidates = [];
-          // Close connection
-          if (peer.connection.connectionState !== "closed") {
-            peer.connection.close();
-          }
-          this.peers.delete(id);
-          console.log(`[SYNTH-CLEANUP] Removed stale controller peer ${id}.`);
-        }
-      }
-      // After cleaning up, proactively look for the new controller.
-      console.log("[SYNTH-CLEANUP] Proactively requesting new controller list.");
-      setTimeout(() => {
-        if (this.signalingSocket && this.signalingSocket.readyState === WebSocket.OPEN) {
-          this.sendSignalingMessage({ type: 'request-ctrls' });
-        }
-      }, 250);
-
-    } else {
-      // Standard cleanup for other peer types or scenarios.
-      // Clear all timers
-      if (peerToRemove.restartTimer) {
-        clearTimeout(peerToRemove.restartTimer);
-      }
-      if (peerToRemove.reconnectTimer) {
-        clearTimeout(peerToRemove.reconnectTimer);
-      }
-      // Clear pending candidates buffer
-      peerToRemove.pendingCandidates = [];
-      // Close connection
-      if (peerToRemove.connection.connectionState !== "closed") {
-        peerToRemove.connection.close();
-      }
-      this.peers.delete(peerId);
+    // Clear all timers
+    if (peer.restartTimer) {
+      clearTimeout(peer.restartTimer);
     }
-    
+    if (peer.reconnectTimer) {
+      clearTimeout(peer.reconnectTimer);
+    }
+
+    // Clear pending candidates buffer
+    peer.pendingCandidates = [];
+
+    // Close connection
+    if (peer.connection.connectionState !== "closed") {
+      peer.connection.close();
+    }
+
+    this.peers.delete(peerId);
     if (this.verbose) console.log(`🗑️ Removed peer ${peerId}`);
 
     this.dispatchEvent(
@@ -1282,7 +1245,21 @@ export class WebRTCStar extends EventTarget {
         detail: { peerId },
       }),
     );
-    // --- END FINAL LOGIC ---
+
+    // If synth loses its last controller, proactively request new list
+    if (this.peerType === 'synth' && peerId.startsWith('ctrl-')) {
+      const remainingCtrlPeers = [...this.peers.keys()].filter(id => id.startsWith('ctrl-'));
+      if (remainingCtrlPeers.length === 0) {
+        if (this.verbose) {
+          console.log("🔌 Last controller disconnected. Proactively requesting a new list.");
+        }
+        setTimeout(() => {
+          if (this.signalingSocket && this.signalingSocket.readyState === WebSocket.OPEN) {
+            this.sendSignalingMessage({ type: 'request-ctrls' });
+          }
+        }, 250);
+      }
+    }
   }
 
   /**

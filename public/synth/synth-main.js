@@ -11,11 +11,6 @@ import { XYOscilloscope } from "./src/visualization/xy-oscilloscope.js";
 
 class SynthClient {
   constructor() {
-    if (globalThis.__SYNTH_CLIENT_INSTANCE) {
-      console.warn("SynthClient is being re-instantiated. This should not happen. Trace:");
-      console.trace();
-    }
-    globalThis.__SYNTH_CLIENT_INSTANCE = this;
     this.peerId = generatePeerId("synth");
     this.star = null;
     this.audioContext = null;
