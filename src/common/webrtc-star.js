@@ -199,12 +199,12 @@ export class WebRTCStar extends EventTarget {
           } else {
             // Reset retry counter on successful response
             this.ctrlRetryCount = 0;
-            
-            // Synths initiate connections to all available ctrls
+            // Deterministic role: ctrl is initiator. Synth does NOT initiate.
+            // We simply ensure a placeholder peer record exists and wait for ctrl to offer.
             for (const ctrlId of message.ctrls) {
               if (!this.peers.has(ctrlId)) {
-                if (this.verbose) console.log(`🎛️ Connecting to ctrl: ${ctrlId}`);
-                await this.createPeerConnection(ctrlId, true); // Synth initiates
+                if (this.verbose) console.log(`🎛️ Discovered ctrl ${ctrlId} (waiting for offer)`);
+                await this.createPeerConnection(ctrlId, false);
               }
             }
           }
@@ -219,13 +219,9 @@ export class WebRTCStar extends EventTarget {
             clearTimeout(this.ctrlRetryTimeout);
             this.ctrlRetryTimeout = null;
           }
-          
-          if (this.verbose) {
-            console.log(`🎛️ New ctrl joined: ${message.ctrl_id}`);
-          }
-          // Synth initiates connection to new ctrl
+          if (this.verbose) console.log(`🎛️ Ctrl joined: ${message.ctrl_id} (waiting for offer)`);
           if (!this.peers.has(message.ctrl_id)) {
-            await this.createPeerConnection(message.ctrl_id, true);
+            await this.createPeerConnection(message.ctrl_id, false);
           }
         }
         break;
@@ -323,9 +319,16 @@ export class WebRTCStar extends EventTarget {
       controlChannel: null,
       connectedEventSent: false,
       initiator: shouldInitiate, // Track who initiated for reconnection
-      reconnectAttempted: false, // Track if we've already attempted reconnection  
-      reconnectTimer: null, // Store reconnection timer
       pendingCandidates: [], // Buffer ICE candidates when no remote description
+      
+      // ICE restart tracking
+      restartAttempted: false,
+      restartTimer: null,
+      disconnectedSince: null, // Track disconnected duration
+      
+      // Full rebuild tracking  
+      reconnectAttempted: false,
+      reconnectTimer: null,
     });
 
     // Create data channels if we're initiating
@@ -402,23 +405,39 @@ export class WebRTCStar extends EventTarget {
       }
 
       if (peerConnection.connectionState === "connected") {
-        // Reset reconnection flags on successful connection
+        // Clear all failure tracking on successful connection
         const peer = this.peers.get(peerId);
         if (peer) {
+          peer.disconnectedSince = null;
+          peer.restartAttempted = false;
+          peer.reconnectAttempted = false;
+          if (peer.restartTimer) {
+            clearTimeout(peer.restartTimer);
+            peer.restartTimer = null;
+          }
           if (peer.reconnectTimer) {
             clearTimeout(peer.reconnectTimer);
             peer.reconnectTimer = null;
           }
-          peer.reconnectAttempted = false;
         }
         this.checkPeerReadiness(peerId);
       } else if (peerConnection.connectionState === "failed") {
-        this.schedulePeerReconnect(peerId);
+        this.scheduleIceRestart(peerId);
       } else if (peerConnection.connectionState === "closed") {
         this.removePeer(peerId);
       } else if (peerConnection.connectionState === "disconnected") {
-        console.log(`⚠️ Connection to ${peerId} disconnected, monitoring for recovery...`);
-        // Let it recover naturally, no immediate action
+        const peer = this.peers.get(peerId);
+        if (peer) {
+          if (!peer.disconnectedSince) {
+            peer.disconnectedSince = Date.now();
+            if (this.verbose) console.log(`⚠️ Connection to ${peerId} disconnected, monitoring for recovery...`);
+          }
+          // After 3s continuous disconnection, try ICE restart
+          if (!peer.restartAttempted && peer.initiator && 
+              Date.now() - peer.disconnectedSince > 3000) {
+            this.scheduleIceRestart(peerId);
+          }
+        }
       }
     });
 
@@ -861,36 +880,49 @@ export class WebRTCStar extends EventTarget {
   }
 
   /**
-   * Check if peer is ready (connection established and both channels open)
+   * Check if peer is ready (strict 4-condition check)
    */
   checkPeerReadiness(peerId) {
     const peer = this.peers.get(peerId);
     if (!peer) return;
 
-    // Simplified readiness: just check if both channels are open
+    // Strict readiness: require ALL 4 conditions
+    const isConnectionReady = peer.connection.connectionState === "connected";
+    const isIceReady = peer.connection.iceConnectionState === "connected" || 
+                       peer.connection.iceConnectionState === "completed";
     const isSyncChannelReady = peer.syncChannel?.readyState === "open";
     const isControlChannelReady = peer.controlChannel?.readyState === "open";
+    
+    const ready = isConnectionReady && isIceReady && isSyncChannelReady && isControlChannelReady;
 
     // Debug info
     if (this.verbose) {
       console.log(`🔍 Peer ${peerId} readiness check:`, {
+        connectionState: peer.connection.connectionState,
+        iceState: peer.connection.iceConnectionState,
         syncChannelState: peer.syncChannel?.readyState,
         controlChannelState: peer.controlChannel?.readyState,
-        ready: isSyncChannelReady && isControlChannelReady,
+        ready: ready,
       });
     }
 
-    if (isSyncChannelReady && isControlChannelReady) {
+    if (ready) {
       if (this.verbose) {
-        console.log(`✅ Connection and both channels ready for ${peerId}`);
+        console.log(`✅ All conditions met for ${peerId} - fully ready`);
       }
       
-      // Reset reconnection flags on successful readiness (safety reset)
+      // Clear ALL failure tracking on full readiness
+      peer.disconnectedSince = null;
+      peer.restartAttempted = false;
+      peer.reconnectAttempted = false;
+      if (peer.restartTimer) {
+        clearTimeout(peer.restartTimer);
+        peer.restartTimer = null;
+      }
       if (peer.reconnectTimer) {
         clearTimeout(peer.reconnectTimer);
         peer.reconnectTimer = null;
       }
-      peer.reconnectAttempted = false;
       
       // Prevent duplicate events
       if (!peer.connectedEventSent) {
@@ -910,11 +942,78 @@ export class WebRTCStar extends EventTarget {
         console.log(
           `⏳ Peer ${peerId} - Connection: ${
             isConnectionReady ? "ready" : "waiting"
-          }, Sync channel: ${
+          }, ICE: ${
+            isIceReady ? "ready" : "waiting"
+          }, Sync: ${
             isSyncChannelReady ? "ready" : "waiting"
-          }, Control channel: ${isControlChannelReady ? "ready" : "waiting"}`,
+          }, Control: ${isControlChannelReady ? "ready" : "waiting"}`,
         );
       }
+    }
+  }
+
+  /**
+   * Schedule an ICE restart attempt for a peer
+   */
+  scheduleIceRestart(peerId) {
+    const peer = this.peers.get(peerId);
+    if (!peer || !peer.initiator || peer.restartAttempted) {
+      return; // Only initiator can restart, and only once
+    }
+    
+    peer.restartAttempted = true;
+    const delay = 1000 + Math.random() * 500; // 1-1.5s with jitter
+    if (this.verbose) console.log(`🔄 Scheduling ICE restart to ${peerId} in ${Math.round(delay)}ms...`);
+    
+    // Clear any existing timer
+    if (peer.restartTimer) {
+      clearTimeout(peer.restartTimer);
+    }
+    
+    peer.restartTimer = setTimeout(() => {
+      this.attemptIceRestart(peerId);
+    }, delay);
+  }
+
+  /**
+   * Attempt ICE restart for a failed peer
+   */
+  async attemptIceRestart(peerId) {
+    const peer = this.peers.get(peerId);
+    if (!peer || !peer.initiator) return;
+    
+    if (peer.restartTimer) {
+      clearTimeout(peer.restartTimer);
+      peer.restartTimer = null;
+    }
+    
+    if (this.verbose) console.log(`🔄 Attempting ICE restart to ${peerId}...`);
+    
+    try {
+      const pc = peer.connection;
+      const offer = await pc.createOffer({ iceRestart: true });
+      await pc.setLocalDescription(offer);
+      
+      this.sendSignalingMessage({
+        type: "offer",
+        targetPeerId: peerId,
+        offer: offer,
+      });
+      
+      if (this.verbose) console.log(`📤 Sent ICE restart offer to ${peerId}`);
+      
+      // Schedule fallback rebuild if no recovery in 10s
+      peer.reconnectTimer = setTimeout(() => {
+        const currentPeer = this.peers.get(peerId);
+        if (!currentPeer?.connection || 
+            currentPeer.connection.connectionState !== "connected") {
+          this.schedulePeerReconnect(peerId);
+        }
+      }, 10000);
+      
+    } catch (error) {
+      console.error(`❌ ICE restart failed for ${peerId}:`, error);
+      this.schedulePeerReconnect(peerId); // Fallback to rebuild
     }
   }
 
@@ -971,6 +1070,9 @@ export class WebRTCStar extends EventTarget {
       peer.controlChannel = null;
       peer.connectedEventSent = false; // Allow "peer-connected" to fire again
       peer.pendingCandidates = []; // Reset ICE buffer for new pc
+      
+      // Clear disconnected tracking
+      peer.disconnectedSince = null;
       
       // Stale guards via captured pc
       const currentPc = pc;
@@ -1054,7 +1156,10 @@ export class WebRTCStar extends EventTarget {
     const peer = this.peers.get(peerId);
     if (!peer) return;
 
-    // Clear any reconnection timer
+    // Clear all timers
+    if (peer.restartTimer) {
+      clearTimeout(peer.restartTimer);
+    }
     if (peer.reconnectTimer) {
       clearTimeout(peer.reconnectTimer);
     }
@@ -1120,8 +1225,14 @@ export class WebRTCStar extends EventTarget {
     }
     this.pingTimeouts.clear();
 
-    // Close all peer connections
-    for (const [peerId] of this.peers) {
+    // Close all peer connections and clear timers
+    for (const [peerId, peer] of this.peers) {
+      if (peer.restartTimer) {
+        clearTimeout(peer.restartTimer);
+      }
+      if (peer.reconnectTimer) {
+        clearTimeout(peer.reconnectTimer);
+      }
       this.removePeer(peerId);
     }
 
