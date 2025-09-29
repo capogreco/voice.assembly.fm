@@ -160,6 +160,7 @@ export class WebRTCStar extends EventTarget {
               type: "request-ctrls",
             });
           } else if (this.peerType === "ctrl") {
+            console.log("CTRL-DISCOVERY: Connection open, requesting synth list.");
             this.sendSignalingMessage({
               type: "request-synths",
             });
@@ -208,6 +209,7 @@ export class WebRTCStar extends EventTarget {
     switch (message.type) {
       case "ctrls-list":
         if (this.peerType === "synth") {
+          console.log("SYNTH-DISCOVERY: Received ctrls list:", message.ctrls);
           if (this.verbose) {
             console.log("📋 Received ctrls list:", message.ctrls);
           }
@@ -296,6 +298,7 @@ export class WebRTCStar extends EventTarget {
 
       case "synths-list":
         if (this.peerType === "ctrl") {
+          console.log("CTRL-DISCOVERY: Received synths list:", message.synths);
           if (this.verbose) {
             console.log("📋 Received synths list:", message.synths);
           }
@@ -1244,7 +1247,7 @@ export class WebRTCStar extends EventTarget {
       const remainingCtrlPeers = [...this.peers.keys()].filter(id => id.startsWith('ctrl-'));
       if (remainingCtrlPeers.length === 0) {
         if (this.verbose) {
-          console.log("🔌 Last controller disconnected. Proactively requesting a new list.");
+          console.log("SYNTH-DISCOVERY: Last controller disconnected. Proactively requesting a new list.");
         }
         // Use a small delay to prevent race conditions during cleanup.
         setTimeout(() => {
