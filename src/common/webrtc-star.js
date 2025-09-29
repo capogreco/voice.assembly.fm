@@ -31,6 +31,12 @@ export class WebRTCStar extends EventTarget {
     this.maxCtrlRetries = 3;
     this.ctrlRetryTimeout = null;
 
+    // Signaling reconnection with exponential backoff
+    this.signalingUrl = null;
+    this.signalingReconnectTimer = null;
+    this.signalingBackoffMs = 1000; // 1s initial
+    this.signalingMaxBackoffMs = 10000; // 10s max
+
     // ICE servers configuration
     this.iceServers = [
       { urls: "stun:stun.l.google.com:19302" },
@@ -93,6 +99,31 @@ export class WebRTCStar extends EventTarget {
   }
 
   /**
+   * Schedule signaling reconnection with exponential backoff
+   */
+  scheduleSignalingReconnect() {
+    if (this.signalingReconnectTimer) return; // Already scheduled
+
+    if (this.verbose) {
+      console.log(`🔄 Scheduling signaling reconnection in ${this.signalingBackoffMs}ms`);
+    }
+
+    this.signalingReconnectTimer = setTimeout(() => {
+      this.signalingReconnectTimer = null;
+      if (this.verbose) {
+        console.log("🔄 Attempting signaling reconnection...");
+      }
+      this.connect(this.signalingUrl, this.forceTakeover);
+    }, this.signalingBackoffMs);
+
+    // Exponential backoff
+    this.signalingBackoffMs = Math.min(
+      this.signalingBackoffMs * 2,
+      this.signalingMaxBackoffMs
+    );
+  }
+
+  /**
    * Connect to signaling server and register
    */
   async connect(
@@ -100,11 +131,15 @@ export class WebRTCStar extends EventTarget {
     forceTakeover = false,
   ) {
     this.forceTakeover = forceTakeover;
+    this.signalingUrl = signalingUrl; // Save for reconnection
     return new Promise((resolve, reject) => {
       this.signalingSocket = new WebSocket(signalingUrl);
 
       this.signalingSocket.addEventListener("open", () => {
         if (this.verbose) console.log("📡 Connected to signaling server");
+        
+        // Reset backoff on successful connection
+        this.signalingBackoffMs = 1000;
 
         // Register with server - include force_takeover for ctrl clients
         const registerMessage = {
@@ -118,14 +153,18 @@ export class WebRTCStar extends EventTarget {
 
         this.sendSignalingMessage(registerMessage);
 
-        // If we're a synth, immediately request ctrl list
-        if (this.peerType === "synth") {
-          setTimeout(() => {
+        // Request peer lists after registration
+        setTimeout(() => {
+          if (this.peerType === "synth") {
             this.sendSignalingMessage({
               type: "request-ctrls",
             });
-          }, 100); // Small delay to ensure registration is processed
-        }
+          } else if (this.peerType === "ctrl") {
+            this.sendSignalingMessage({
+              type: "request-synths",
+            });
+          }
+        }, 100); // Small delay to ensure registration is processed
       });
 
       this.signalingSocket.addEventListener("message", async (event) => {
@@ -148,13 +187,16 @@ export class WebRTCStar extends EventTarget {
 
       this.signalingSocket.addEventListener("error", (error) => {
         console.error("❌ Signaling connection error:", error);
+        this.scheduleSignalingReconnect();
         reject(error);
       });
 
       this.signalingSocket.addEventListener("close", () => {
         console.log("🔌 Signaling connection closed");
         this.isConnectedToSignaling = false;
-        this.cleanup();
+        // Don't cleanup peers - they can survive signaling downtime
+        // Schedule reconnection instead
+        this.scheduleSignalingReconnect();
       });
     });
   }
@@ -249,6 +291,21 @@ export class WebRTCStar extends EventTarget {
         if (message.synth_id !== this.peerId) {
           if (this.verbose) console.log(`👋 Synth left: ${message.synth_id}`);
           this.removePeer(message.synth_id);
+        }
+        break;
+
+      case "synths-list":
+        if (this.peerType === "ctrl") {
+          if (this.verbose) {
+            console.log("📋 Received synths list:", message.synths);
+          }
+          // Ctrl initiates connections to all synths
+          for (const synthId of message.synths) {
+            if (!this.peers.has(synthId)) {
+              if (this.verbose) console.log(`🎤 Discovered synth ${synthId} (initiating connection)`);
+              await this.createPeerConnection(synthId, true);
+            }
+          }
         }
         break;
 

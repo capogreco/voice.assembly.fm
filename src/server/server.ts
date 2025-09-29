@@ -150,6 +150,15 @@ interface SynthLeftMessage extends BaseMessage {
   synth_id: string;
 }
 
+interface RequestSynthsMessage extends BaseMessage {
+  type: "request-synths";
+}
+
+interface SynthsListMessage extends BaseMessage {
+  type: "synths-list";
+  synths: string[];
+}
+
 interface SignalingMessage extends BaseMessage {
   type: "offer" | "answer" | "ice-candidate";
   data: any;
@@ -164,6 +173,8 @@ type Message =
   | CtrlLeftMessage
   | SynthJoinedMessage
   | SynthLeftMessage
+  | RequestSynthsMessage
+  | SynthsListMessage
   | SignalingMessage
   | BaseMessage;
 
@@ -251,6 +262,30 @@ async function handleWebSocketMessage(
       const response: CtrlsListMessage = {
         type: "ctrls-list",
         ctrls: ctrlsList,
+        timestamp: Date.now(),
+      };
+
+      const clientConnection = connections.get(sender_id);
+      if (clientConnection?.socket.readyState === WebSocket.OPEN) {
+        clientConnection.socket.send(JSON.stringify(response));
+      }
+      return;
+    }
+
+    // Handle ctrl requesting synth list
+    if (message.type === "request-synths") {
+      const synthsList = [];
+      
+      // Find all connected synths
+      for (const [id, conn] of connections.entries()) {
+        if (id.startsWith("synth-") && conn.socket.readyState === WebSocket.OPEN) {
+          synthsList.push(id);
+        }
+      }
+
+      const response: SynthsListMessage = {
+        type: "synths-list",
+        synths: synthsList,
         timestamp: Date.now(),
       };
 
