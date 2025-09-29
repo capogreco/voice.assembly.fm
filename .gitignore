@@ -1,5 +1,2 @@
 reference
 .env
-
-# Build artifacts
-public/ctrl/ctrl-main.js
