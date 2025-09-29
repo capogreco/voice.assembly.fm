@@ -420,35 +420,24 @@ async function handleRequest(request: Request): Promise<Response> {
 
         // --- SINGLE CONTROLLER TAKEOVER LOGIC ---
         if (client_id.startsWith("ctrl-")) {
+          // --- BEGIN NEW, SIMPLIFIED CONTROLLER REGISTRATION LOGIC ---
           const oldCtrlEntry = await kv.get(["active_ctrl"]);
           const oldCtrl = oldCtrlEntry?.value as (KVCtrlEntry | null);
-          let shouldBecomeActive = false;
 
-          if (regMessage.force_takeover) {
-            // Case 1: User explicitly forces a takeover.
-            shouldBecomeActive = true;
-            if (oldCtrl && oldCtrl.client_id !== client_id) {
-              const oldCtrlSocket = connections.get(oldCtrl.client_id)?.socket;
-              if (oldCtrlSocket?.readyState === WebSocket.OPEN) {
-                console.log(`👢 Kicking old controller ${oldCtrl.client_id} due to forced takeover.`);
-                oldCtrlSocket.send(JSON.stringify({ type: "kicked", reason: "Another controller has taken over." }));
-              }
+          // The new controller registering should ALWAYS become the active one.
+          // This is the most robust way to handle the refresh race condition.
+          // If there was an old controller, we will kick it to be safe.
+          if (oldCtrl && oldCtrl.client_id !== client_id) {
+            const oldCtrlSocket = connections.get(oldCtrl.client_id)?.socket;
+            if (oldCtrlSocket?.readyState === WebSocket.OPEN) {
+              console.log(`👢 Kicking stale controller ${oldCtrl.client_id} due to new registration from ${client_id}.`);
+              oldCtrlSocket.send(JSON.stringify({ type: "kicked", reason: "A new controller has connected." }));
             }
-          } else {
-            // Case 2: Standard registration (e.g., on page load or refresh).
-            // A new controller ID registering should always take precedence over a different, stale one.
-            // This is the key fix for the race condition.
-            if (!oldCtrl || oldCtrl.client_id !== client_id) {
-              shouldBecomeActive = true;
-              if (oldCtrl) {
-                console.log(`🔄 Auto-activating ${client_id} (displacing stale controller ${oldCtrl.client_id})`);
-              } else {
-                console.log(`🔄 Auto-activating ${client_id} (no active controller)`);
-              }
-            }
-            // If oldCtrl.client_id === client_id, it means we are re-registering for some reason.
-            // In this case, we don't need to do anything here; the existing state is fine.
           }
+          
+          // Set shouldBecomeActive to true to trigger the synth notifications below.
+          const shouldBecomeActive = true;
+          // --- END NEW LOGIC ---
 
           if (shouldBecomeActive) {
             // Set the new controller as the active one
