@@ -421,39 +421,33 @@ async function handleRequest(request: Request): Promise<Response> {
         // --- SINGLE CONTROLLER TAKEOVER LOGIC ---
         if (client_id.startsWith("ctrl-")) {
           const oldCtrlEntry = await kv.get(["active_ctrl"]);
+          const oldCtrl = oldCtrlEntry?.value as (KVCtrlEntry | null);
           let shouldBecomeActive = false;
-          
+
           if (regMessage.force_takeover) {
-            // Explicit takeover - kick existing controller if different
-            if (oldCtrlEntry && oldCtrlEntry.value) {
-              const oldCtrl = oldCtrlEntry.value as KVCtrlEntry;
-              if (oldCtrl.client_id !== client_id) {
-                const oldCtrlSocket = connections.get(oldCtrl.client_id)?.socket;
-                if (
-                  oldCtrlSocket && oldCtrlSocket.readyState === WebSocket.OPEN
-                ) {
-                  console.log(`👢 Kicking old controller ${oldCtrl.client_id}`);
-                  oldCtrlSocket.send(JSON.stringify({
-                    type: "kicked",
-                    reason: "Another controller has taken over.",
-                  }));
-                }
-              }
-            }
+            // Case 1: User explicitly forces a takeover.
             shouldBecomeActive = true;
-          } else {
-            // Auto-activate if no active controller or it's disconnected
-            if (!oldCtrlEntry || !oldCtrlEntry.value) {
-              shouldBecomeActive = true;
-              console.log(`🔄 Auto-activating ${client_id} (no active controller)`);
-            } else {
-              const oldCtrl = oldCtrlEntry.value as KVCtrlEntry;
+            if (oldCtrl && oldCtrl.client_id !== client_id) {
               const oldCtrlSocket = connections.get(oldCtrl.client_id)?.socket;
-              if (!oldCtrlSocket || oldCtrlSocket.readyState !== WebSocket.OPEN) {
-                shouldBecomeActive = true;
-                console.log(`🔄 Auto-activating ${client_id} (previous controller disconnected)`);
+              if (oldCtrlSocket?.readyState === WebSocket.OPEN) {
+                console.log(`👢 Kicking old controller ${oldCtrl.client_id} due to forced takeover.`);
+                oldCtrlSocket.send(JSON.stringify({ type: "kicked", reason: "Another controller has taken over." }));
               }
             }
+          } else {
+            // Case 2: Standard registration (e.g., on page load or refresh).
+            // A new controller ID registering should always take precedence over a different, stale one.
+            // This is the key fix for the race condition.
+            if (!oldCtrl || oldCtrl.client_id !== client_id) {
+              shouldBecomeActive = true;
+              if (oldCtrl) {
+                console.log(`🔄 Auto-activating ${client_id} (displacing stale controller ${oldCtrl.client_id})`);
+              } else {
+                console.log(`🔄 Auto-activating ${client_id} (no active controller)`);
+              }
+            }
+            // If oldCtrl.client_id === client_id, it means we are re-registering for some reason.
+            // In this case, we don't need to do anything here; the existing state is fine.
           }
 
           if (shouldBecomeActive) {
