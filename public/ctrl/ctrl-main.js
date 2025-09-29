@@ -578,9 +578,10 @@ var WebRTCStar = class extends EventTarget {
       syncChannel: null,
       controlChannel: null,
       connectedEventSent: false,
-      isInitiator: shouldInitiate, // Track who initiated for reconnection
-      hasRetried: false, // Track if we've already attempted reconnection
-      reconnectTimer: null // Store reconnection timer
+      initiator: shouldInitiate, // Track who initiated for reconnection
+      reconnectAttempted: false, // Track if we've already attempted reconnection  
+      reconnectTimer: null, // Store reconnection timer
+      pendingCandidates: [] // Buffer ICE candidates when no remote description
     });
     let syncChannel, controlChannel;
     if (shouldInitiate) {
@@ -623,14 +624,13 @@ var WebRTCStar = class extends EventTarget {
         console.log(`\u{1F517} Connection to ${peerId}: ${peerConnection.connectionState}`);
       }
       if (peerConnection.connectionState === "connected") {
-        // Check readiness immediately - remove artificial delay
         this.checkPeerReadiness(peerId);
       } else if (peerConnection.connectionState === "failed") {
-        this.scheduleReconnection(peerId);
+        this.schedulePeerReconnect(peerId);
       } else if (peerConnection.connectionState === "closed") {
         this.removePeer(peerId);
       } else if (peerConnection.connectionState === "disconnected") {
-        console.log(`⚠️ Connection to ${peerId} disconnected, monitoring...`);
+        console.log(`⚠️ Connection to ${peerId} disconnected, monitoring for recovery...`);
         // Let it recover naturally, no immediate action
       }
     });
@@ -639,7 +639,6 @@ var WebRTCStar = class extends EventTarget {
         console.log(`\u{1F9CA} ICE connection to ${peerId}: ${peerConnection.iceConnectionState}`);
       }
       if (peerConnection.iceConnectionState === "connected" || peerConnection.iceConnectionState === "completed") {
-        // Check readiness immediately - remove artificial delay
         this.checkPeerReadiness(peerId);
       }
     });
@@ -705,7 +704,7 @@ var WebRTCStar = class extends EventTarget {
       const pc = peer.connection;
       if (pc.signalingState !== "stable") {
         if (this.verbose) {
-          console.warn(`\u26A0\uFE0F Received offer while signaling state is ${pc.signalingState}, rolling back`);
+          console.log(`🔄 Received offer while signaling state is ${pc.signalingState}, rolling back`);
         }
         await Promise.all([
           pc.setLocalDescription({
@@ -716,6 +715,10 @@ var WebRTCStar = class extends EventTarget {
       } else {
         await pc.setRemoteDescription(offer);
       }
+
+      // Drain any buffered ICE candidates after setting remote description
+      await this.drainPendingCandidates(fromPeerId);
+
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       this.sendSignalingMessage({
@@ -723,7 +726,7 @@ var WebRTCStar = class extends EventTarget {
         targetPeerId: fromPeerId,
         answer: pc.localDescription
       });
-      if (this.verbose) console.log(`\u2705 Sent answer to ${fromPeerId}`);
+      if (this.verbose) console.log(`✅ Sent answer to ${fromPeerId}`);
     } catch (error) {
       console.error(`\u274C Error handling offer from ${fromPeerId}:`, error);
     }
@@ -741,6 +744,9 @@ var WebRTCStar = class extends EventTarget {
 
     try {
       await peer.connection.setRemoteDescription(answer);
+      
+      // Drain any buffered ICE candidates after setting remote description
+      await this.drainPendingCandidates(fromPeerId);
       
       if (this.verbose) console.log(`✅ Set answer from ${fromPeerId}`);
     } catch (error) {
@@ -773,10 +779,12 @@ var WebRTCStar = class extends EventTarget {
         // Check if we have a remote description before adding the candidate
         if (!pc.remoteDescription) {
           if (this.verbose) {
-            console.warn(
-              `⚠️ Received ICE candidate from ${fromPeerId} before remote description, ignoring`,
+            console.log(
+              `⏳ Buffering ICE candidate from ${fromPeerId} (no remote description yet)`,
             );
           }
+          // Buffer the candidate for later
+          peer.pendingCandidates.push(candidate);
           return;
         }
         
@@ -786,15 +794,36 @@ var WebRTCStar = class extends EventTarget {
         if (this.verbose) console.log(`✅ Added ICE candidate from ${fromPeerId}`);
       }
     } catch (error) {
-      if (
-        !error.message.includes("Cannot add ICE candidate") &&
-        !error.message.includes("No remoteDescription")
-      ) {
-        console.error(`\u274C Error adding ICE candidate for ${fromPeerId}:`, error);
+      if (this.verbose) {
+        console.warn(`⚠️ Non-fatal error adding ICE candidate for ${fromPeerId}:`, error.message);
       }
-      // Silently ignore "remote description not set" errors as they're expected during race conditions
+      // Non-fatal error - let connection continue
     }
   }
+  
+  async drainPendingCandidates(peerId) {
+    const peer = this.peers.get(peerId);
+    if (!peer || peer.pendingCandidates.length === 0) return;
+
+    if (this.verbose) {
+      console.log(`🔄 Draining ${peer.pendingCandidates.length} buffered ICE candidates for ${peerId}`);
+    }
+
+    const candidates = [...peer.pendingCandidates];
+    peer.pendingCandidates = []; // Clear buffer
+
+    for (const candidate of candidates) {
+      try {
+        await peer.connection.addIceCandidate(new RTCIceCandidate(candidate));
+        if (this.verbose) console.log(`✅ Added buffered ICE candidate for ${peerId}`);
+      } catch (error) {
+        if (this.verbose) {
+          console.warn(`⚠️ Non-fatal error adding buffered ICE candidate for ${peerId}:`, error.message);
+        }
+      }
+    }
+  }
+  
   /**
    * Handle data channel messages
    */
@@ -974,15 +1003,15 @@ var WebRTCStar = class extends EventTarget {
   /**
    * Schedule a single reconnection attempt for a failed peer
    */
-  scheduleReconnection(peerId) {
+  schedulePeerReconnect(peerId) {
     const peer = this.peers.get(peerId);
-    if (!peer || peer.hasRetried) {
-      console.log(`🔄 Skipping reconnection for ${peerId} (no peer or already retried)`);
+    if (!peer || peer.reconnectAttempted) {
+      console.log(`🔄 Skipping reconnection for ${peerId} (no peer or already attempted)`);
       this.removePeer(peerId);
       return;
     }
     
-    peer.hasRetried = true;
+    peer.reconnectAttempted = true;
     console.log(`🔄 Scheduling reconnection to ${peerId} in 2-3s...`);
     
     // Clear any existing timer
@@ -991,11 +1020,21 @@ var WebRTCStar = class extends EventTarget {
     }
     
     peer.reconnectTimer = setTimeout(() => {
-      const wasInitiator = peer.isInitiator;
-      console.log(`🔄 Attempting reconnection to ${peerId}...`);
-      this.removePeer(peerId);
-      this.createPeerConnection(peerId, wasInitiator);
+      this.attemptPeerReconnect(peerId);
     }, 2000 + Math.random() * 1000); // 2-3s with jitter
+  }
+
+  attemptPeerReconnect(peerId) {
+    const peer = this.peers.get(peerId);
+    if (!peer) {
+      console.log(`🔄 Cannot reconnect to ${peerId} - peer no longer exists`);
+      return;
+    }
+    
+    const wasInitiator = peer.initiator;
+    console.log(`🔄 Attempting reconnection to ${peerId}...`);
+    this.removePeer(peerId);
+    this.createPeerConnection(peerId, wasInitiator);
   }
 
   /**
@@ -1004,21 +1043,25 @@ var WebRTCStar = class extends EventTarget {
   removePeer(peerId) {
     const peer = this.peers.get(peerId);
     if (!peer) return;
-    
+
     // Clear any reconnection timer
     if (peer.reconnectTimer) {
       clearTimeout(peer.reconnectTimer);
     }
-    
+
+    // Clear pending candidates buffer
+    peer.pendingCandidates = [];
+
+    // Close connection
     if (peer.connection.connectionState !== "closed") {
       peer.connection.close();
     }
+
     this.peers.delete(peerId);
-    if (this.verbose) console.log(`\u{1F5D1}\uFE0F Removed peer ${peerId}`);
+    if (this.verbose) console.log(`🗑️ Removed peer ${peerId}`);
+
     this.dispatchEvent(new CustomEvent("peer-removed", {
-      detail: {
-        peerId
-      }
+      detail: { peerId }
     }));
   }
   /**
