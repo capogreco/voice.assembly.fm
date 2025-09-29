@@ -630,8 +630,12 @@ var WebRTCStar = class extends EventTarget {
   }
   
   setupConnectionEventHandlers(peerConnection, peerId) {
+    // Capture current connection for stale guard
+    const currentPc = peerConnection;
+    
     // ICE candidate handling
     peerConnection.addEventListener("icecandidate", (event) => {
+      if (this.peers.get(peerId)?.connection !== currentPc) return; // stale guard
       if (event.candidate) {
         this.sendSignalingMessage({
           type: "ice-candidate",
@@ -643,6 +647,8 @@ var WebRTCStar = class extends EventTarget {
 
     // Connection state monitoring
     peerConnection.addEventListener("connectionstatechange", () => {
+      if (this.peers.get(peerId)?.connection !== currentPc) return; // stale guard
+      
       if (this.verbose) {
         console.log(`🔗 Connection to ${peerId}: ${peerConnection.connectionState}`);
       }
@@ -670,6 +676,8 @@ var WebRTCStar = class extends EventTarget {
 
     // Also monitor ICE connection state
     peerConnection.addEventListener("iceconnectionstatechange", () => {
+      if (this.peers.get(peerId)?.connection !== currentPc) return; // stale guard
+      
       if (this.verbose) {
         console.log(`🧊 ICE connection to ${peerId}: ${peerConnection.iceConnectionState}`);
       }
@@ -684,6 +692,8 @@ var WebRTCStar = class extends EventTarget {
 
     // Handle incoming data channels (when we're not the initiator)
     peerConnection.ondatachannel = (event) => {
+      if (this.peers.get(peerId)?.connection !== currentPc) return; // stale guard
+      
       const channel = event.channel;
       if (this.verbose) {
         console.log(`📡 Received data channel '${channel.label}' from ${peerId}`);
@@ -1058,14 +1068,18 @@ var WebRTCStar = class extends EventTarget {
    */
   schedulePeerReconnect(peerId) {
     const peer = this.peers.get(peerId);
-    if (!peer || peer.reconnectAttempted) {
-      console.log(`🔄 Skipping reconnection for ${peerId} (no peer or already attempted)`);
+    if (!peer) {
       this.removePeer(peerId);
       return;
     }
+    if (peer.reconnectAttempted) {
+      if (this.verbose) console.log(`↩️ Reconnect already attempted for ${peerId}`);
+      return; // Do NOT remove peer here - prevents deletion loops
+    }
     
     peer.reconnectAttempted = true;
-    console.log(`🔄 Scheduling reconnection to ${peerId} in 2-3s...`);
+    const delay = 2000 + Math.random() * 1000;
+    if (this.verbose) console.log(`🔄 Scheduling reconnection to ${peerId} in ${Math.round(delay)}ms...`);
     
     // Clear any existing timer
     if (peer.reconnectTimer) {
@@ -1074,77 +1088,103 @@ var WebRTCStar = class extends EventTarget {
     
     peer.reconnectTimer = setTimeout(() => {
       this.attemptPeerReconnect(peerId);
-    }, 2000 + Math.random() * 1000); // 2-3s with jitter
+    }, delay);
   }
 
   attemptPeerReconnect(peerId) {
     const peer = this.peers.get(peerId);
-    if (!peer) {
-      console.log(`🔄 Cannot reconnect to ${peerId} - peer no longer exists`);
-      return;
-    }
-    
+    if (!peer) return;
+
     const wasInitiator = peer.initiator;
-    console.log(`🔄 Attempting in-place reconnection to ${peerId} (initiator: ${wasInitiator})`);
-    
+    if (peer.reconnectTimer) { 
+      clearTimeout(peer.reconnectTimer); 
+      peer.reconnectTimer = null; 
+    }
+    if (this.verbose) console.log(`🔄 Attempting reconnection to ${peerId} (initiator=${wasInitiator})...`);
+
     try {
-      // Clear any existing timer
-      if (peer.reconnectTimer) {
-        clearTimeout(peer.reconnectTimer);
-        peer.reconnectTimer = null;
-      }
-      
-      // Close old connection safely (don't try to remove event listeners)
-      if (peer.connection.connectionState !== "closed") {
-        peer.connection.close();
-      }
-      
-      // Create new RTCPeerConnection instance
-      const newConnection = new RTCPeerConnection({
-        iceServers: this.iceServers,
-      });
-      
-      // Replace connection and reset channel refs
-      peer.connection = newConnection;
+      // Close old pc; don't act on its events due to stale guard
+      try { peer.connection.close(); } catch {}
+
+      // New pc
+      const pc = new RTCPeerConnection({ iceServers: this.iceServers });
+      peer.connection = pc;
       peer.syncChannel = null;
       peer.controlChannel = null;
-      peer.connectedEventSent = false;
-      // Keep peer.reconnectAttempted = true until successful
+      peer.connectedEventSent = false; // Allow "peer-connected" to fire again
+      peer.pendingCandidates = []; // Reset ICE buffer for new pc
       
-      // Re-wire event handlers on new connection
-      this.setupConnectionEventHandlers(newConnection, peerId);
+      // Stale guards via captured pc
+      const currentPc = pc;
+
+      pc.ondatachannel = (event) => {
+        if (this.peers.get(peerId)?.connection !== currentPc) return;
+        this.setupDataChannel(event.channel, peerId);
+      };
       
-      // Create data channels if we are the initiator
+      pc.addEventListener("icecandidate", (event) => {
+        if (this.peers.get(peerId)?.connection !== currentPc) return;
+        if (event.candidate) {
+          this.sendSignalingMessage({ 
+            type: "ice-candidate", 
+            targetPeerId: peerId, 
+            candidate: event.candidate 
+          });
+        }
+      });
+      
+      pc.addEventListener("connectionstatechange", () => {
+        if (this.peers.get(peerId)?.connection !== currentPc) return;
+        const state = pc.connectionState;
+        if (this.verbose) console.log(`🔗(re) ${peerId}: ${state}`);
+        if (state === "connected") {
+          // Reset retry flags on success
+          peer.reconnectAttempted = false;
+          if (peer.reconnectTimer) { 
+            clearTimeout(peer.reconnectTimer); 
+            peer.reconnectTimer = null; 
+          }
+          this.checkPeerReadiness(peerId);
+        } else if (state === "failed") {
+          // Only one retry allowed; if we're here, give up and remove
+          this.removePeer(peerId);
+        } else if (state === "closed") {
+          this.removePeer(peerId);
+        } else if (state === "disconnected") {
+          if (this.verbose) console.log(`⚠️ ${peerId} disconnected; waiting for recovery`);
+        }
+      });
+      
+      pc.addEventListener("iceconnectionstatechange", () => {
+        if (this.peers.get(peerId)?.connection !== currentPc) return;
+        const ice = pc.iceConnectionState;
+        if (ice === "connected" || ice === "completed") this.checkPeerReadiness(peerId);
+      });
+
       if (wasInitiator) {
-        const syncChannel = newConnection.createDataChannel("sync", {
-          ordered: false,
-          maxRetransmits: 0,
-        });
+        peer.initiator = true;
         
-        const controlChannel = newConnection.createDataChannel("control", {
-          ordered: true,
-        });
-        
+        // Create data channels exactly once
+        const syncChannel = pc.createDataChannel("sync", { ordered: false, maxRetransmits: 0 });
+        const controlChannel = pc.createDataChannel("control", { ordered: true });
         this.setupDataChannel(syncChannel, peerId);
         this.setupDataChannel(controlChannel, peerId);
-        
-        // Set initiator flag and create offer
-        peer.initiator = true;
-        const offer = await newConnection.createOffer();
-        await newConnection.setLocalDescription(offer);
-        
-        this.sendSignalingMessage({
-          type: "offer",
-          targetPeerId: peerId,
-          offer: offer,
+
+        // Create and send offer
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        this.sendSignalingMessage({ 
+          type: "offer", 
+          targetPeerId: peerId, 
+          offer 
         });
-        
         if (this.verbose) console.log(`📤 Sent reconnection offer to ${peerId}`);
+      } else {
+        peer.initiator = false; // wait for remote offer
       }
-      
-    } catch (error) {
-      console.error(`❌ Error during in-place reconnection to ${peerId}:`, error);
-      // Last resort: remove peer completely
+
+    } catch (e) {
+      console.error(`❌ Reconnect setup failed for ${peerId}:`, e);
       this.removePeer(peerId);
     }
   }
