@@ -12,6 +12,11 @@ import {
 export class WebRTCStar extends EventTarget {
   constructor(peerId, peerType) {
     super();
+    if (globalThis.__WEBRTC_STAR_SYNTH && peerType === "synth") {
+      console.warn("WebRTCStar synth re-instantiated. This should not happen. Trace:");
+      console.trace();
+    }
+    if (peerType === "synth") globalThis.__WEBRTC_STAR_SYNTH = this;
     this.peerId = peerId;
     this.peerType = peerType; // 'ctrl' or 'synth'
     this.verbose = false; // toggle for noisy logs
