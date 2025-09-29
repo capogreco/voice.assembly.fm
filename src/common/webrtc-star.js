@@ -1217,26 +1217,59 @@ export class WebRTCStar extends EventTarget {
    * Remove peer from mesh
    */
   removePeer(peerId) {
-    const peer = this.peers.get(peerId);
-    if (!peer) return;
+    // --- BEGIN FINAL, MORE ROBUST PEER REMOVAL LOGIC ---
+    const peerToRemove = this.peers.get(peerId);
+    if (!peerToRemove) return;
 
-    // Clear all timers
-    if (peer.restartTimer) {
-      clearTimeout(peer.restartTimer);
+    // If a synth loses its connection to a controller, we perform a more aggressive cleanup.
+    // We remove ALL controller peers to ensure a clean state and prevent stale records.
+    if (this.peerType === 'synth' && peerId.startsWith('ctrl-')) {
+      console.log(`[SYNTH-CLEANUP] Connection to controller ${peerId} lost. Removing all controller peers.`);
+      for (const [id, peer] of this.peers.entries()) {
+        if (id.startsWith('ctrl-')) {
+          // Clear all timers
+          if (peer.restartTimer) {
+            clearTimeout(peer.restartTimer);
+          }
+          if (peer.reconnectTimer) {
+            clearTimeout(peer.reconnectTimer);
+          }
+          // Clear pending candidates buffer
+          peer.pendingCandidates = [];
+          // Close connection
+          if (peer.connection.connectionState !== "closed") {
+            peer.connection.close();
+          }
+          this.peers.delete(id);
+          console.log(`[SYNTH-CLEANUP] Removed stale controller peer ${id}.`);
+        }
+      }
+      // After cleaning up, proactively look for the new controller.
+      console.log("[SYNTH-CLEANUP] Proactively requesting new controller list.");
+      setTimeout(() => {
+        if (this.signalingSocket && this.signalingSocket.readyState === WebSocket.OPEN) {
+          this.sendSignalingMessage({ type: 'request-ctrls' });
+        }
+      }, 250);
+
+    } else {
+      // Standard cleanup for other peer types or scenarios.
+      // Clear all timers
+      if (peerToRemove.restartTimer) {
+        clearTimeout(peerToRemove.restartTimer);
+      }
+      if (peerToRemove.reconnectTimer) {
+        clearTimeout(peerToRemove.reconnectTimer);
+      }
+      // Clear pending candidates buffer
+      peerToRemove.pendingCandidates = [];
+      // Close connection
+      if (peerToRemove.connection.connectionState !== "closed") {
+        peerToRemove.connection.close();
+      }
+      this.peers.delete(peerId);
     }
-    if (peer.reconnectTimer) {
-      clearTimeout(peer.reconnectTimer);
-    }
-
-    // Clear pending candidates buffer
-    peer.pendingCandidates = [];
-
-    // Close connection
-    if (peer.connection.connectionState !== "closed") {
-      peer.connection.close();
-    }
-
-    this.peers.delete(peerId);
+    
     if (this.verbose) console.log(`🗑️ Removed peer ${peerId}`);
 
     this.dispatchEvent(
@@ -1244,23 +1277,7 @@ export class WebRTCStar extends EventTarget {
         detail: { peerId },
       }),
     );
-
-    // If we are a synth and our connection to a ctrl peer was just removed,
-    // check if we need to find a new one.
-    if (this.peerType === 'synth' && peerId.startsWith('ctrl-')) {
-      const remainingCtrlPeers = [...this.peers.keys()].filter(id => id.startsWith('ctrl-'));
-      if (remainingCtrlPeers.length === 0) {
-        if (this.verbose) {
-          console.log("SYNTH-DISCOVERY: Last controller disconnected. Proactively requesting a new list.");
-        }
-        // Use a small delay to prevent race conditions during cleanup.
-        setTimeout(() => {
-          if (this.signalingSocket && this.signalingSocket.readyState === WebSocket.OPEN) {
-            this.sendSignalingMessage({ type: 'request-ctrls' });
-          }
-        }, 250);
-      }
-    }
+    // --- END FINAL LOGIC ---
   }
 
   /**
