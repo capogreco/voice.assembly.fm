@@ -355,6 +355,8 @@ var WebRTCStar = class extends EventTarget {
     this.signalingReconnectTimer = null;
     this.signalingBackoffMs = 1e3;
     this.signalingMaxBackoffMs = 1e4;
+    this.wasKicked = false;
+    this.kickedReason = null;
     this.iceServers = [
       {
         urls: "stun:stun.l.google.com:19302"
@@ -410,6 +412,12 @@ var WebRTCStar = class extends EventTarget {
    * Schedule signaling reconnection with exponential backoff
    */
   scheduleSignalingReconnect() {
+    if (this.wasKicked) {
+      if (this.verbose) {
+        console.log("\u{1F6AB} Not scheduling reconnection - was kicked:", this.kickedReason);
+      }
+      return;
+    }
     if (this.signalingReconnectTimer) return;
     if (this.verbose) {
       console.log(`\u{1F504} Scheduling signaling reconnection in ${this.signalingBackoffMs}ms`);
@@ -470,12 +478,16 @@ var WebRTCStar = class extends EventTarget {
       });
       this.signalingSocket.addEventListener("error", (error) => {
         console.error("\u274C Signaling connection error:", error);
-        this.scheduleSignalingReconnect();
+        if (!this.wasKicked) {
+          this.scheduleSignalingReconnect();
+        }
       });
       this.signalingSocket.addEventListener("close", () => {
         console.log("\u{1F50C} Signaling connection closed");
         this.isConnectedToSignaling = false;
-        this.scheduleSignalingReconnect();
+        if (!this.wasKicked) {
+          this.scheduleSignalingReconnect();
+        }
       });
     });
   }
@@ -590,12 +602,20 @@ var WebRTCStar = class extends EventTarget {
         break;
       case "kicked":
         console.error(`\u274C Kicked from network: ${message.reason}`);
+        this.wasKicked = true;
+        this.kickedReason = message.reason;
         this.dispatchEvent(new CustomEvent("kicked", {
           detail: {
             reason: message.reason
           }
         }));
-        this.cleanup();
+        if (this.signalingReconnectTimer) {
+          clearTimeout(this.signalingReconnectTimer);
+          this.signalingReconnectTimer = null;
+        }
+        if (this.signalingSocket) {
+          this.signalingSocket.close();
+        }
         break;
       case "join-rejected":
         console.error(`\u274C Join rejected: ${message.reason}`);
@@ -1377,6 +1397,9 @@ var ControlClient = class {
   pendingParameterChanges;
   elements;
   synthesisActive;
+  // Kicked state tracking
+  wasKicked;
+  kickedReason;
   // Bulk mode properties
   bulkModeEnabled;
   bulkChanges;
@@ -1620,6 +1643,8 @@ var ControlClient = class {
     this.bulkModeEnabled = false;
     this.bulkChanges = [];
     this.synthesisActive = false;
+    this.wasKicked = false;
+    this.kickedReason = null;
     this.musicalState = this._createDefaultState();
     this.pendingMusicalState = this._createDefaultState();
     this.elements = {
@@ -3330,6 +3355,10 @@ var ControlClient = class {
   }
   async connectToNetwork() {
     try {
+      if (this.wasKicked) {
+        this.log(`Not reconnecting - was kicked: ${this.kickedReason}`, "error");
+        return;
+      }
       this.updateConnectionStatus("connecting");
       this.log("Connecting to network...", "info");
       this.star = new WebRTCStar(this.peerId, "ctrl");
@@ -3374,10 +3403,7 @@ var ControlClient = class {
       this._updateUIState();
     });
     this.star.addEventListener("kicked", (event) => {
-      this.log(`Kicked: ${event.detail.reason}`, "error");
-      this.updateConnectionStatus("kicked");
-      this._updateUIState();
-      alert("You have been disconnected: Another control client has taken over.");
+      this.handleKicked(event.detail.reason);
     });
     this.star.addEventListener("join-rejected", (event) => {
       this.log(`Cannot join: ${event.detail.reason}`, "error");
@@ -3451,12 +3477,16 @@ var ControlClient = class {
       case "inactive":
         valueElement.textContent = "Inactive (view only)";
         statusElement.classList.add("inactive");
-        takeoverSection.style.display = "block";
+        if (takeoverSection) {
+          takeoverSection.style.display = "block";
+        }
         break;
       case "kicked":
         valueElement.textContent = "Kicked (reload to retry)";
         statusElement.classList.add("kicked");
-        takeoverSection.style.display = "block";
+        if (takeoverSection) {
+          takeoverSection.style.display = "block";
+        }
         break;
       case "connected":
         valueElement.textContent = "Connected";
@@ -3472,6 +3502,18 @@ var ControlClient = class {
         break;
       default:
         valueElement.textContent = "Disconnected";
+    }
+  }
+  handleKicked(reason) {
+    console.error(`\u274C Kicked from network: ${reason}`);
+    this.wasKicked = true;
+    this.kickedReason = reason;
+    this.updateConnectionStatus("kicked");
+    this._updateUIState();
+    alert("You have been disconnected: Another control client has taken over.");
+    if (this.star) {
+      this.star.cleanup();
+      this.star = null;
     }
   }
   updatePeerCount(count) {

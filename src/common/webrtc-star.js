@@ -37,6 +37,10 @@ export class WebRTCStar extends EventTarget {
     this.signalingBackoffMs = 1000; // 1s initial
     this.signalingMaxBackoffMs = 10000; // 10s max
 
+    // Kicked state tracking
+    this.wasKicked = false;
+    this.kickedReason = null;
+
     // ICE servers configuration
     this.iceServers = [
       { urls: "stun:stun.l.google.com:19302" },
@@ -102,6 +106,13 @@ export class WebRTCStar extends EventTarget {
    * Schedule signaling reconnection with exponential backoff
    */
   scheduleSignalingReconnect() {
+    if (this.wasKicked) {
+      if (this.verbose) {
+        console.log("🚫 Not scheduling reconnection - was kicked:", this.kickedReason);
+      }
+      return;
+    }
+
     if (this.signalingReconnectTimer) return; // Already scheduled
 
     if (this.verbose) {
@@ -188,7 +199,9 @@ export class WebRTCStar extends EventTarget {
 
       this.signalingSocket.addEventListener("error", (error) => {
         console.error("❌ Signaling connection error:", error);
-        this.scheduleSignalingReconnect();
+        if (!this.wasKicked) {
+          this.scheduleSignalingReconnect();
+        }
         // DO NOT REJECT - the reconnection logic will handle this.
       });
 
@@ -197,7 +210,9 @@ export class WebRTCStar extends EventTarget {
         this.isConnectedToSignaling = false;
         // Don't cleanup peers - they can survive signaling downtime
         // Schedule reconnection instead
-        this.scheduleSignalingReconnect();
+        if (!this.wasKicked) {
+          this.scheduleSignalingReconnect();
+        }
       });
     });
   }
@@ -335,12 +350,22 @@ export class WebRTCStar extends EventTarget {
 
       case "kicked":
         console.error(`❌ Kicked from network: ${message.reason}`);
+        this.wasKicked = true;
+        this.kickedReason = message.reason;
         this.dispatchEvent(
           new CustomEvent("kicked", {
             detail: { reason: message.reason },
           }),
         );
-        this.cleanup();
+        // Clear any pending reconnection
+        if (this.signalingReconnectTimer) {
+          clearTimeout(this.signalingReconnectTimer);
+          this.signalingReconnectTimer = null;
+        }
+        // Close socket but don't schedule reconnection
+        if (this.signalingSocket) {
+          this.signalingSocket.close();
+        }
         break;
 
       case "join-rejected":

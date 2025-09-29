@@ -51,6 +51,10 @@ class ControlClient {
   elements: any;
   synthesisActive: boolean;
 
+  // Kicked state tracking
+  wasKicked: boolean;
+  kickedReason: string | null;
+
   // Bulk mode properties
   bulkModeEnabled: boolean;
   bulkChanges: Array<
@@ -393,6 +397,10 @@ class ControlClient {
 
     // Synthesis active state
     this.synthesisActive = false;
+
+    // Initialize kicked state tracking
+    this.wasKicked = false;
+    this.kickedReason = null;
 
     // Initialize typed state management
     this.musicalState = this._createDefaultState();
@@ -2813,6 +2821,12 @@ class ControlClient {
 
   async connectToNetwork() {
     try {
+      // Prevent reconnection if we were kicked
+      if (this.wasKicked) {
+        this.log(`Not reconnecting - was kicked: ${this.kickedReason}`, "error");
+        return;
+      }
+
       this.updateConnectionStatus("connecting");
 
       this.log("Connecting to network...", "info");
@@ -2883,12 +2897,7 @@ class ControlClient {
     });
 
     this.star.addEventListener("kicked", (event) => {
-      this.log(`Kicked: ${event.detail.reason}`, "error");
-      this.updateConnectionStatus("kicked");
-      this._updateUIState();
-      alert(
-        "You have been disconnected: Another control client has taken over.",
-      );
+      this.handleKicked(event.detail.reason);
     });
 
     this.star.addEventListener("join-rejected", (event) => {
@@ -3005,12 +3014,16 @@ class ControlClient {
       case "inactive":
         valueElement.textContent = "Inactive (view only)";
         statusElement.classList.add("inactive");
-        takeoverSection.style.display = "block";
+        if (takeoverSection) {
+          takeoverSection.style.display = "block";
+        }
         break;
       case "kicked":
         valueElement.textContent = "Kicked (reload to retry)";
         statusElement.classList.add("kicked");
-        takeoverSection.style.display = "block";
+        if (takeoverSection) {
+          takeoverSection.style.display = "block";
+        }
         break;
       case "connected":
         valueElement.textContent = "Connected";
@@ -3026,6 +3039,27 @@ class ControlClient {
         break;
       default:
         valueElement.textContent = "Disconnected";
+    }
+  }
+
+  handleKicked(reason: string) {
+    console.error(`❌ Kicked from network: ${reason}`);
+    
+    // Set kicked state to prevent reconnection
+    this.wasKicked = true;
+    this.kickedReason = reason;
+    
+    // Update UI to show kicked status
+    this.updateConnectionStatus("kicked");
+    this._updateUIState();
+    
+    // Show user notification
+    alert("You have been disconnected: Another control client has taken over.");
+    
+    // Clean up star connection but don't attempt reconnection
+    if (this.star) {
+      this.star.cleanup();
+      this.star = null;
     }
   }
 
