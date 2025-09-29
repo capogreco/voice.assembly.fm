@@ -1237,6 +1237,23 @@ export class WebRTCStar extends EventTarget {
         detail: { peerId },
       }),
     );
+
+    // If we are a synth and our connection to a ctrl peer was just removed,
+    // check if we need to find a new one.
+    if (this.peerType === 'synth' && peerId.startsWith('ctrl-')) {
+      const remainingCtrlPeers = [...this.peers.keys()].filter(id => id.startsWith('ctrl-'));
+      if (remainingCtrlPeers.length === 0) {
+        if (this.verbose) {
+          console.log("🔌 Last controller disconnected. Proactively requesting a new list.");
+        }
+        // Use a small delay to prevent race conditions during cleanup.
+        setTimeout(() => {
+          if (this.signalingSocket && this.signalingSocket.readyState === WebSocket.OPEN) {
+            this.sendSignalingMessage({ type: 'request-ctrls' });
+          }
+        }, 250);
+      }
+    }
   }
 
   /**
