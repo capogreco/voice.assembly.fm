@@ -247,8 +247,10 @@ export class WebRTCStar extends EventTarget {
             // We simply ensure a placeholder peer record exists and wait for ctrl to offer.
             for (const ctrlId of message.ctrls) {
               if (!this.peers.has(ctrlId)) {
-                if (this.verbose) console.log(`🎛️ Discovered ctrl ${ctrlId} (waiting for offer)`);
+                console.log(`[SYNTH-HANDSHAKE] Discovered new controller ${ctrlId}. Creating placeholder peer connection.`);
                 await this.createPeerConnection(ctrlId, false);
+              } else {
+                console.log(`[SYNTH-HANDSHAKE] Discovered controller ${ctrlId}, but a peer record already exists. Skipping creation.`);
               }
             }
           }
@@ -305,8 +307,10 @@ export class WebRTCStar extends EventTarget {
           // Ctrl initiates connections to all synths
           for (const synthId of message.synths) {
             if (!this.peers.has(synthId)) {
-              if (this.verbose) console.log(`🎤 Discovered synth ${synthId} (initiating connection)`);
+              console.log(`[CTRL-HANDSHAKE] Discovered new synth ${synthId}. Creating peer connection and sending offer.`);
               await this.createPeerConnection(synthId, true);
+            } else {
+              console.log(`[CTRL-HANDSHAKE] Discovered synth ${synthId}, but a peer record already exists. Skipping creation.`);
             }
           }
         }
