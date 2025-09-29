@@ -610,6 +610,27 @@ var WebRTCStar = class extends EventTarget {
       }
       this.setupDataChannel(channel, peerId);
     };
+    // Set up all connection event handlers
+    this.setupConnectionEventHandlers(peerConnection, peerId);
+    if (shouldInitiate) {
+      // Set initiator flag before sending offer
+      const peer = this.peers.get(peerId);
+      if (peer) {
+        peer.initiator = true;
+      }
+      
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+      this.sendSignalingMessage({
+        type: "offer",
+        targetPeerId: peerId,
+        offer
+      });
+    }
+  }
+  
+  setupConnectionEventHandlers(peerConnection, peerId) {
+    // ICE candidate handling
     peerConnection.addEventListener("icecandidate", (event) => {
       if (event.candidate) {
         this.sendSignalingMessage({
@@ -619,11 +640,23 @@ var WebRTCStar = class extends EventTarget {
         });
       }
     });
+
+    // Connection state monitoring
     peerConnection.addEventListener("connectionstatechange", () => {
       if (this.verbose) {
-        console.log(`\u{1F517} Connection to ${peerId}: ${peerConnection.connectionState}`);
+        console.log(`🔗 Connection to ${peerId}: ${peerConnection.connectionState}`);
       }
+
       if (peerConnection.connectionState === "connected") {
+        // Reset reconnection flags on successful connection
+        const peer = this.peers.get(peerId);
+        if (peer) {
+          if (peer.reconnectTimer) {
+            clearTimeout(peer.reconnectTimer);
+            peer.reconnectTimer = null;
+          }
+          peer.reconnectAttempted = false;
+        }
         this.checkPeerReadiness(peerId);
       } else if (peerConnection.connectionState === "failed") {
         this.schedulePeerReconnect(peerId);
@@ -634,24 +667,32 @@ var WebRTCStar = class extends EventTarget {
         // Let it recover naturally, no immediate action
       }
     });
+
+    // Also monitor ICE connection state
     peerConnection.addEventListener("iceconnectionstatechange", () => {
       if (this.verbose) {
-        console.log(`\u{1F9CA} ICE connection to ${peerId}: ${peerConnection.iceConnectionState}`);
+        console.log(`🧊 ICE connection to ${peerId}: ${peerConnection.iceConnectionState}`);
       }
-      if (peerConnection.iceConnectionState === "connected" || peerConnection.iceConnectionState === "completed") {
+
+      if (
+        peerConnection.iceConnectionState === "connected" ||
+        peerConnection.iceConnectionState === "completed"
+      ) {
         this.checkPeerReadiness(peerId);
       }
     });
-    if (shouldInitiate) {
-      const offer = await peerConnection.createOffer();
-      await peerConnection.setLocalDescription(offer);
-      this.sendSignalingMessage({
-        type: "offer",
-        targetPeerId: peerId,
-        offer
-      });
-    }
+
+    // Handle incoming data channels (when we're not the initiator)
+    peerConnection.ondatachannel = (event) => {
+      const channel = event.channel;
+      if (this.verbose) {
+        console.log(`📡 Received data channel '${channel.label}' from ${peerId}`);
+      }
+
+      this.setupDataChannel(channel, peerId);
+    };
   }
+  
   /**
    * Set up data channel event handlers
    */
@@ -697,9 +738,13 @@ var WebRTCStar = class extends EventTarget {
     }
     const peer = this.peers.get(fromPeerId);
     if (!peer) {
-      console.error(`\u274C Could not get peer connection for ${fromPeerId} after creation attempt`);
+      console.error(`❌ Could not get peer connection for ${fromPeerId} after creation attempt`);
       return;
     }
+
+    // Set initiator role correctly - we are receiving an offer, so we are not the initiator
+    peer.initiator = false;
+
     try {
       const pc = peer.connection;
       if (pc.signalingState !== "stable") {
@@ -982,8 +1027,16 @@ var WebRTCStar = class extends EventTarget {
     }
     if (isSyncChannelReady && isControlChannelReady) {
       if (this.verbose) {
-        console.log(`\u2705 Connection and both channels ready for ${peerId}`);
+        console.log(`✅ Connection and both channels ready for ${peerId}`);
       }
+      
+      // Reset reconnection flags on successful readiness (safety reset)
+      if (peer.reconnectTimer) {
+        clearTimeout(peer.reconnectTimer);
+        peer.reconnectTimer = null;
+      }
+      peer.reconnectAttempted = false;
+      
       if (!peer.connectedEventSent) {
         peer.connectedEventSent = true;
         this.dispatchEvent(new CustomEvent("peer-connected", {
@@ -1032,9 +1085,68 @@ var WebRTCStar = class extends EventTarget {
     }
     
     const wasInitiator = peer.initiator;
-    console.log(`🔄 Attempting reconnection to ${peerId}...`);
-    this.removePeer(peerId);
-    this.createPeerConnection(peerId, wasInitiator);
+    console.log(`🔄 Attempting in-place reconnection to ${peerId} (initiator: ${wasInitiator})`);
+    
+    try {
+      // Clear any existing timer
+      if (peer.reconnectTimer) {
+        clearTimeout(peer.reconnectTimer);
+        peer.reconnectTimer = null;
+      }
+      
+      // Close old connection safely (don't try to remove event listeners)
+      if (peer.connection.connectionState !== "closed") {
+        peer.connection.close();
+      }
+      
+      // Create new RTCPeerConnection instance
+      const newConnection = new RTCPeerConnection({
+        iceServers: this.iceServers,
+      });
+      
+      // Replace connection and reset channel refs
+      peer.connection = newConnection;
+      peer.syncChannel = null;
+      peer.controlChannel = null;
+      peer.connectedEventSent = false;
+      // Keep peer.reconnectAttempted = true until successful
+      
+      // Re-wire event handlers on new connection
+      this.setupConnectionEventHandlers(newConnection, peerId);
+      
+      // Create data channels if we are the initiator
+      if (wasInitiator) {
+        const syncChannel = newConnection.createDataChannel("sync", {
+          ordered: false,
+          maxRetransmits: 0,
+        });
+        
+        const controlChannel = newConnection.createDataChannel("control", {
+          ordered: true,
+        });
+        
+        this.setupDataChannel(syncChannel, peerId);
+        this.setupDataChannel(controlChannel, peerId);
+        
+        // Set initiator flag and create offer
+        peer.initiator = true;
+        const offer = await newConnection.createOffer();
+        await newConnection.setLocalDescription(offer);
+        
+        this.sendSignalingMessage({
+          type: "offer",
+          targetPeerId: peerId,
+          offer: offer,
+        });
+        
+        if (this.verbose) console.log(`📤 Sent reconnection offer to ${peerId}`);
+      }
+      
+    } catch (error) {
+      console.error(`❌ Error during in-place reconnection to ${peerId}:`, error);
+      // Last resort: remove peer completely
+      this.removePeer(peerId);
+    }
   }
 
   /**

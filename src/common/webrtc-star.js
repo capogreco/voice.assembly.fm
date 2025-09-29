@@ -350,24 +350,32 @@ export class WebRTCStar extends EventTarget {
       this.setupDataChannel(controlChannel, peerId);
     }
 
-    // Handle incoming data channels (when we're not the initiator)
-    peerConnection.ondatachannel = (event) => {
-      const channel = event.channel;
-      if (this.verbose) {
-        console.log(
-          `📡 Received data channel '${channel.label}' from ${peerId}`,
-        );
+    // Set up all connection event handlers
+    this.setupConnectionEventHandlers(peerConnection, peerId);
+
+    // Initiate connection if we should
+    if (shouldInitiate) {
+      // Set initiator flag before sending offer
+      const peer = this.peers.get(peerId);
+      if (peer) {
+        peer.initiator = true;
       }
+      
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
 
-      if (channel.label === "sync") {
-        syncChannel = channel;
-      } else if (channel.label === "control") {
-        controlChannel = channel;
-      }
+      this.sendSignalingMessage({
+        type: "offer",
+        targetPeerId: peerId,
+        offer: offer,
+      });
+    }
+  }
 
-      this.setupDataChannel(channel, peerId);
-    };
-
+  /**
+   * Set up connection event handlers for a peer connection
+   */
+  setupConnectionEventHandlers(peerConnection, peerId) {
     // ICE candidate handling
     peerConnection.addEventListener("icecandidate", (event) => {
       if (event.candidate) {
@@ -388,6 +396,15 @@ export class WebRTCStar extends EventTarget {
       }
 
       if (peerConnection.connectionState === "connected") {
+        // Reset reconnection flags on successful connection
+        const peer = this.peers.get(peerId);
+        if (peer) {
+          if (peer.reconnectTimer) {
+            clearTimeout(peer.reconnectTimer);
+            peer.reconnectTimer = null;
+          }
+          peer.reconnectAttempted = false;
+        }
         this.checkPeerReadiness(peerId);
       } else if (peerConnection.connectionState === "failed") {
         this.schedulePeerReconnect(peerId);
@@ -415,17 +432,17 @@ export class WebRTCStar extends EventTarget {
       }
     });
 
-    // Initiate connection if we should
-    if (shouldInitiate) {
-      const offer = await peerConnection.createOffer();
-      await peerConnection.setLocalDescription(offer);
+    // Handle incoming data channels (when we're not the initiator)
+    peerConnection.ondatachannel = (event) => {
+      const channel = event.channel;
+      if (this.verbose) {
+        console.log(
+          `📡 Received data channel '${channel.label}' from ${peerId}`,
+        );
+      }
 
-      this.sendSignalingMessage({
-        type: "offer",
-        targetPeerId: peerId,
-        offer: offer,
-      });
-    }
+      this.setupDataChannel(channel, peerId);
+    };
   }
 
   /**
@@ -500,6 +517,9 @@ export class WebRTCStar extends EventTarget {
       );
       return;
     }
+
+    // Set initiator role correctly - we are receiving an offer, so we are not the initiator
+    peer.initiator = false;
 
     try {
       const pc = peer.connection;
@@ -854,6 +874,14 @@ export class WebRTCStar extends EventTarget {
       if (this.verbose) {
         console.log(`✅ Connection and both channels ready for ${peerId}`);
       }
+      
+      // Reset reconnection flags on successful readiness (safety reset)
+      if (peer.reconnectTimer) {
+        clearTimeout(peer.reconnectTimer);
+        peer.reconnectTimer = null;
+      }
+      peer.reconnectAttempted = false;
+      
       // Prevent duplicate events
       if (!peer.connectedEventSent) {
         peer.connectedEventSent = true;
@@ -905,7 +933,7 @@ export class WebRTCStar extends EventTarget {
   }
 
   /**
-   * Attempt to reconnect to a failed peer
+   * Attempt to reconnect to a failed peer in-place
    */
   attemptPeerReconnect(peerId) {
     const peer = this.peers.get(peerId);
@@ -915,9 +943,68 @@ export class WebRTCStar extends EventTarget {
     }
     
     const wasInitiator = peer.initiator;
-    console.log(`🔄 Attempting reconnection to ${peerId}...`);
-    this.removePeer(peerId);
-    this.createPeerConnection(peerId, wasInitiator);
+    console.log(`🔄 Attempting in-place reconnection to ${peerId} (initiator: ${wasInitiator})`);
+    
+    try {
+      // Clear any existing timer
+      if (peer.reconnectTimer) {
+        clearTimeout(peer.reconnectTimer);
+        peer.reconnectTimer = null;
+      }
+      
+      // Close old connection safely (don't try to remove event listeners)
+      if (peer.connection.connectionState !== "closed") {
+        peer.connection.close();
+      }
+      
+      // Create new RTCPeerConnection instance
+      const newConnection = new RTCPeerConnection({
+        iceServers: this.iceServers,
+      });
+      
+      // Replace connection and reset channel refs
+      peer.connection = newConnection;
+      peer.syncChannel = null;
+      peer.controlChannel = null;
+      peer.connectedEventSent = false;
+      // Keep peer.reconnectAttempted = true until successful
+      
+      // Re-wire event handlers on new connection
+      this.setupConnectionEventHandlers(newConnection, peerId);
+      
+      // Create data channels if we are the initiator
+      if (wasInitiator) {
+        const syncChannel = newConnection.createDataChannel("sync", {
+          ordered: false,
+          maxRetransmits: 0,
+        });
+        
+        const controlChannel = newConnection.createDataChannel("control", {
+          ordered: true,
+        });
+        
+        this.setupDataChannel(syncChannel, peerId);
+        this.setupDataChannel(controlChannel, peerId);
+        
+        // Set initiator flag and create offer
+        peer.initiator = true;
+        const offer = await newConnection.createOffer();
+        await newConnection.setLocalDescription(offer);
+        
+        this.sendSignalingMessage({
+          type: "offer",
+          targetPeerId: peerId,
+          offer: offer,
+        });
+        
+        if (this.verbose) console.log(`📤 Sent reconnection offer to ${peerId}`);
+      }
+      
+    } catch (error) {
+      console.error(`❌ Error during in-place reconnection to ${peerId}:`, error);
+      // Last resort: remove peer completely
+      this.removePeer(peerId);
+    }
   }
 
   /**
