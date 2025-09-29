@@ -188,7 +188,7 @@ export class WebRTCStar extends EventTarget {
       this.signalingSocket.addEventListener("error", (error) => {
         console.error("❌ Signaling connection error:", error);
         this.scheduleSignalingReconnect();
-        reject(error);
+        // DO NOT REJECT - the reconnection logic will handle this.
       });
 
       this.signalingSocket.addEventListener("close", () => {
