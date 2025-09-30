@@ -747,16 +747,26 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
       const blendedF2 = scaledFormantF2 * (1.0 - zingAmount) + scaledZingF2 * zingAmount;
       const blendedF3 = scaledFormantF3 * (1.0 - zingAmount) + scaledZingF3 * zingAmount;
 
-      // Apply overall level adjustment and amplitude envelope
-      const finalOutput = blendedOutput * 10.0 * amplitude;
+      // Parallel paths: voice with amplitude, noise with whiteNoise envelope
+      const voiceOutput = blendedOutput * 10.0 * amplitude;
+      
+      const noiseLevel = Math.min(Math.max(this.env.whiteNoise.current || 0, 0), 1);
+      const noiseSample = (Math.random() * 2 - 1) * noiseLevel * 10.0;
+      
+      // Mix the parallel paths
+      const finalOutput = voiceOutput + noiseSample;
       outputChannel[sample] = finalOutput;
 
       // Duplicate main output on channel 1
       if (outputDuplicate) outputDuplicate[sample] = finalOutput;
 
-      // Output amplitude-modulated formants for visualization
-      if (f1FullChannel) f1FullChannel[sample] = blendedF1 * 10.0 * amplitude;
-      if (f2FullChannel) f2FullChannel[sample] = blendedF2 * 10.0 * amplitude;
+      // Generate decorrelated noise for XY scope channels (independent of amplitude)
+      const noiseX = (Math.random() * 2 - 1) * noiseLevel * 10.0;
+      const noiseY = (Math.random() * 2 - 1) * noiseLevel * 10.0;
+
+      // Output parallel paths: voice (with amplitude) + noise (independent) for visualization
+      if (f1FullChannel) f1FullChannel[sample] = blendedF1 * 10.0 * amplitude + noiseX;
+      if (f2FullChannel) f2FullChannel[sample] = blendedF2 * 10.0 * amplitude + noiseY;
       if (f3FullChannel) f3FullChannel[sample] = blendedF3 * 10.0 * amplitude;
     }
 

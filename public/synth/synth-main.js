@@ -285,12 +285,9 @@ class SynthClient {
 
   async initializeFormantSynthesis() {
     try {
-      // Load voice worklet and white noise processor
+      // Load voice worklet
       await this.audioContext.audioWorklet.addModule(
         "./worklets/voice-worklet.js",
-      );
-      await this.audioContext.audioWorklet.addModule(
-        "./worklets/white-noise-processor.js",
       );
 
       // Create voice worklet with envelope generation and DSP synthesis
@@ -307,42 +304,7 @@ class SynthClient {
       // Track current parameter values for portamento (strict - no defaults)
       this.lastResolvedValues = {};
 
-      // Create two independent white noise worklets for decorrelated audio/visualization
-      this.whiteNoiseAudio = new AudioWorkletNode(
-        this.audioContext,
-        "white-noise-processor",
-        {
-          numberOfInputs: 0,
-          numberOfOutputs: 1,
-          outputChannelCount: [2], // Stereo white noise for audio
-        },
-      );
-
-      this.whiteNoiseViz = new AudioWorkletNode(
-        this.audioContext,
-        "white-noise-processor",
-        {
-          numberOfInputs: 0,
-          numberOfOutputs: 1,
-          outputChannelCount: [2], // Stereo white noise for visualization
-        },
-      );
-
-      // Send different seeds for decorrelated noise
-      this.whiteNoiseAudio.port.postMessage({
-        type: "seed",
-        seed: Math.random(),
-      });
-      this.whiteNoiseViz.port.postMessage({
-        type: "seed",
-        seed: Math.random(),
-      });
-
-      // Create white noise gain control (controlled by envelope from voice worklet)
-      this.whiteNoiseAudioGain = this.audioContext.createGain();
-      this.whiteNoiseAudioGain.gain.value = 0; // Default to silent
-
-      // Create mixer for combining voice and white noise
+      // Create mixer for voice output
       this.mixer = this.audioContext.createGain();
 
       // Create channel splitter for voice worklet's 5 outputs
@@ -352,38 +314,12 @@ class SynthClient {
       // Route channel 0 (main audio) to mixer for sound output
       this.voiceSplitter.connect(this.mixer, 0);
 
-      // Create gain nodes to mix formants with white noise for oscilloscope
-      this.oscilloscopeLeftGain = this.audioContext.createGain();
-      this.oscilloscopeRightGain = this.audioContext.createGain();
-
-      // Route F1 and F2 to the oscilloscope gain nodes
-      this.voiceSplitter.connect(this.oscilloscopeLeftGain, 2); // F1 -> X axis mixer
-      this.voiceSplitter.connect(this.oscilloscopeRightGain, 3); // F2 -> Y axis mixer
-
-      // Create stereo merger for oscilloscope (F1/F2 + white noise visualization)
+      // Create stereo merger for oscilloscope (F1/F2 channels with decorrelated noise)
       this.oscilloscopeMerger = this.audioContext.createChannelMerger(2);
 
-      // Connect mixed signals to oscilloscope merger
-      this.oscilloscopeLeftGain.connect(this.oscilloscopeMerger, 0, 0); // Mixed X axis
-      this.oscilloscopeRightGain.connect(this.oscilloscopeMerger, 0, 1); // Mixed Y axis
-
-      // Audio path: white noise for sound output
-      this.whiteNoiseAudio.connect(this.whiteNoiseAudioGain);
-      this.whiteNoiseAudioGain.connect(this.mixer);
-
-      // Visualization path: independent white noise for stable XY traces
-      this.whiteNoiseVizGain = this.audioContext.createGain(); // Tracks audio noise level
-      this.whiteNoiseVizGain.gain.value = 0; // Default to match audio gain
-      this.whiteNoiseVizSplitter = this.audioContext.createChannelSplitter(2);
-      this.whiteNoiseViz.connect(this.whiteNoiseVizGain);
-      this.whiteNoiseVizGain.connect(this.whiteNoiseVizSplitter);
-
-      // White noise envelope will be controlled via port messages to voice worklet
-      // For now, synchronize with amplitude parameter (will be updated in Phase 2.4)
-
-      // Route viz noise left to X axis, right to Y axis (with fixed small gain)
-      this.whiteNoiseVizSplitter.connect(this.oscilloscopeLeftGain, 0); // WN Left -> X axis
-      this.whiteNoiseVizSplitter.connect(this.oscilloscopeRightGain, 1); // WN Right -> Y axis
+      // Route F1 and F2 (with integrated noise) directly to oscilloscope
+      this.voiceSplitter.connect(this.oscilloscopeMerger, 2, 0); // F1 + noise -> X axis
+      this.voiceSplitter.connect(this.oscilloscopeMerger, 3, 1); // F2 + noise -> Y axis
 
       // Connect mixer to master gain
       this.mixer.connect(this.masterGain);
@@ -542,26 +478,7 @@ class SynthClient {
     // Note: Routing changes are now handled by handleProgramUpdate staging
     // Direct value updates only - routing changes happen at EOC
 
-    if (message.param === "whiteNoise") {
-      // White noise controls both audio and visualization gain
-      if (this.whiteNoiseAudioGain) {
-        this.whiteNoiseAudioGain.gain.setTargetAtTime(
-          message.value,
-          this.audioContext.currentTime,
-          0.015,
-        );
-      }
-      if (this.whiteNoiseVizGain) {
-        this.whiteNoiseVizGain.gain.setTargetAtTime(
-          message.value,
-          this.audioContext.currentTime,
-          0.015,
-        );
-      }
-      console.log(
-        `🔌 Route for '${message.param}': Main Thread -> WhiteNoise Audio Gain`,
-      );
-    } else if (this.voiceNode) {
+    if (this.voiceNode) {
       // Route to voice worklet via SET_ENV message
       this.voiceNode.port.postMessage({
         type: "SET_ENV",
@@ -1343,33 +1260,6 @@ class SynthClient {
       // Skip re-resolve for this cycle
     }
 
-    // Apply staged whiteNoise at EOC boundary if present
-    if (this._pendingWhiteNoiseAtEoc && this.whiteNoiseAudioGain) {
-      let v;
-      if (this._pendingWhiteNoiseAtEoc.interpolation === "cosine") {
-        // For cosine interpolation, at EOC boundary we apply the end value
-        v = this._pendingWhiteNoiseAtEoc.endValue;
-        console.log(`📋 Applied staged whiteNoise cosine endValue ${v} at EOC boundary`);
-      } else {
-        // For step interpolation, apply the start value
-        v = this._pendingWhiteNoiseAtEoc.startValue;
-        console.log(`📋 Applied staged whiteNoise step value ${v} at EOC boundary`);
-      }
-      
-      // Snap at boundary using the backdated, sample-accurate time
-      this.whiteNoiseAudioGain.gain.setValueAtTime(v, resetTime);
-      if (this.whiteNoiseVizGain) {
-        this.whiteNoiseVizGain.gain.setValueAtTime(v, resetTime);
-      }
-      
-      this._pendingWhiteNoiseAtEoc = null;
-
-      // Send ack to ctrl so it can clear the asterisk
-      if (this.star) {
-        this.star.broadcastToType("ctrl", { type: MessageTypes.PARAM_APPLIED, param: "whiteNoise" }, "control");
-      }
-    }
-
     if (this.reresolveAtNextEOC) {
       console.log("🔀 Re-initializing all stochastic generators at EOC");
 
@@ -1436,32 +1326,6 @@ class SynthClient {
       v: 1,
       params: payload
     });
-
-    // Apply whiteNoise in regular EOC batch (for base/range changes)
-    const wn = resolved.whiteNoise;
-    if (wn !== undefined && this.whiteNoiseAudioGain) {
-      let raw;
-      if (typeof wn === "object") {
-        // For cosine interpolation, at EOC we want the end value
-        if (wn.interpolation === "cosine" && wn.endValue !== undefined) {
-          raw = wn.endValue;
-          console.log(`[EOC] Applied whiteNoise cosine endValue ${raw} from regular batch`);
-        } else {
-          // For step interpolation or when endValue is undefined
-          raw = wn.startValue;
-          console.log(`[EOC] Applied whiteNoise startValue ${raw} from regular batch`);
-        }
-      } else {
-        // Scalar value
-        raw = wn;
-        console.log(`[EOC] Applied whiteNoise scalar ${raw} from regular batch`);
-      }
-      
-      this.whiteNoiseAudioGain.gain.setValueAtTime(raw, resetTime);
-      if (this.whiteNoiseVizGain) {
-        this.whiteNoiseVizGain.gain.setValueAtTime(raw, resetTime);
-      }
-    }
 
     console.log(`[EOC] Sent envelope updates to voice worklet:`, payload);
   }
@@ -2340,74 +2204,6 @@ class SynthClient {
     );
 
     if (message.isPlaying) {
-      // Special handling for whiteNoise - it's controlled via gain nodes, not the worklet
-      if (message.param === "whiteNoise") {
-        console.log(`📋 Staging whiteNoise for EOC (gain nodes)`);
-        this._pendingWhiteNoiseAtEoc = { 
-          startValue: message.startValue,
-          endValue: message.endValue,
-          interpolation: message.interpolation,
-          portamentoMs: 0 
-        };
-
-        // Update programConfig for whiteNoise just like other parameters
-        if (this.programConfig && this.programConfig[message.param]) {
-          console.log(`📋 Updating programConfig.whiteNoise for EOC`);
-          
-          // Update interpolation type
-          this.programConfig[message.param].interpolation = message.interpolation;
-          
-          const existingConfig = this.programConfig[message.param];
-          
-          if (message.interpolation === "step") {
-            // Step interpolation - update start generator
-            if (existingConfig.startValueGenerator) {
-              const startGen = { ...existingConfig.startValueGenerator };
-              if (typeof startGen.range === "object" && startGen.range.min !== undefined) {
-                console.log(`📋 Preserving range ${JSON.stringify(startGen.range)} for whiteNoise step interpolation`);
-              } else {
-                startGen.range = message.startValue;
-              }
-              this.programConfig[message.param].startValueGenerator = startGen;
-            }
-            // Clear end generator for step interpolation
-            delete this.programConfig[message.param].endValueGenerator;
-          } else if (message.interpolation === "cosine") {
-            // Cosine interpolation - preserve both generators
-            if (existingConfig.startValueGenerator) {
-              const startGen = { ...existingConfig.startValueGenerator };
-              if (typeof startGen.range === "object" && startGen.range.min !== undefined) {
-                console.log(`📋 Preserving start range ${JSON.stringify(startGen.range)} for whiteNoise cosine interpolation`);
-              } else {
-                startGen.range = message.startValue;
-              }
-              this.programConfig[message.param].startValueGenerator = startGen;
-            }
-            
-            // Ensure end generator exists for cosine interpolation
-            if (existingConfig.endValueGenerator) {
-              const endGen = { ...existingConfig.endValueGenerator };
-              if (typeof endGen.range === "object" && endGen.range.min !== undefined) {
-                console.log(`📋 Preserving end range ${JSON.stringify(endGen.range)} for whiteNoise cosine interpolation`);
-              } else {
-                endGen.range = message.endValue;
-              }
-              this.programConfig[message.param].endValueGenerator = endGen;
-            } else {
-              // Create end generator based on start generator if missing
-              console.log(`📋 Creating missing end generator for whiteNoise cosine interpolation`);
-              this.programConfig[message.param].endValueGenerator = {
-                type: "normalised",
-                range: message.endValue,
-                sequenceBehavior: existingConfig.startValueGenerator?.sequenceBehavior || "static",
-              };
-            }
-          }
-        }
-        
-        return; // Don't send to Voice worklet; noise is handled locally
-      }
-
       // Playing: Stage for EOC application
       console.log(`📋 Staging ${message.param} for EOC`);
       this.stagedParamUpdates = this.stagedParamUpdates || {};
@@ -2520,30 +2316,6 @@ class SynthClient {
         });
       }
 
-      // Special handling for whiteNoise - it's controlled via gain nodes, not the worklet
-      if (message.param === "whiteNoise") {
-        const noiseValue = message.startValue; // whiteNoise is a step parameter
-        const portamentoMs = message.portamentoTime || 0;
-        // Convert portamento milliseconds to timeConstant (1/3 of desired duration in seconds)
-        const timeConstant = portamentoMs > 0 ? portamentoMs / 3000 : 0.015; // fallback to 15ms
-        
-        if (this.whiteNoiseAudioGain) {
-          this.whiteNoiseAudioGain.gain.setTargetAtTime(
-            noiseValue,
-            this.audioContext.currentTime,
-            timeConstant
-          );
-        }
-        if (this.whiteNoiseVizGain) {
-          this.whiteNoiseVizGain.gain.setTargetAtTime(
-            noiseValue,
-            this.audioContext.currentTime,
-            timeConstant
-          );
-        }
-        console.log(`⚡ Applied whiteNoise ${noiseValue} directly to gain nodes with ${portamentoMs}ms portamento`);
-      }
-
       // Update programConfig to persist the change across EOC
       if (this.programConfig && this.programConfig[message.param]) {
         const config = this.programConfig[message.param];
@@ -2622,34 +2394,15 @@ class SynthClient {
     for (const [paramName, value] of Object.entries(resolvedState)) {
       const v = Number.isFinite(value) ? value : 0;
 
-      if (paramName === "whiteNoise") {
-        // White noise is handled directly via gain nodes
-        if (this.whiteNoiseAudioGain) {
-          this.whiteNoiseAudioGain.gain.setTargetAtTime(
-            v,
-            this.audioContext.currentTime,
-            0.015,
-          );
-          if (this.whiteNoiseVizGain) {
-            this.whiteNoiseVizGain.gain.setTargetAtTime(
-              v,
-              this.audioContext.currentTime,
-              0.015,
-            );
-          }
-          if (this.verbose) console.log(`🎚️ Scene apply: whiteNoise -> ${v}`);
-        }
-      } else {
-        // All other parameters go to voice worklet via SET_ALL_ENV
-        voiceParams[paramName] = {
-          startValue: v,
-          endValue: v,
-          interpolation: "step",
-          portamentoMs: 15  // Convert 0.015s to ms
-        };
-        if (this.verbose) {
-          console.log(`🎚️ Scene apply: ${paramName} -> ${v} (via SET_ALL_ENV)`);
-        }
+      // All parameters go to voice worklet via SET_ALL_ENV
+      voiceParams[paramName] = {
+        startValue: v,
+        endValue: v,
+        interpolation: "step",
+        portamentoMs: 15  // Convert 0.015s to ms
+      };
+      if (this.verbose) {
+        console.log(`🎚️ Scene apply: ${paramName} -> ${v} (via SET_ALL_ENV)`);
       }
     }
 
@@ -2686,34 +2439,15 @@ class SynthClient {
     for (const [paramName, value] of Object.entries(resolvedState)) {
       const v = Number.isFinite(value) ? value : 0;
 
-      if (paramName === "whiteNoise") {
-        // White noise is handled directly via gain nodes
-        if (this.whiteNoiseAudioGain) {
-          this.whiteNoiseAudioGain.gain.setTargetAtTime(
-            v,
-            this.audioContext.currentTime,
-            0.015,
-          );
-          if (this.whiteNoiseVizGain) {
-            this.whiteNoiseVizGain.gain.setTargetAtTime(
-              v,
-              this.audioContext.currentTime,
-              0.015,
-            );
-          }
-          if (this.verbose) console.log(`🎚️ Scene apply: whiteNoise -> ${v}`);
-        }
-      } else {
-        // All other parameters go to voice worklet via SET_ALL_ENV
-        voiceParams[paramName] = {
-          startValue: v,
-          endValue: v,
-          interpolation: "step",
-          portamentoMs: 15  // Convert 0.015s to ms
-        };
-        if (this.verbose) {
-          console.log(`🎚️ Scene apply: ${paramName} -> ${v} (via SET_ALL_ENV)`);
-        }
+      // All parameters go to voice worklet via SET_ALL_ENV
+      voiceParams[paramName] = {
+        startValue: v,
+        endValue: v,
+        interpolation: "step",
+        portamentoMs: 15  // Convert 0.015s to ms
+      };
+      if (this.verbose) {
+        console.log(`🎚️ Scene apply: ${paramName} -> ${v} (via SET_ALL_ENV)`);
       }
     }
 
@@ -3514,23 +3248,7 @@ class SynthClient {
 
   // Apply direct value to parameter via unified messaging
   _setDirectValue(paramName, value) {
-    if (paramName === "whiteNoise") {
-      // White noise controls both audio and visualization gain
-      if (this.whiteNoiseAudioGain) {
-        this.whiteNoiseAudioGain.gain.setTargetAtTime(
-          value,
-          this.audioContext.currentTime,
-          0.015,
-        );
-      }
-      if (this.whiteNoiseVizGain) {
-        this.whiteNoiseVizGain.gain.setTargetAtTime(
-          value,
-          this.audioContext.currentTime,
-          0.015,
-        );
-      }
-    } else if (this.voiceNode) {
+    if (this.voiceNode) {
       // Route to voice worklet via SET_ENV message
       this.voiceNode.port.postMessage({
         type: "SET_ENV",

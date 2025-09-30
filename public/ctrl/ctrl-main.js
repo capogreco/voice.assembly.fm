@@ -3708,13 +3708,31 @@ var ControlClient = class {
         return;
       }
       const loadedProgram = JSON.parse(savedProgramString);
-      this.pendingMusicalState = loadedProgram;
-      this.musicalState = JSON.parse(JSON.stringify(loadedProgram));
+      const validParams = [
+        "frequency",
+        "vowelX",
+        "vowelY",
+        "zingAmount",
+        "zingMorph",
+        "symmetry",
+        "amplitude",
+        "whiteNoise",
+        "vibratoWidth",
+        "vibratoRate"
+      ];
+      const filteredProgram = {};
+      validParams.forEach((param) => {
+        if (loadedProgram[param] !== void 0) {
+          filteredProgram[param] = loadedProgram[param];
+        }
+      });
+      this.pendingMusicalState = filteredProgram;
+      this.musicalState = JSON.parse(JSON.stringify(filteredProgram));
       Object.keys(this.musicalState).forEach((paramName) => {
         this._updateUIFromState(paramName);
       });
       if (this.star) {
-        const message = MessageBuilder.loadScene(memoryLocation, loadedProgram);
+        const message = MessageBuilder.loadScene(memoryLocation, filteredProgram);
         this.star.broadcastToType("synth", message, "control");
       }
       this.log(`Scene ${memoryLocation} loaded and broadcast.`, "success");

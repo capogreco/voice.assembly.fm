@@ -746,6 +746,163 @@
           </div>
         </div>
 
+        <!-- Vibrato Width -->
+        <div class="param-control compact-control">
+          <div class="param-line">
+            <span class="param-label">vib width</span>
+            <input
+              type="text"
+              class="text-input"
+              id="vibratoWidth-value"
+              value="0"
+              placeholder="0 or 0-0.5"
+            >
+            <select
+              class="hrg-behavior"
+              id="vibratoWidth-start-rbg-behavior"
+              title="Start RBG behavior"
+              style="display: none"
+            >
+              <option value="static">stat</option>
+              <option value="random">rand</option>
+            </select>
+            <select
+              class="interp-select"
+              id="vibratoWidth-interpolation"
+            >
+              <option value="step">step</option>
+              <option value="cosine">cos</option>
+            </select>
+            <input
+              type="text"
+              class="end-value-input"
+              id="vibratoWidth-end-value"
+              value="0"
+              placeholder="0 or 0-0.5"
+              title="End value"
+              style="display: none"
+            >
+            <select
+              class="hrg-behavior"
+              id="vibratoWidth-end-rbg-behavior"
+              title="End RBG behavior"
+              style="display: none"
+            >
+              <option value="static">stat</option>
+              <option value="random">rand</option>
+            </select>
+          </div>
+        </div>
+        
+        <!-- Vibrato Rate -->
+        <div class="param-control frequency-control">
+          <div class="param-line">
+            <span class="param-label">vib rate</span>
+            <input
+              type="text"
+              class="text-input"
+              id="vibratoRate-base"
+              value="5"
+              placeholder="5 Hz"
+              title="Base frequency in Hz"
+            >
+            <select
+              class="interp-select"
+              id="vibratoRate-interpolation"
+            >
+              <option value="step">step</option>
+              <option value="cosine">cos</option>
+            </select>
+            <span class="hrg-fraction" id="vibratoRate-start-hrg">
+              <input
+                type="text"
+                class="text-input"
+                id="vibratoRate-start-numerators"
+                value="1"
+                placeholder="1-6"
+                autocomplete="off"
+              >
+              <select
+                class="hrg-behavior"
+                id="vibratoRate-start-numerators-behavior"
+              >
+                <option value="static">stat</option>
+                <option value="ascending">asc</option>
+                <option value="descending">desc</option>
+                <option value="random">rand</option>
+                <option value="shuffle">shuf</option>
+              </select>
+              <span class="hrg-slash">/</span>
+              <input
+                type="text"
+                class="text-input"
+                id="vibratoRate-start-denominators"
+                value="1"
+                placeholder="1"
+                autocomplete="off"
+              >
+              <select
+                class="hrg-behavior"
+                id="vibratoRate-start-denominators-behavior"
+              >
+                <option value="static">stat</option>
+                <option value="ascending">asc</option>
+                <option value="descending">desc</option>
+                <option value="random">rand</option>
+                <option value="shuffle">shuf</option>
+              </select>
+            </span>
+            <span
+              class="hrg-arrow"
+              id="vibratoRate-hrg-arrow"
+              style="display: none"
+            >→</span>
+            <span
+              class="hrg-fraction"
+              id="vibratoRate-end-hrg"
+              style="display: none"
+            >
+              <input
+                type="text"
+                class="text-input"
+                id="vibratoRate-end-numerators"
+                value="1"
+                placeholder="1-6"
+                autocomplete="off"
+              >
+              <select
+                class="hrg-behavior"
+                id="vibratoRate-end-numerators-behavior"
+              >
+                <option value="static">stat</option>
+                <option value="ascending">asc</option>
+                <option value="descending">desc</option>
+                <option value="random">rand</option>
+                <option value="shuffle">shuf</option>
+              </select>
+              <span class="hrg-slash">/</span>
+              <input
+                type="text"
+                class="text-input"
+                id="vibratoRate-end-denominators"
+                value="1"
+                placeholder="1"
+                autocomplete="off"
+              >
+              <select
+                class="hrg-behavior"
+                id="vibratoRate-end-denominators-behavior"
+              >
+                <option value="static">stat</option>
+                <option value="ascending">asc</option>
+                <option value="descending">desc</option>
+                <option value="random">rand</option>
+                <option value="shuffle">shuf</option>
+              </select>
+            </span>
+          </div>
+        </div>
+
         <div class="param-control compact-control">
           <div class="param-line">
             <span class="param-label">vowel x</span>
@@ -1067,162 +1224,6 @@
             </select>
           </div>
           
-          <!-- Vibrato Width -->
-          <div class="param-control compact-control">
-            <div class="param-line">
-              <span class="param-label">vib width</span>
-              <input
-                type="text"
-                class="text-input"
-                id="vibratoWidth-value"
-                value="0"
-                placeholder="0 or 0-0.5"
-              >
-              <select
-                class="hrg-behavior"
-                id="vibratoWidth-start-rbg-behavior"
-                title="Start RBG behavior"
-                style="display: none"
-              >
-                <option value="static">stat</option>
-                <option value="random">rand</option>
-              </select>
-              <select
-                class="interp-select"
-                id="vibratoWidth-interpolation"
-              >
-                <option value="step">step</option>
-                <option value="cosine">cos</option>
-              </select>
-              <input
-                type="text"
-                class="end-value-input"
-                id="vibratoWidth-end-value"
-                value="0"
-                placeholder="0 or 0-0.5"
-                title="End value"
-                style="display: none"
-              >
-              <select
-                class="hrg-behavior"
-                id="vibratoWidth-end-rbg-behavior"
-                title="End RBG behavior"
-                style="display: none"
-              >
-                <option value="static">stat</option>
-                <option value="random">rand</option>
-              </select>
-            </div>
-          </div>
-          
-          <!-- Vibrato Rate -->
-          <div class="param-control frequency-control">
-            <div class="param-line">
-              <span class="param-label">vib rate</span>
-              <input
-                type="text"
-                class="text-input"
-                id="vibratoRate-base"
-                value="5"
-                placeholder="5 Hz"
-                title="Base frequency in Hz"
-              >
-              <select
-                class="interp-select"
-                id="vibratoRate-interpolation"
-              >
-                <option value="step">step</option>
-                <option value="cosine">cos</option>
-              </select>
-              <span class="hrg-fraction" id="vibratoRate-start-hrg">
-                <input
-                  type="text"
-                  class="text-input"
-                  id="vibratoRate-start-numerators"
-                  value="1"
-                  placeholder="1-6"
-                  autocomplete="off"
-                >
-                <select
-                  class="hrg-behavior"
-                  id="vibratoRate-start-numerators-behavior"
-                >
-                  <option value="static">stat</option>
-                  <option value="ascending">asc</option>
-                  <option value="descending">desc</option>
-                  <option value="random">rand</option>
-                  <option value="shuffle">shuf</option>
-                </select>
-                <span class="hrg-slash">/</span>
-                <input
-                  type="text"
-                  class="text-input"
-                  id="vibratoRate-start-denominators"
-                  value="1"
-                  placeholder="1"
-                  autocomplete="off"
-                >
-                <select
-                  class="hrg-behavior"
-                  id="vibratoRate-start-denominators-behavior"
-                >
-                  <option value="static">stat</option>
-                  <option value="ascending">asc</option>
-                  <option value="descending">desc</option>
-                  <option value="random">rand</option>
-                  <option value="shuffle">shuf</option>
-                </select>
-              </span>
-              <span
-                class="hrg-arrow"
-                id="vibratoRate-hrg-arrow"
-                style="display: none"
-              >→</span>
-              <span
-                class="hrg-fraction"
-                id="vibratoRate-end-hrg"
-                style="display: none"
-              >
-                <input
-                  type="text"
-                  class="text-input"
-                  id="vibratoRate-end-numerators"
-                  value="1"
-                  placeholder="1-6"
-                  autocomplete="off"
-                >
-                <select
-                  class="hrg-behavior"
-                  id="vibratoRate-end-numerators-behavior"
-                >
-                  <option value="static">stat</option>
-                  <option value="ascending">asc</option>
-                  <option value="descending">desc</option>
-                  <option value="random">rand</option>
-                  <option value="shuffle">shuf</option>
-                </select>
-                <span class="hrg-slash">/</span>
-                <input
-                  type="text"
-                  class="text-input"
-                  id="vibratoRate-end-denominators"
-                  value="1"
-                  placeholder="1"
-                  autocomplete="off"
-                >
-                <select
-                  class="hrg-behavior"
-                  id="vibratoRate-end-denominators-behavior"
-                >
-                  <option value="static">stat</option>
-                  <option value="ascending">asc</option>
-                  <option value="descending">desc</option>
-                  <option value="random">rand</option>
-                  <option value="shuffle">shuf</option>
-                </select>
-              </span>
-            </div>
-          </div>
         <!-- Parameter Control Actions -->
         <div class="param-actions">
           <div style="display: flex; gap: 6px; flex-wrap: wrap;">

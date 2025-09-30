@@ -3358,9 +3358,18 @@ class ControlClient {
       // 1. Load and parse the saved program.
       const loadedProgram = JSON.parse(savedProgramString);
 
+      // Filter out metadata fields like savedAt when loading scene
+      const validParams = ['frequency', 'vowelX', 'vowelY', 'zingAmount', 'zingMorph', 'symmetry', 'amplitude', 'whiteNoise', 'vibratoWidth', 'vibratoRate'];
+      const filteredProgram: Partial<IMusicalState> = {};
+      validParams.forEach(param => {
+        if (loadedProgram[param] !== undefined) {
+          filteredProgram[param] = loadedProgram[param];
+        }
+      });
+
       // 2. Update the controller's internal state.
-      this.pendingMusicalState = loadedProgram;
-      this.musicalState = JSON.parse(JSON.stringify(loadedProgram));
+      this.pendingMusicalState = filteredProgram;
+      this.musicalState = JSON.parse(JSON.stringify(filteredProgram));
 
       // 3. Update the entire UI to match the loaded state.
       Object.keys(this.musicalState).forEach((paramName) => {
@@ -3369,7 +3378,7 @@ class ControlClient {
 
       // 4. Broadcast LOAD_SCENE only (contains full program config)
       if (this.star) {
-        const message = MessageBuilder.loadScene(memoryLocation, loadedProgram);
+        const message = MessageBuilder.loadScene(memoryLocation, filteredProgram);
         this.star.broadcastToType("synth", message, "control");
       }
 
