@@ -98,11 +98,30 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
         portamentoMs: 0, 
         current: 0, 
         alpha: 1 
+      },
+      vibratoWidth: { 
+        interpolation: 'step', 
+        start: 0, 
+        end: 0, 
+        portamentoMs: 0, 
+        current: 0, 
+        alpha: 1 
+      },
+      vibratoRate: { 
+        interpolation: 'step', 
+        start: 5, 
+        end: 5, 
+        portamentoMs: 0, 
+        current: 5, 
+        alpha: 1 
       }
     };
 
     // Phase tracking for envelope calculations
     this.lastPhase = 0;
+    
+    // Vibrato LFO state
+    this.vibratoPhase = 0;
     
     // ===== DSP SYNTHESIS STATE =====
     
@@ -204,6 +223,15 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
    * Handle SET_ENV message - update single parameter envelope
    */
   handleSetEnv(msg) {
+    // Handle 'active' parameter as direct AudioParam (not envelope)
+    if (msg.param === 'active') {
+      // 'active' is a direct AudioParam, not an envelope parameter
+      // The main thread should handle this via direct AudioParam write
+      // This message type is not appropriate for the 'active' parameter
+      console.warn(`Voice worklet: 'active' parameter should be set via AudioParam, not SET_ENV`);
+      return;
+    }
+    
     const env = this.env[msg.param];
     if (!env) {
       console.warn(`Voice worklet: Unknown parameter: ${msg.param}`);
@@ -632,15 +660,33 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
       const zingAmount = this.env.zingAmount.current;
       const zingMorph = this.env.zingMorph.current;
       const symmetry = this.env.symmetry.current;
+      
+      // Apply vibrato modulation to frequency
+      const rate = Math.min(Math.max(this.env.vibratoRate.current || 0, 0), 1024);
+      const width = Math.min(Math.max(this.env.vibratoWidth.current || 0, 0), 1);
+      
+      let freqFinal = frequency;
+      if (rate > 0 && width > 0) {
+        // Exponential cents mapping: f(0)=0, f(0.5)≈100c, f(1)≈1200c
+        const depthCents = 10 * (Math.pow(121, width) - 1);
+        const modFactor = Math.pow(2, (depthCents * Math.sin(this.vibratoPhase)) / 1200);
+        freqFinal = frequency * modFactor;
+        
+        // Update phase
+        this.vibratoPhase += (2 * Math.PI * rate) / this.sampleRate;
+        if (this.vibratoPhase >= 2 * Math.PI) {
+          this.vibratoPhase -= 2 * Math.PI;
+        }
+      }
 
       // Update frequency-dependent calculations if needed
-      if (frequency !== this.fundamentalFreq) {
-        this.fundamentalFreq = frequency;
-        this.updateFormantCarriers(frequency);
+      if (freqFinal !== this.fundamentalFreq) {
+        this.fundamentalFreq = freqFinal;
+        this.updateFormantCarriers(freqFinal);
       }
 
       // Skip synthesis if inactive or silent
-      if (!active || frequency <= 0 || amplitude <= 0) {
+      if (!active || freqFinal <= 0 || amplitude <= 0) {
         outputChannel[sample] = 0;
         if (outputDuplicate) outputDuplicate[sample] = 0;
         if (f1FullChannel) f1FullChannel[sample] = 0;
@@ -653,7 +699,7 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
       this.updateVowelFormants(vowelX, vowelY);
 
       // Calculate frequency increment per sample for internal phasor
-      const freqIncrement = frequency / this.sampleRate;
+      const freqIncrement = freqFinal / this.sampleRate;
       
       // Update shared master phasor (UPHO architecture)
       this.masterPhase = (this.masterPhase + freqIncrement) % 1.0;

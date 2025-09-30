@@ -18,6 +18,7 @@ export const MessageTypes = {
   PROGRAM_UPDATE: "program-update",
   SUB_PARAM_UPDATE: "sub-param-update",
   UNIFIED_PARAM_UPDATE: "unified-param-update",
+  PARAM_APPLIED: "param-applied",
 
   // Timing Control
   PHASOR_SYNC: "phasor-sync",
@@ -30,7 +31,6 @@ export const MessageTypes = {
   PROGRAM: "program",
 
   // Worklet Control (obsolete message types removed - now using SET_ENV/SET_ALL_ENV)
-  RESTORE_SEQUENCE_STATE: "restore-sequence-state",
   RERESOLVE_AT_EOC: "reresolve-at-eoc",
   IMMEDIATE_REINITIALIZE: "immediate-reinitialize",
 
@@ -70,6 +70,8 @@ export class MessageBuilder {
       symmetry: params.symmetry,
       amplitude: params.amplitude,
       whiteNoise: params.whiteNoise,
+      vibratoWidth: params.vibratoWidth,
+      vibratoRate: params.vibratoRate,
       synthesisActive: params.synthesisActive,
       portamentoTime: params.portamentoTime,
       timestamp: performance.now(),
@@ -128,14 +130,7 @@ export class MessageBuilder {
   }
 
   // setStepValues and setCosSegments removed - use SET_ENV/SET_ALL_ENV instead
-
-  static restoreSequenceState(sequences) {
-    return {
-      type: MessageTypes.RESTORE_SEQUENCE_STATE,
-      sequences,
-      timestamp: performance.now(),
-    };
-  }
+  // restoreSequenceState removed - obsolete message type
 
   static reresolveAtEOC() {
     return {
@@ -370,15 +365,7 @@ export function validateMessage(message) {
       }
       break;
 
-    // SET_STEP_VALUES and SET_COS_SEGMENTS validation removed - obsolete message types
-
-    case MessageTypes.RESTORE_SEQUENCE_STATE:
-      if (!message.sequences || typeof message.sequences !== "object") {
-        throw new Error(
-          "Restore sequence state message must have sequences object",
-        );
-      }
-      break;
+    // SET_STEP_VALUES, SET_COS_SEGMENTS, and RESTORE_SEQUENCE_STATE validation removed - obsolete message types
 
     case MessageTypes.RERESOLVE_AT_EOC:
       // No required fields - simple trigger message

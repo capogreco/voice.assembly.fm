@@ -54,4 +54,6 @@ export interface IMusicalState {
   symmetry: ParameterState;
   amplitude: ParameterState;
   whiteNoise: ParameterState;
+  vibratoWidth: ParameterState;
+  vibratoRate: ParameterState;
 }

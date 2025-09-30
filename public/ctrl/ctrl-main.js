@@ -11,6 +11,7 @@ var MessageTypes = {
   PROGRAM_UPDATE: "program-update",
   SUB_PARAM_UPDATE: "sub-param-update",
   UNIFIED_PARAM_UPDATE: "unified-param-update",
+  PARAM_APPLIED: "param-applied",
   // Timing Control
   PHASOR_SYNC: "phasor-sync",
   TRANSPORT: "transport",
@@ -20,7 +21,6 @@ var MessageTypes = {
   SYNTH_READY: "synth-ready",
   PROGRAM: "program",
   // Worklet Control (obsolete message types removed - now using SET_ENV/SET_ALL_ENV)
-  RESTORE_SEQUENCE_STATE: "restore-sequence-state",
   RERESOLVE_AT_EOC: "reresolve-at-eoc",
   IMMEDIATE_REINITIALIZE: "immediate-reinitialize",
   // Scene Memory
@@ -56,6 +56,8 @@ var MessageBuilder = class {
       symmetry: params.symmetry,
       amplitude: params.amplitude,
       whiteNoise: params.whiteNoise,
+      vibratoWidth: params.vibratoWidth,
+      vibratoRate: params.vibratoRate,
       synthesisActive: params.synthesisActive,
       portamentoTime: params.portamentoTime,
       timestamp: performance.now()
@@ -107,13 +109,7 @@ var MessageBuilder = class {
     };
   }
   // setStepValues and setCosSegments removed - use SET_ENV/SET_ALL_ENV instead
-  static restoreSequenceState(sequences) {
-    return {
-      type: MessageTypes.RESTORE_SEQUENCE_STATE,
-      sequences,
-      timestamp: performance.now()
-    };
-  }
+  // restoreSequenceState removed - obsolete message type
   static reresolveAtEOC() {
     return {
       type: MessageTypes.RERESOLVE_AT_EOC,
@@ -271,12 +267,7 @@ function validateMessage(message) {
         throw new Error("Program message must have config object");
       }
       break;
-    // SET_STEP_VALUES and SET_COS_SEGMENTS validation removed - obsolete message types
-    case MessageTypes.RESTORE_SEQUENCE_STATE:
-      if (!message.sequences || typeof message.sequences !== "object") {
-        throw new Error("Restore sequence state message must have sequences object");
-      }
-      break;
+    // SET_STEP_VALUES, SET_COS_SEGMENTS, and RESTORE_SEQUENCE_STATE validation removed - obsolete message types
     case MessageTypes.RERESOLVE_AT_EOC:
       break;
     case MessageTypes.IMMEDIATE_REINITIALIZE:
@@ -1430,7 +1421,25 @@ var ControlClient = class {
       zingMorph: defaultNormalizedState(),
       symmetry: defaultNormalizedState(),
       amplitude: defaultConstantState(0.8),
-      whiteNoise: defaultConstantState(0)
+      whiteNoise: defaultConstantState(0),
+      vibratoWidth: {
+        interpolation: "step",
+        startValueGenerator: {
+          type: "normalised",
+          range: 0,
+          sequenceBehavior: "static"
+        }
+      },
+      vibratoRate: {
+        interpolation: "step",
+        baseValue: 5,
+        startValueGenerator: {
+          type: "periodic",
+          numerators: "1",
+          denominators: "1",
+          sequenceBehavior: "static"
+        }
+      }
     };
   }
   _updatePendingState(action) {
@@ -1499,7 +1508,7 @@ var ControlClient = class {
    */
   _applyHRGChangeWithPortamento(action) {
     this._updateActiveState(action);
-    const portamentoTime = this.elements.portamentoTime ? parseInt(this.elements.portamentoTime.value) : 100;
+    const portamentoTime = this.elements.portamentoTime ? this._mapPortamentoNormToMs(parseFloat(this.elements.portamentoTime.value)) : 100;
     this.broadcastSingleParameterUpdate(action.param, portamentoTime);
   }
   /**
@@ -1524,7 +1533,7 @@ var ControlClient = class {
    * @param portamentoTime Optional portamento duration (defaults to UI value)
    */
   _sendSubParameterUpdate(paramPath, value, portamentoTime) {
-    const finalPortamentoTime = portamentoTime ?? (this.elements.portamentoTime ? parseInt(this.elements.portamentoTime.value) : 100);
+    const finalPortamentoTime = portamentoTime ?? (this.elements.portamentoTime ? this._mapPortamentoNormToMs(parseFloat(this.elements.portamentoTime.value)) : 100);
     if (this.addToBulkChanges({
       type: "sub-param-update",
       paramPath,
@@ -1696,8 +1705,10 @@ var ControlClient = class {
     }
     if (this.elements.portamentoTime) {
       this.elements.portamentoTime.addEventListener("input", (e) => {
-        const value = e.target.value;
-        this.elements.portamentoValue.textContent = `${value}ms`;
+        const norm = parseFloat(e.target.value);
+        const ms = this._mapPortamentoNormToMs(norm);
+        const displayMs = ms < 10 ? ms.toFixed(1) : Math.round(ms);
+        this.elements.portamentoValue.textContent = `${displayMs}ms`;
       });
     }
     if (this.elements.reresolveBtn) {
@@ -1813,7 +1824,8 @@ var ControlClient = class {
     });
   }
   setupEnvelopeControls() {
-    this.setupFrequencyControls();
+    this.setupHrgParameterControls("frequency");
+    this.setupHrgParameterControls("vibratoRate");
     this.setupCompactParameterControls("vowelX");
     this.setupCompactParameterControls("vowelY");
     this.setupCompactParameterControls("zingAmount");
@@ -1821,6 +1833,7 @@ var ControlClient = class {
     this.setupCompactParameterControls("symmetry");
     this.setupCompactParameterControls("amplitude");
     this.setupCompactParameterControls("whiteNoise");
+    this.setupCompactParameterControls("vibratoWidth");
     Object.keys(this.musicalState).forEach((paramName) => {
       this.setParameterState(paramName, this.musicalState[paramName]);
     });
@@ -1845,6 +1858,13 @@ var ControlClient = class {
           param: paramName,
           interpolation
         });
+        if (interpolation === "cosine") {
+          const param = this.pendingMusicalState[paramName];
+          if (param.startValueGenerator) {
+            param.endValueGenerator = JSON.parse(JSON.stringify(param.startValueGenerator));
+          }
+        }
+        this._updateUIFromState(paramName);
         this.markPendingChanges();
         if (this.isPlaying) {
           this.broadcastSingleParameterStaged(paramName);
@@ -1945,7 +1965,7 @@ var ControlClient = class {
         textInput.classList.toggle("invalid-input", !isValid && textInput.value !== "");
       });
     }
-    if (paramName === "frequency") {
+    if (false) {
       const startNumeratorsInput = document.getElementById("frequency-start-numerators");
       const startDenominatorsInput = document.getElementById("frequency-start-denominators");
       const startNumBehaviorSelect = document.getElementById("frequency-start-numerators-behavior");
@@ -1957,7 +1977,7 @@ var ControlClient = class {
           if (this.isPlaying) {
             this._updatePendingState({
               type: "SET_GENERATOR_CONFIG",
-              param: "frequency",
+              param: paramName,
               position: "start",
               config: {
                 numerators: startNumeratorsInput.value
@@ -1970,7 +1990,7 @@ var ControlClient = class {
           if (!this.isPlaying) {
             this._applyHRGChangeWithPortamento({
               type: "SET_GENERATOR_CONFIG",
-              param: "frequency",
+              param: paramName,
               position: "start",
               config: {
                 numerators: startNumeratorsInput.value
@@ -1979,7 +1999,7 @@ var ControlClient = class {
           } else {
             this._updatePendingState({
               type: "SET_GENERATOR_CONFIG",
-              param: "frequency",
+              param: paramName,
               position: "start",
               config: {
                 numerators: startNumeratorsInput.value
@@ -1996,7 +2016,7 @@ var ControlClient = class {
           if (this.isPlaying) {
             this._updatePendingState({
               type: "SET_GENERATOR_CONFIG",
-              param: "frequency",
+              param: paramName,
               position: "start",
               config: {
                 denominators: startDenominatorsInput.value
@@ -2009,7 +2029,7 @@ var ControlClient = class {
           if (!this.isPlaying) {
             this._applyHRGChangeWithPortamento({
               type: "SET_GENERATOR_CONFIG",
-              param: "frequency",
+              param: paramName,
               position: "start",
               config: {
                 denominators: startDenominatorsInput.value
@@ -2018,7 +2038,7 @@ var ControlClient = class {
           } else {
             this._updatePendingState({
               type: "SET_GENERATOR_CONFIG",
-              param: "frequency",
+              param: paramName,
               position: "start",
               config: {
                 denominators: startDenominatorsInput.value
@@ -2033,7 +2053,7 @@ var ControlClient = class {
           if (!this.isPlaying) {
             this._applyHRGChangeWithPortamento({
               type: "SET_GENERATOR_CONFIG",
-              param: "frequency",
+              param: paramName,
               position: "start",
               config: {
                 numeratorBehavior: startNumBehaviorSelect.value
@@ -2042,7 +2062,7 @@ var ControlClient = class {
           } else {
             this._updatePendingState({
               type: "SET_GENERATOR_CONFIG",
-              param: "frequency",
+              param: paramName,
               position: "start",
               config: {
                 numeratorBehavior: startNumBehaviorSelect.value
@@ -2057,7 +2077,7 @@ var ControlClient = class {
           if (!this.isPlaying) {
             this._applyHRGChangeWithPortamento({
               type: "SET_GENERATOR_CONFIG",
-              param: "frequency",
+              param: paramName,
               position: "start",
               config: {
                 denominatorBehavior: startDenBehaviorSelect.value
@@ -2066,7 +2086,7 @@ var ControlClient = class {
           } else {
             this._updatePendingState({
               type: "SET_GENERATOR_CONFIG",
-              param: "frequency",
+              param: paramName,
               position: "start",
               config: {
                 denominatorBehavior: startDenBehaviorSelect.value
@@ -2087,7 +2107,7 @@ var ControlClient = class {
           if (this.isPlaying) {
             this._updatePendingState({
               type: "SET_GENERATOR_CONFIG",
-              param: "frequency",
+              param: paramName,
               position: "end",
               config: {
                 numerators: endNumeratorsInput.value
@@ -2100,7 +2120,7 @@ var ControlClient = class {
           if (!this.isPlaying) {
             this._applyHRGChangeWithPortamento({
               type: "SET_GENERATOR_CONFIG",
-              param: "frequency",
+              param: paramName,
               position: "end",
               config: {
                 numerators: endNumeratorsInput.value
@@ -2109,7 +2129,7 @@ var ControlClient = class {
           } else {
             this._updatePendingState({
               type: "SET_GENERATOR_CONFIG",
-              param: "frequency",
+              param: paramName,
               position: "end",
               config: {
                 numerators: endNumeratorsInput.value
@@ -2126,7 +2146,7 @@ var ControlClient = class {
           if (this.isPlaying) {
             this._updatePendingState({
               type: "SET_GENERATOR_CONFIG",
-              param: "frequency",
+              param: paramName,
               position: "end",
               config: {
                 denominators: endDenominatorsInput.value
@@ -2139,7 +2159,7 @@ var ControlClient = class {
           if (!this.isPlaying) {
             this._applyHRGChangeWithPortamento({
               type: "SET_GENERATOR_CONFIG",
-              param: "frequency",
+              param: paramName,
               position: "end",
               config: {
                 denominators: endDenominatorsInput.value
@@ -2148,7 +2168,7 @@ var ControlClient = class {
           } else {
             this._updatePendingState({
               type: "SET_GENERATOR_CONFIG",
-              param: "frequency",
+              param: paramName,
               position: "end",
               config: {
                 denominators: endDenominatorsInput.value
@@ -2163,7 +2183,7 @@ var ControlClient = class {
           if (!this.isPlaying) {
             this._applyHRGChangeWithPortamento({
               type: "SET_GENERATOR_CONFIG",
-              param: "frequency",
+              param: paramName,
               position: "end",
               config: {
                 numeratorBehavior: endNumBehaviorSelect.value
@@ -2172,7 +2192,7 @@ var ControlClient = class {
           } else {
             this._updatePendingState({
               type: "SET_GENERATOR_CONFIG",
-              param: "frequency",
+              param: paramName,
               position: "end",
               config: {
                 numeratorBehavior: endNumBehaviorSelect.value
@@ -2187,7 +2207,7 @@ var ControlClient = class {
           if (!this.isPlaying) {
             this._applyHRGChangeWithPortamento({
               type: "SET_GENERATOR_CONFIG",
-              param: "frequency",
+              param: paramName,
               position: "end",
               config: {
                 denominatorBehavior: endDenBehaviorSelect.value
@@ -2196,7 +2216,7 @@ var ControlClient = class {
           } else {
             this._updatePendingState({
               type: "SET_GENERATOR_CONFIG",
-              param: "frequency",
+              param: paramName,
               position: "end",
               config: {
                 denominatorBehavior: endDenBehaviorSelect.value
@@ -2209,18 +2229,17 @@ var ControlClient = class {
     }
     this._updateUIFromState(paramName);
   }
-  setupFrequencyControls() {
-    const paramName = "frequency";
-    const baseInput = document.getElementById("frequency-base");
-    const interpSelect = document.getElementById("frequency-interpolation");
-    const startNumeratorsInput = document.getElementById("frequency-start-numerators");
-    const startDenominatorsInput = document.getElementById("frequency-start-denominators");
-    const startNumBehaviorSelect = document.getElementById("frequency-start-numerators-behavior");
-    const startDenBehaviorSelect = document.getElementById("frequency-start-denominators-behavior");
-    const endNumeratorsInput = document.getElementById("frequency-end-numerators");
-    const endDenominatorsInput = document.getElementById("frequency-end-denominators");
-    const endNumBehaviorSelect = document.getElementById("frequency-end-numerators-behavior");
-    const endDenBehaviorSelect = document.getElementById("frequency-end-denominators-behavior");
+  setupHrgParameterControls(paramName) {
+    const baseInput = document.getElementById(`${paramName}-base`);
+    const interpSelect = document.getElementById(`${paramName}-interpolation`);
+    const startNumeratorsInput = document.getElementById(`${paramName}-start-numerators`);
+    const startDenominatorsInput = document.getElementById(`${paramName}-start-denominators`);
+    const startNumBehaviorSelect = document.getElementById(`${paramName}-start-numerators-behavior`);
+    const startDenBehaviorSelect = document.getElementById(`${paramName}-start-denominators-behavior`);
+    const endNumeratorsInput = document.getElementById(`${paramName}-end-numerators`);
+    const endDenominatorsInput = document.getElementById(`${paramName}-end-denominators`);
+    const endNumBehaviorSelect = document.getElementById(`${paramName}-end-numerators-behavior`);
+    const endDenBehaviorSelect = document.getElementById(`${paramName}-end-denominators-behavior`);
     if (baseInput) {
       baseInput.addEventListener("input", () => {
         const v = parseFloat(baseInput.value);
@@ -2230,7 +2249,18 @@ var ControlClient = class {
       const applyBase = () => {
         let v = parseFloat(baseInput.value);
         if (!Number.isFinite(v)) return;
-        v = Math.max(16, Math.min(16384, v));
+        let min, max;
+        if (paramName === "frequency") {
+          min = 16;
+          max = 16384;
+        } else if (paramName === "vibratoRate") {
+          min = 0;
+          max = 1024;
+        } else {
+          min = 0;
+          max = 1e3;
+        }
+        v = Math.max(min, Math.min(max, v));
         baseInput.value = String(v);
         if (this.isPlaying) {
           this._updatePendingState({
@@ -2238,7 +2268,7 @@ var ControlClient = class {
             param: paramName,
             value: v
           });
-          const portamentoTime = this.elements.portamentoTime ? parseInt(this.elements.portamentoTime.value) : 100;
+          const portamentoTime = this.elements.portamentoTime ? this._mapPortamentoNormToMs(parseFloat(this.elements.portamentoTime.value)) : 100;
           this._sendSubParameterUpdate(`${paramName}.baseValue`, v, portamentoTime);
           this.pendingParameterChanges.add(paramName);
           this.updateParameterVisualFeedback(paramName);
@@ -2248,7 +2278,7 @@ var ControlClient = class {
             param: paramName,
             value: v
           });
-          const portamentoTime = this.elements.portamentoTime ? parseInt(this.elements.portamentoTime.value) : 100;
+          const portamentoTime = this.elements.portamentoTime ? this._mapPortamentoNormToMs(parseFloat(this.elements.portamentoTime.value)) : 100;
           this.broadcastSubParameterUpdate(`${paramName}.baseValue`, v, portamentoTime);
           this.pendingParameterChanges.delete(paramName);
           this.updateParameterVisualFeedback(paramName);
@@ -2270,6 +2300,7 @@ var ControlClient = class {
         } else {
           this.broadcastMusicalParameters();
         }
+        refreshHrgVisibility();
       });
     }
     if (startNumeratorsInput) {
@@ -2279,22 +2310,22 @@ var ControlClient = class {
         if (this.isPlaying) {
           this._updatePendingState({
             type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
+            param: paramName,
             position: "start",
             config: {
               numerators: startNumeratorsInput.value
             }
           });
           this.markPendingChanges();
-          this.broadcastSingleParameterStaged("frequency");
+          this.broadcastSingleParameterStaged(paramName);
         }
       });
       startNumeratorsInput.addEventListener("blur", () => {
-        this._sendSubParameterUpdate("frequency.startValueGenerator.numerators", startNumeratorsInput.value);
+        this._sendSubParameterUpdate(`${paramName}.startValueGenerator.numerators`, startNumeratorsInput.value);
         if (!this.isPlaying) {
           this._updateActiveState({
             type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
+            param: paramName,
             position: "start",
             config: {
               numerators: startNumeratorsInput.value
@@ -2303,7 +2334,7 @@ var ControlClient = class {
         } else {
           this._updatePendingState({
             type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
+            param: paramName,
             position: "start",
             config: {
               numerators: startNumeratorsInput.value
@@ -2320,22 +2351,22 @@ var ControlClient = class {
         if (this.isPlaying) {
           this._updatePendingState({
             type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
+            param: paramName,
             position: "start",
             config: {
               denominators: startDenominatorsInput.value
             }
           });
           this.markPendingChanges();
-          this.broadcastSingleParameterStaged("frequency");
+          this.broadcastSingleParameterStaged(paramName);
         }
       });
       startDenominatorsInput.addEventListener("blur", () => {
-        this._sendSubParameterUpdate("frequency.startValueGenerator.denominators", startDenominatorsInput.value);
+        this._sendSubParameterUpdate(`${paramName}.startValueGenerator.denominators`, startDenominatorsInput.value);
         if (!this.isPlaying) {
           this._updateActiveState({
             type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
+            param: paramName,
             position: "start",
             config: {
               denominators: startDenominatorsInput.value
@@ -2344,7 +2375,7 @@ var ControlClient = class {
         } else {
           this._updatePendingState({
             type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
+            param: paramName,
             position: "start",
             config: {
               denominators: startDenominatorsInput.value
@@ -2356,11 +2387,11 @@ var ControlClient = class {
     }
     if (startNumBehaviorSelect) {
       startNumBehaviorSelect.addEventListener("change", () => {
-        this._sendSubParameterUpdate("frequency.startValueGenerator.numeratorBehavior", startNumBehaviorSelect.value);
+        this._sendSubParameterUpdate(`${paramName}.startValueGenerator.numeratorBehavior`, startNumBehaviorSelect.value);
         if (!this.isPlaying) {
           this._updateActiveState({
             type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
+            param: paramName,
             position: "start",
             config: {
               numeratorBehavior: startNumBehaviorSelect.value
@@ -2369,14 +2400,14 @@ var ControlClient = class {
         } else {
           this._updatePendingState({
             type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
+            param: paramName,
             position: "start",
             config: {
               numeratorBehavior: startNumBehaviorSelect.value
             }
           });
           this.markPendingChanges();
-          this.broadcastSingleParameterStaged("frequency");
+          this.broadcastSingleParameterStaged(paramName);
         }
       });
     }
@@ -2385,7 +2416,7 @@ var ControlClient = class {
         if (!this.isPlaying) {
           this._applyHRGChangeWithPortamento({
             type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
+            param: paramName,
             position: "start",
             config: {
               denominatorBehavior: startDenBehaviorSelect.value
@@ -2394,14 +2425,14 @@ var ControlClient = class {
         } else {
           this._updatePendingState({
             type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
+            param: paramName,
             position: "start",
             config: {
               denominatorBehavior: startDenBehaviorSelect.value
             }
           });
           this.markPendingChanges();
-          this.broadcastSingleParameterStaged("frequency");
+          this.broadcastSingleParameterStaged(paramName);
         }
       });
     }
@@ -2412,21 +2443,21 @@ var ControlClient = class {
         if (this.isPlaying) {
           this._updatePendingState({
             type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
+            param: paramName,
             position: "end",
             config: {
               numerators: endNumeratorsInput.value
             }
           });
           this.markPendingChanges();
-          this.broadcastSingleParameterStaged("frequency");
+          this.broadcastSingleParameterStaged(paramName);
         }
       });
       endNumeratorsInput.addEventListener("blur", () => {
         if (!this.isPlaying) {
           this._applyHRGChangeWithPortamento({
             type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
+            param: paramName,
             position: "end",
             config: {
               numerators: endNumeratorsInput.value
@@ -2435,7 +2466,7 @@ var ControlClient = class {
         } else {
           this._updatePendingState({
             type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
+            param: paramName,
             position: "end",
             config: {
               numerators: endNumeratorsInput.value
@@ -2452,21 +2483,21 @@ var ControlClient = class {
         if (this.isPlaying) {
           this._updatePendingState({
             type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
+            param: paramName,
             position: "end",
             config: {
               denominators: endDenominatorsInput.value
             }
           });
           this.markPendingChanges();
-          this.broadcastSingleParameterStaged("frequency");
+          this.broadcastSingleParameterStaged(paramName);
         }
       });
       endDenominatorsInput.addEventListener("blur", () => {
         if (!this.isPlaying) {
           this._applyHRGChangeWithPortamento({
             type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
+            param: paramName,
             position: "end",
             config: {
               denominators: endDenominatorsInput.value
@@ -2475,7 +2506,7 @@ var ControlClient = class {
         } else {
           this._updatePendingState({
             type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
+            param: paramName,
             position: "end",
             config: {
               denominators: endDenominatorsInput.value
@@ -2490,7 +2521,7 @@ var ControlClient = class {
         if (!this.isPlaying) {
           this._applyHRGChangeWithPortamento({
             type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
+            param: paramName,
             position: "end",
             config: {
               numeratorBehavior: endNumBehaviorSelect.value
@@ -2499,14 +2530,14 @@ var ControlClient = class {
         } else {
           this._updatePendingState({
             type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
+            param: paramName,
             position: "end",
             config: {
               numeratorBehavior: endNumBehaviorSelect.value
             }
           });
           this.markPendingChanges();
-          this.broadcastSingleParameterStaged("frequency");
+          this.broadcastSingleParameterStaged(paramName);
         }
       });
     }
@@ -2515,7 +2546,7 @@ var ControlClient = class {
         if (!this.isPlaying) {
           this._applyHRGChangeWithPortamento({
             type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
+            param: paramName,
             position: "end",
             config: {
               denominatorBehavior: endDenBehaviorSelect.value
@@ -2524,17 +2555,28 @@ var ControlClient = class {
         } else {
           this._updatePendingState({
             type: "SET_GENERATOR_CONFIG",
-            param: "frequency",
+            param: paramName,
             position: "end",
             config: {
               denominatorBehavior: endDenBehaviorSelect.value
             }
           });
           this.markPendingChanges();
-          this.broadcastSingleParameterStaged("frequency");
+          this.broadcastSingleParameterStaged(paramName);
         }
       });
     }
+    const refreshHrgVisibility = () => {
+      const state = this.pendingMusicalState[paramName] || this.musicalState[paramName];
+      const isCosine = state?.interpolation === "cosine";
+      const startHrg = document.getElementById(`${paramName}-start-hrg`);
+      if (startHrg) startHrg.style.display = "inline-block";
+      const arrow = document.getElementById(`${paramName}-hrg-arrow`);
+      const endHrg = document.getElementById(`${paramName}-end-hrg`);
+      if (arrow) arrow.style.display = isCosine ? "inline-block" : "none";
+      if (endHrg) endHrg.style.display = isCosine ? "inline-block" : "none";
+    };
+    refreshHrgVisibility();
     this._updateUIFromState("frequency");
   }
   /**
@@ -2573,7 +2615,7 @@ var ControlClient = class {
    * Update program generator based on input value (single value or range)
    */
   _updateProgramGenerator(paramName, inputValue, position) {
-    if (paramName === "frequency") return;
+    if (paramName === "frequency" || paramName === "vibratoRate") return;
     if (inputValue.includes("-")) {
       const [min, max] = inputValue.split("-").map((v) => parseFloat(v.trim()));
       if (!isNaN(min) && !isNaN(max)) {
@@ -2613,13 +2655,36 @@ var ControlClient = class {
    * Update UI visibility based on current interpolation type
    */
   /**
-  * Update UI elements to reflect the current typed state
-  * This is the reverse of the old DOM-based state management
-  * State is now the master, UI is just a reflection of it
+  * Map normalized portamento value [0,1] to exponential milliseconds
+  * 0.5 → 100ms, 1 → 20000ms, 0 → 0.5ms
   */
+  _mapPortamentoNormToMs(norm) {
+    const clamped = Math.min(Math.max(norm, 0), 1);
+    return 0.5 * Math.pow(4e4, clamped);
+  }
+  /**
+   * Serialize normalised generator range to string for UI display
+   */
+  _stringifyNormalised(gen) {
+    if (!gen) return "";
+    const r = gen.range;
+    if (typeof r === "number") return String(r);
+    if (r && typeof r === "object") {
+      const min = Number(r.min), max = Number(r.max);
+      if (Number.isFinite(min) && Number.isFinite(max)) {
+        return min === max ? String(min) : `${min}-${max}`;
+      }
+    }
+    return "";
+  }
+  /**
+   * Update UI elements to reflect the current typed state
+   * This is the reverse of the old DOM-based state management
+   * State is now the master, UI is just a reflection of it
+   */
   _updateUIFromState(paramName) {
     const paramState = this.pendingMusicalState[paramName];
-    const valueInput = paramName === "frequency" ? document.getElementById("frequency-base") : document.getElementById(`${paramName}-value`);
+    const valueInput = paramName === "frequency" || paramName === "vibratoRate" ? document.getElementById(`${paramName}-base`) : document.getElementById(`${paramName}-value`);
     const interpSelect = document.getElementById(`${paramName}-interpolation`);
     const hrgStartControls = document.getElementById(`${paramName}-start-hrg`);
     const hrgEndControls = document.getElementById(`${paramName}-end-hrg`);
@@ -2629,12 +2694,7 @@ var ControlClient = class {
     if (valueInput) {
       valueInput.style.display = "inline-block";
       if (paramState.startValueGenerator?.type === "normalised") {
-        const range = paramState.startValueGenerator.range;
-        if (typeof range === "number") {
-          valueInput.value = range.toString();
-        } else if (typeof range === "object") {
-          valueInput.value = `${range.min}-${range.max}`;
-        }
+        valueInput.value = this._stringifyNormalised(paramState.startValueGenerator);
       } else if (paramState.startValueGenerator?.type === "periodic") {
         valueInput.value = (paramState.baseValue ?? "").toString();
       } else if (paramState.baseValue !== null) {
@@ -2661,19 +2721,15 @@ var ControlClient = class {
     }
     if (endValueInput && isEnvelope && paramState.endValueGenerator && paramState.endValueGenerator.type === "normalised") {
       const endGen = paramState.endValueGenerator;
-      if (typeof endGen.range === "number") {
-        endValueInput.value = endGen.range.toString();
-      } else if (typeof endGen.range === "object") {
-        endValueInput.value = `${endGen.range.min}-${endGen.range.max}`;
-      }
+      endValueInput.value = this._stringifyNormalised(endGen);
     }
-    if (paramName === "frequency") {
+    if (paramName === "frequency" || paramName === "vibratoRate") {
       const startGen = paramState.startValueGenerator;
       if (startGen && startGen.type === "periodic") {
-        const startNums = document.getElementById("frequency-start-numerators");
-        const startDens = document.getElementById("frequency-start-denominators");
-        const startNumBeh = document.getElementById("frequency-start-numerators-behavior");
-        const startDenBeh = document.getElementById("frequency-start-denominators-behavior");
+        const startNums = document.getElementById(`${paramName}-start-numerators`);
+        const startDens = document.getElementById(`${paramName}-start-denominators`);
+        const startNumBeh = document.getElementById(`${paramName}-start-numerators-behavior`);
+        const startDenBeh = document.getElementById(`${paramName}-start-denominators-behavior`);
         if (startNums) startNums.value = startGen.numerators ?? "1";
         if (startDens) startDens.value = startGen.denominators ?? "1";
         if (startNumBeh) {
@@ -2686,10 +2742,10 @@ var ControlClient = class {
       if (isEnvelope) {
         const endGen = paramState.endValueGenerator;
         if (endGen && endGen.type === "periodic") {
-          const endNums = document.getElementById("frequency-end-numerators");
-          const endDens = document.getElementById("frequency-end-denominators");
-          const endNumBeh = document.getElementById("frequency-end-numerators-behavior");
-          const endDenBeh = document.getElementById("frequency-end-denominators-behavior");
+          const endNums = document.getElementById(`${paramName}-end-numerators`);
+          const endDens = document.getElementById(`${paramName}-end-denominators`);
+          const endNumBeh = document.getElementById(`${paramName}-end-numerators-behavior`);
+          const endDenBeh = document.getElementById(`${paramName}-end-denominators-behavior`);
           if (endNums) endNums.value = endGen.numerators ?? "1";
           if (endDens) endDens.value = endGen.denominators ?? "1";
           if (endNumBeh) {
@@ -2700,6 +2756,9 @@ var ControlClient = class {
           }
         }
       }
+      const isCosine = paramState.interpolation === "cosine";
+      if (hrgArrow) hrgArrow.style.display = isCosine ? "inline-block" : "none";
+      if (hrgEndControls) hrgEndControls.style.display = isCosine ? "inline-block" : "none";
     }
     if (paramName !== "frequency") {
       const valueInput2 = document.getElementById(`${paramName}-value`);
@@ -2845,7 +2904,10 @@ var ControlClient = class {
   _getWirePayload(portamentoTime) {
     for (const key in this.musicalState) {
       const paramState = this.musicalState[key];
-      if (typeof paramState === "object" && paramState !== null && "scope" in paramState) {
+      if (typeof paramState !== "object" || paramState === null) {
+        throw new Error(`CRITICAL: Parameter '${key}' is not an object, got: ${typeof paramState} (${paramState})`);
+      }
+      if ("scope" in paramState) {
         throw new Error(`CRITICAL: Parameter '${key}' has forbidden 'scope' field`);
       }
     }
@@ -2859,13 +2921,6 @@ var ControlClient = class {
     for (const key in this.musicalState) {
       const paramKey = key;
       const paramState = this.musicalState[paramKey];
-      
-      // Skip parameters that aren't proper objects (defensive programming)
-      if (typeof paramState !== "object" || paramState === null) {
-        console.warn(`⚠️ Parameter '${paramKey}' is not an object (value: ${paramState}), skipping`);
-        continue;
-      }
-      
       if (!paramState.interpolation || ![
         "step",
         "cosine"
@@ -3224,7 +3279,7 @@ var ControlClient = class {
     });
     const paramState = this.pendingMusicalState[paramName];
     const resolvedValues = this.resolveParameterValues(paramName, paramState);
-    const portamentoTime = this.elements.portamentoTime ? parseInt(this.elements.portamentoTime.value) : 100;
+    const portamentoTime = this.elements.portamentoTime ? this._mapPortamentoNormToMs(parseFloat(this.elements.portamentoTime.value)) : 100;
     const message = MessageBuilder.unifiedParamUpdate(paramName, resolvedValues.start, resolvedValues.end, paramState.interpolation, this.isPlaying, portamentoTime, this.phasor);
     if (this.star) {
       this.star.broadcastToType("synth", message, "control");
@@ -3253,7 +3308,9 @@ var ControlClient = class {
         zingAmount: "z amount",
         zingMorph: "z morph",
         amplitude: "amp",
-        whiteNoise: "noise"
+        whiteNoise: "noise",
+        vibratoWidth: "vib width",
+        vibratoRate: "vib rate"
       };
       if (cleanText === paramDisplayNames[paramName]) {
         const hasPendingChanges = this.pendingParameterChanges.has(paramName);
@@ -3410,6 +3467,14 @@ var ControlClient = class {
       }
       if (message.type !== MessageTypes.PING && message.type !== MessageTypes.PONG) {
         this.log(`Received ${message.type} from ${peerId}`, "debug");
+      }
+    });
+    this.star.addEventListener("data-channel-message", (event) => {
+      if (event.detail.channel === "control" && event.detail.data.type === MessageTypes.PARAM_APPLIED) {
+        const { param } = event.detail.data;
+        this.pendingParameterChanges.delete(param);
+        this.updateParameterVisualFeedback(param);
+        this.log(`Cleared pending asterisk for ${param}`, "debug");
       }
     });
   }

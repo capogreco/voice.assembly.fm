@@ -561,16 +561,18 @@ class SynthClient {
       console.log(
         `🔌 Route for '${message.param}': Main Thread -> WhiteNoise Audio Gain`,
       );
-    } else if (
-      this.voiceNode && this.voiceNode.parameters.has(`${message.param}_in`)
-    ) {
-      const audioParam = this.voiceNode.parameters.get(`${message.param}_in`);
-      audioParam.setTargetAtTime(
-        message.value,
-        this.audioContext.currentTime,
-        0.015,
-      );
-      console.log(`🔌 Route for '${message.param}': Main Thread -> Voice`);
+    } else if (this.voiceNode) {
+      // Route to voice worklet via SET_ENV message
+      this.voiceNode.port.postMessage({
+        type: "SET_ENV",
+        v: 1,
+        param: message.param,
+        startValue: message.value,
+        endValue: message.value,
+        interpolation: "step",
+        portamentoMs: 15  // Convert 0.015s to ms
+      });
+      console.log(`🔌 Route for '${message.param}': Main Thread -> Voice (SET_ENV)`);
     }
   }
 
@@ -966,28 +968,28 @@ class SynthClient {
 
     // Selective HRG updates to maintain independence between numerators and denominators
     if (paramPath.includes(".numerators")) {
-      if (paramPath.startsWith("frequency.startValueGenerator.")) {
-        this._updateHRGNumerators("frequency", "start");
-      } else if (paramPath.startsWith("frequency.endValueGenerator.")) {
-        this._updateHRGNumerators("frequency", "end");
+      if (paramPath.includes(".startValueGenerator.")) {
+        this._updateHRGNumerators(paramName, "start");
+      } else if (paramPath.includes(".endValueGenerator.")) {
+        this._updateHRGNumerators(paramName, "end");
       }
     } else if (paramPath.includes(".denominators")) {
-      if (paramPath.startsWith("frequency.startValueGenerator.")) {
-        this._updateHRGDenominators("frequency", "start");
-      } else if (paramPath.startsWith("frequency.endValueGenerator.")) {
-        this._updateHRGDenominators("frequency", "end");
+      if (paramPath.includes(".startValueGenerator.")) {
+        this._updateHRGDenominators(paramName, "start");
+      } else if (paramPath.includes(".endValueGenerator.")) {
+        this._updateHRGDenominators(paramName, "end");
       }
     } else if (paramPath.includes("numeratorBehavior")) {
-      if (paramPath.startsWith("frequency.startValueGenerator.")) {
-        this._updateHRGNumeratorBehavior("frequency", "start");
-      } else if (paramPath.startsWith("frequency.endValueGenerator.")) {
-        this._updateHRGNumeratorBehavior("frequency", "end");
+      if (paramPath.includes(".startValueGenerator.")) {
+        this._updateHRGNumeratorBehavior(paramName, "start");
+      } else if (paramPath.includes(".endValueGenerator.")) {
+        this._updateHRGNumeratorBehavior(paramName, "end");
       }
     } else if (paramPath.includes("denominatorBehavior")) {
-      if (paramPath.startsWith("frequency.startValueGenerator.")) {
-        this._updateHRGDenominatorBehavior("frequency", "start");
-      } else if (paramPath.startsWith("frequency.endValueGenerator.")) {
-        this._updateHRGDenominatorBehavior("frequency", "end");
+      if (paramPath.includes(".startValueGenerator.")) {
+        this._updateHRGDenominatorBehavior(paramName, "start");
+      } else if (paramPath.includes(".endValueGenerator.")) {
+        this._updateHRGDenominatorBehavior(paramName, "end");
       }
     }
 
@@ -1010,6 +1012,24 @@ class SynthClient {
           `🎲 Cleared RBG state for ${stateKey} due to behavior change to ${value}`,
         );
       }
+    }
+
+    // Special handling for baseValue changes
+    if (paramPath.endsWith(".baseValue")) {
+      if (this.isPlaying) {
+        console.log(
+          `📋 Staging baseValue update for EOC: ${paramPath} = ${value}`,
+        );
+        // Store the change to be applied at next EOC
+        // The config is already updated above, EOC will re-resolve with new base and current HRG indices
+      } else {
+        console.log(
+          `⚡ Applying baseValue update immediately: ${paramPath} = ${value}`,
+        );
+        // Resolve just this parameter with new base, preserve HRG state, send SET_ENV with portamento
+        this.applySingleParamWithPortamento(paramName, portamentoTime);
+      }
+      return;
     }
 
     // Apply immediately if paused, stage for EOC if playing
@@ -1294,6 +1314,10 @@ class SynthClient {
   handleCycleReset(resetData) {
     if (!this.voiceNode) return;
 
+    // Calculate sample-accurate reset time for boundary snapping
+    const resetTime = this.audioContext.currentTime - 
+      ((resetData.blockSize - resetData.sampleIndex) / this.audioContext.sampleRate);
+
     // Validate program config before EOC resolution
     if (!this.programConfig || Object.keys(this.programConfig).length === 0) {
       console.error("🚨 EOC RESET WITH EMPTY PROGRAM CONFIG!");
@@ -1317,7 +1341,36 @@ class SynthClient {
       }
       this._pendingSceneAtEoc = null;
       // Skip re-resolve for this cycle
-    } else if (this.reresolveAtNextEOC) {
+    }
+
+    // Apply staged whiteNoise at EOC boundary if present
+    if (this._pendingWhiteNoiseAtEoc && this.whiteNoiseAudioGain) {
+      let v;
+      if (this._pendingWhiteNoiseAtEoc.interpolation === "cosine") {
+        // For cosine interpolation, at EOC boundary we apply the end value
+        v = this._pendingWhiteNoiseAtEoc.endValue;
+        console.log(`📋 Applied staged whiteNoise cosine endValue ${v} at EOC boundary`);
+      } else {
+        // For step interpolation, apply the start value
+        v = this._pendingWhiteNoiseAtEoc.startValue;
+        console.log(`📋 Applied staged whiteNoise step value ${v} at EOC boundary`);
+      }
+      
+      // Snap at boundary using the backdated, sample-accurate time
+      this.whiteNoiseAudioGain.gain.setValueAtTime(v, resetTime);
+      if (this.whiteNoiseVizGain) {
+        this.whiteNoiseVizGain.gain.setValueAtTime(v, resetTime);
+      }
+      
+      this._pendingWhiteNoiseAtEoc = null;
+
+      // Send ack to ctrl so it can clear the asterisk
+      if (this.star) {
+        this.star.broadcastToType("ctrl", { type: MessageTypes.PARAM_APPLIED, param: "whiteNoise" }, "control");
+      }
+    }
+
+    if (this.reresolveAtNextEOC) {
       console.log("🔀 Re-initializing all stochastic generators at EOC");
 
       // Re-initialize HRG indices for all parameters
@@ -1373,89 +1426,44 @@ class SynthClient {
       this.stagedParamUpdates = {};
     }
 
-    // Resolve values for this cycle and send to voice worklet via port messages
-    const resolvedParams = {};
+    // Regular EOC: always resolve and push ALL parameters to Voice (snap at boundary)
+    const resolved = this._resolveProgram(this.programConfig);
+    const payload = this._toEnvPayload(resolved, 0);
+    
+    // ALWAYS send batch envelope update to voice worklet
+    this.voiceNode?.port.postMessage({
+      type: "SET_ALL_ENV",
+      v: 1,
+      params: payload
+    });
 
-    for (const [param, config] of Object.entries(this.programConfig)) {
-      // All parameters now use unified format with generators
-      if (config.interpolation === "step") {
-        // Step interpolation - resolve single value
-        let stepValue;
-        if (config.startValueGenerator?.type === "periodic") {
-          // HRG - use sequence state
-          stepValue = this._resolveHRG(param, "start");
-        } else if (config.startValueGenerator?.type === "normalised") {
-          // RBG - resolve scalar
-          stepValue = this._resolveRBG(
-            config.startValueGenerator,
-            param,
-            "start",
-          );
-        }
-
-        if (stepValue !== undefined && Number.isFinite(stepValue)) {
-          resolvedParams[param] = {
-            interpolation: "step",
-            startValue: stepValue,
-            endValue: stepValue,
-            portamentoMs: 0 // Instant at EOC
-          };
-        }
-      } else if (config.interpolation === "cosine") {
-        // Cosine interpolation - resolve start and end values
-        let startValue, endValue;
-
-        if (config.startValueGenerator?.type === "periodic") {
-          startValue = this._resolveHRG(param, "start");
-        } else if (config.startValueGenerator?.type === "normalised") {
-          startValue = this._resolveRBG(
-            config.startValueGenerator,
-            param,
-            "start",
-          );
+    // Apply whiteNoise in regular EOC batch (for base/range changes)
+    const wn = resolved.whiteNoise;
+    if (wn !== undefined && this.whiteNoiseAudioGain) {
+      let raw;
+      if (typeof wn === "object") {
+        // For cosine interpolation, at EOC we want the end value
+        if (wn.interpolation === "cosine" && wn.endValue !== undefined) {
+          raw = wn.endValue;
+          console.log(`[EOC] Applied whiteNoise cosine endValue ${raw} from regular batch`);
         } else {
-          throw new Error(
-            `CRITICAL: Unknown start generator type for ${param}: ${config.startValueGenerator?.type}`,
-          );
+          // For step interpolation or when endValue is undefined
+          raw = wn.startValue;
+          console.log(`[EOC] Applied whiteNoise startValue ${raw} from regular batch`);
         }
-
-        if (config.endValueGenerator?.type === "periodic") {
-          endValue = this._resolveHRG(param, "end");
-        } else if (config.endValueGenerator?.type === "normalised") {
-          endValue = this._resolveRBG(config.endValueGenerator, param, "end");
-        } else {
-          throw new Error(
-            `CRITICAL: Unknown end generator type for ${param}: ${config.endValueGenerator?.type}`,
-          );
-        }
-
-        console.log(
-          `🎯 ${param} cosine envelope: start=${startValue?.toFixed(3)}, end=${
-            endValue?.toFixed(3)
-          }`,
-        );
-
-        if (Number.isFinite(startValue) && Number.isFinite(endValue)) {
-          resolvedParams[param] = {
-            interpolation: "cosine",
-            startValue: startValue,
-            endValue: endValue,
-            portamentoMs: 0 // Instant at EOC
-          };
-        }
+      } else {
+        // Scalar value
+        raw = wn;
+        console.log(`[EOC] Applied whiteNoise scalar ${raw} from regular batch`);
+      }
+      
+      this.whiteNoiseAudioGain.gain.setValueAtTime(raw, resetTime);
+      if (this.whiteNoiseVizGain) {
+        this.whiteNoiseVizGain.gain.setValueAtTime(raw, resetTime);
       }
     }
 
-    // Send batch envelope update to voice worklet
-    if (Object.keys(resolvedParams).length > 0) {
-      this.voiceNode.port.postMessage({
-        type: "SET_ALL_ENV",
-        v: 1,
-        params: resolvedParams,
-      });
-
-      console.log(`[EOC] Sent ${Object.keys(resolvedParams).length} envelope updates to voice worklet:`, resolvedParams);
-    }
+    console.log(`[EOC] Sent envelope updates to voice worklet:`, payload);
   }
 
   sendPhaseCorrection() {
@@ -2332,6 +2340,74 @@ class SynthClient {
     );
 
     if (message.isPlaying) {
+      // Special handling for whiteNoise - it's controlled via gain nodes, not the worklet
+      if (message.param === "whiteNoise") {
+        console.log(`📋 Staging whiteNoise for EOC (gain nodes)`);
+        this._pendingWhiteNoiseAtEoc = { 
+          startValue: message.startValue,
+          endValue: message.endValue,
+          interpolation: message.interpolation,
+          portamentoMs: 0 
+        };
+
+        // Update programConfig for whiteNoise just like other parameters
+        if (this.programConfig && this.programConfig[message.param]) {
+          console.log(`📋 Updating programConfig.whiteNoise for EOC`);
+          
+          // Update interpolation type
+          this.programConfig[message.param].interpolation = message.interpolation;
+          
+          const existingConfig = this.programConfig[message.param];
+          
+          if (message.interpolation === "step") {
+            // Step interpolation - update start generator
+            if (existingConfig.startValueGenerator) {
+              const startGen = { ...existingConfig.startValueGenerator };
+              if (typeof startGen.range === "object" && startGen.range.min !== undefined) {
+                console.log(`📋 Preserving range ${JSON.stringify(startGen.range)} for whiteNoise step interpolation`);
+              } else {
+                startGen.range = message.startValue;
+              }
+              this.programConfig[message.param].startValueGenerator = startGen;
+            }
+            // Clear end generator for step interpolation
+            delete this.programConfig[message.param].endValueGenerator;
+          } else if (message.interpolation === "cosine") {
+            // Cosine interpolation - preserve both generators
+            if (existingConfig.startValueGenerator) {
+              const startGen = { ...existingConfig.startValueGenerator };
+              if (typeof startGen.range === "object" && startGen.range.min !== undefined) {
+                console.log(`📋 Preserving start range ${JSON.stringify(startGen.range)} for whiteNoise cosine interpolation`);
+              } else {
+                startGen.range = message.startValue;
+              }
+              this.programConfig[message.param].startValueGenerator = startGen;
+            }
+            
+            // Ensure end generator exists for cosine interpolation
+            if (existingConfig.endValueGenerator) {
+              const endGen = { ...existingConfig.endValueGenerator };
+              if (typeof endGen.range === "object" && endGen.range.min !== undefined) {
+                console.log(`📋 Preserving end range ${JSON.stringify(endGen.range)} for whiteNoise cosine interpolation`);
+              } else {
+                endGen.range = message.endValue;
+              }
+              this.programConfig[message.param].endValueGenerator = endGen;
+            } else {
+              // Create end generator based on start generator if missing
+              console.log(`📋 Creating missing end generator for whiteNoise cosine interpolation`);
+              this.programConfig[message.param].endValueGenerator = {
+                type: "normalised",
+                range: message.endValue,
+                sequenceBehavior: existingConfig.startValueGenerator?.sequenceBehavior || "static",
+              };
+            }
+          }
+        }
+        
+        return; // Don't send to Voice worklet; noise is handled locally
+      }
+
       // Playing: Stage for EOC application
       console.log(`📋 Staging ${message.param} for EOC`);
       this.stagedParamUpdates = this.stagedParamUpdates || {};
@@ -2427,83 +2503,77 @@ class SynthClient {
         }
       }
     } else {
-      // Paused/stopped: Apply immediately at current phase with portamento
+      // Paused/stopped: Apply immediately with portamento via SET_ENV
       console.log(
         `⚡ Applying ${message.param} immediately with ${message.portamentoTime}ms portamento`,
       );
-      this.applyParameterUpdate(
-        message.param,
-        message.startValue,
-        message.endValue,
-        message.interpolation,
-        message.portamentoTime,
-        message.currentPhase,
-      );
-    }
-  }
-
-  applyParameterUpdate(
-    param,
-    startValue,
-    endValue,
-    interpolation,
-    portamentoTime = 0,
-    currentPhase = null,
-  ) {
-    if (!this.unifiedSynthNode) return;
-
-    const phaseParam = this.unifiedSynthNode.parameters.get("phase");
-    const phase = currentPhase !== null ? currentPhase : phaseParam.value;
-
-    if (interpolation === "step") {
-      // Step interpolation - set AudioParam directly
-      const startParam = this.unifiedSynthNode.parameters.get(`${param}_start`);
-      if (startParam) {
-        if (portamentoTime > 0) {
-          this.applyWithPortamento(param, startValue, portamentoTime);
-        } else {
-          startParam.setValueAtTime(startValue, this.audioContext.currentTime);
-        }
+      
+      if (this.voiceNode) {
+        this.voiceNode.port.postMessage({
+          type: "SET_ENV",
+          v: 1,
+          param: message.param,
+          startValue: message.startValue,
+          endValue: message.endValue,
+          interpolation: message.interpolation,
+          portamentoMs: message.portamentoTime || 0
+        });
       }
-    } else if (!this.isPlaying && endValue !== undefined) {
-      // Paused with cosine interpolation - calculate interpolated value at current phase
-      const shapedProgress = 0.5 - Math.cos(phase * Math.PI) * 0.5;
-      const interpolatedValue = startValue +
-        (endValue - startValue) * shapedProgress;
 
-      console.log(
-        `🎯 Interpolating ${param} at phase ${
-          phase.toFixed(3)
-        }: ${startValue} → ${endValue} = ${interpolatedValue.toFixed(3)}`,
-      );
-
-      const startParam = this.unifiedSynthNode.parameters.get(`${param}_start`);
-      if (startParam) {
-        if (portamentoTime > 0) {
-          this.applyWithPortamento(param, interpolatedValue, portamentoTime);
-        } else {
-          startParam.setValueAtTime(
-            interpolatedValue,
+      // Special handling for whiteNoise - it's controlled via gain nodes, not the worklet
+      if (message.param === "whiteNoise") {
+        const noiseValue = message.startValue; // whiteNoise is a step parameter
+        const portamentoMs = message.portamentoTime || 0;
+        // Convert portamento milliseconds to timeConstant (1/3 of desired duration in seconds)
+        const timeConstant = portamentoMs > 0 ? portamentoMs / 3000 : 0.015; // fallback to 15ms
+        
+        if (this.whiteNoiseAudioGain) {
+          this.whiteNoiseAudioGain.gain.setTargetAtTime(
+            noiseValue,
             this.audioContext.currentTime,
+            timeConstant
           );
         }
-      }
-    } else {
-      // Playing with cosine interpolation - set start and end AudioParams
-      if (endValue !== undefined) {
-        const startParam = this.unifiedSynthNode.parameters.get(
-          `${param}_start`,
-        );
-        const endParam = this.unifiedSynthNode.parameters.get(`${param}_end`);
-
-        if (startParam && endParam) {
-          const now = this.audioContext.currentTime;
-          startParam.setValueAtTime(startValue, now);
-          endParam.setValueAtTime(endValue, now);
+        if (this.whiteNoiseVizGain) {
+          this.whiteNoiseVizGain.gain.setTargetAtTime(
+            noiseValue,
+            this.audioContext.currentTime,
+            timeConstant
+          );
         }
+        console.log(`⚡ Applied whiteNoise ${noiseValue} directly to gain nodes with ${portamentoMs}ms portamento`);
+      }
+
+      // Update programConfig to persist the change across EOC
+      if (this.programConfig && this.programConfig[message.param]) {
+        const config = this.programConfig[message.param];
+        
+        // For normalised parameters, update generators with resolved scalars
+        if (config.startValueGenerator?.type === "normalised") {
+          // Step param: update start generator to scalar
+          config.startValueGenerator.range = message.startValue;
+          // Clear RBG cache
+          delete this.rbgState[`${message.param}_start`];
+        }
+        
+        // For cosine interpolation, update both generators
+        if (message.interpolation === "cosine") {
+          if (config.endValueGenerator?.type === "normalised") {
+            config.endValueGenerator.range = message.endValue;
+            delete this.rbgState[`${message.param}_end`];
+          }
+        }
+        
+        // For periodic params (HRG), prefer SUB_PARAM_UPDATE - don't overwrite generators
+        // Unified updates for periodic are rare and should preserve HRG state
+        
+        console.log(`⚡ Updated programConfig.${message.param} to persist paused change`);
       }
     }
   }
+
+  // REMOVED: applyParameterUpdate() - Legacy function from old unified worklet
+  // All parameter updates now go through SET_ENV/SET_ALL_ENV messaging to voice worklet
 
   // Portamento is now handled entirely within the unified worklet
 
@@ -2546,13 +2616,14 @@ class SynthClient {
       console.log("🧩 Applying resolved scene state:", resolvedState);
     }
 
+    // Build SET_ALL_ENV payload for voice parameters
+    const voiceParams = {};
+    
     for (const [paramName, value] of Object.entries(resolvedState)) {
       const v = Number.isFinite(value) ? value : 0;
 
-      // Snapshot values are applied directly
-
-      // Set the value
       if (paramName === "whiteNoise") {
+        // White noise is handled directly via gain nodes
         if (this.whiteNoiseAudioGain) {
           this.whiteNoiseAudioGain.gain.setTargetAtTime(
             v,
@@ -2568,26 +2639,38 @@ class SynthClient {
           }
           if (this.verbose) console.log(`🎚️ Scene apply: whiteNoise -> ${v}`);
         }
-      } else if (this.voiceNode) {
-        const paramKey = `${paramName}_in`;
-        if (this.voiceNode.parameters.has(paramKey)) {
-          const audioParam = this.voiceNode.parameters.get(paramKey);
-          audioParam.setTargetAtTime(v, this.audioContext.currentTime, 0.015);
-          if (this.verbose) {
-            console.log(`🎚️ Scene apply: ${paramKey} -> ${v}`);
-          }
-        } else if (this.verbose) {
-          console.warn(`⚠️ Scene apply: voice param missing '${paramKey}'`);
+      } else {
+        // All other parameters go to voice worklet via SET_ALL_ENV
+        voiceParams[paramName] = {
+          startValue: v,
+          endValue: v,
+          interpolation: "step",
+          portamentoMs: 15  // Convert 0.015s to ms
+        };
+        if (this.verbose) {
+          console.log(`🎚️ Scene apply: ${paramName} -> ${v} (via SET_ALL_ENV)`);
         }
       }
     }
 
-    // Ensure synthesis is active if desired
-    if (this.voiceNode && this.voiceNode.parameters.has("active")) {
-      const activeParam = this.voiceNode.parameters.get("active");
-      activeParam.value = this.synthesisActive ? 1 : 0;
+    // Send all voice parameters in a single SET_ALL_ENV message
+    if (this.voiceNode && Object.keys(voiceParams).length > 0) {
+      this.voiceNode.port.postMessage({
+        type: "SET_ALL_ENV",
+        v: 1,
+        params: voiceParams
+      });
       if (this.verbose) {
-        console.log(`🔈 Voice active = ${this.synthesisActive ? 1 : 0}`);
+        console.log("📦 SET_ALL_ENV sent for scene state with parameters:", Object.keys(voiceParams));
+      }
+    }
+
+    // Handle synthesis active state separately via direct AudioParam
+    if (this.voiceNode && this.synthesisActive !== undefined) {
+      const activeValue = this.synthesisActive ? 1 : 0;
+      this.voiceNode.parameters.get("active").value = activeValue;
+      if (this.verbose) {
+        console.log(`🔈 Voice active = ${activeValue} (via AudioParam)`);
       }
     }
   }
@@ -2597,11 +2680,14 @@ class SynthClient {
       console.log("🧩 Applying resolved scene values:", resolvedState);
     }
 
+    // Build SET_ALL_ENV payload for voice parameters
+    const voiceParams = {};
+    
     for (const [paramName, value] of Object.entries(resolvedState)) {
       const v = Number.isFinite(value) ? value : 0;
 
-      // Just set the value - routing was already handled
       if (paramName === "whiteNoise") {
+        // White noise is handled directly via gain nodes
         if (this.whiteNoiseAudioGain) {
           this.whiteNoiseAudioGain.gain.setTargetAtTime(
             v,
@@ -2617,24 +2703,36 @@ class SynthClient {
           }
           if (this.verbose) console.log(`🎚️ Scene apply: whiteNoise -> ${v}`);
         }
-      } else if (this.voiceNode) {
-        const paramKey = `${paramName}_in`;
-        if (this.voiceNode.parameters.has(paramKey)) {
-          const audioParam = this.voiceNode.parameters.get(paramKey);
-          audioParam.setTargetAtTime(v, this.audioContext.currentTime, 0.015);
-          if (this.verbose) {
-            console.log(`🎚️ Scene apply: ${paramKey} -> ${v}`);
-          }
-        } else if (this.verbose) {
-          console.warn(`⚠️ Scene apply: voice param missing '${paramKey}'`);
+      } else {
+        // All other parameters go to voice worklet via SET_ALL_ENV
+        voiceParams[paramName] = {
+          startValue: v,
+          endValue: v,
+          interpolation: "step",
+          portamentoMs: 15  // Convert 0.015s to ms
+        };
+        if (this.verbose) {
+          console.log(`🎚️ Scene apply: ${paramName} -> ${v} (via SET_ALL_ENV)`);
         }
       }
     }
 
-    // Ensure synthesis is active if desired
-    if (this.voiceNode && this.voiceNode.parameters.has("active")) {
-      const activeParam = this.voiceNode.parameters.get("active");
-      activeParam.value = this.synthesisActive ? 1 : 0;
+    // Send all voice parameters in a single SET_ALL_ENV message
+    if (this.voiceNode && Object.keys(voiceParams).length > 0) {
+      this.voiceNode.port.postMessage({
+        type: "SET_ALL_ENV",
+        v: 1,
+        params: voiceParams
+      });
+      if (this.verbose) {
+        console.log("📦 SET_ALL_ENV sent for resolved scene values with parameters:", Object.keys(voiceParams));
+      }
+    }
+
+    // Handle synthesis active state separately via direct AudioParam
+    if (this.voiceNode && this.synthesisActive !== undefined) {
+      const activeValue = this.synthesisActive ? 1 : 0;
+      this.voiceNode.parameters.get("active").value = activeValue;
     }
   }
 
@@ -3414,7 +3512,7 @@ class SynthClient {
     return result;
   }
 
-  // Apply direct value to parameter
+  // Apply direct value to parameter via unified messaging
   _setDirectValue(paramName, value) {
     if (paramName === "whiteNoise") {
       // White noise controls both audio and visualization gain
@@ -3432,17 +3530,21 @@ class SynthClient {
           0.015,
         );
       }
-    } else if (this.voiceNode?.parameters.has(`${paramName}_in`)) {
-      const audioParam = this.voiceNode.parameters.get(`${paramName}_in`);
-      audioParam.setTargetAtTime(
-        value,
-        this.audioContext.currentTime,
-        0.015,
-      );
+    } else if (this.voiceNode) {
+      // Route to voice worklet via SET_ENV message
+      this.voiceNode.port.postMessage({
+        type: "SET_ENV",
+        v: 1,
+        param: paramName,
+        startValue: value,
+        endValue: value,
+        interpolation: "step",
+        portamentoMs: 15  // Convert 0.015s to ms
+      });
     }
 
     if (this.verbose) {
-      console.log(`🎚️ Applied direct parameter: ${paramName} = ${value}`);
+      console.log(`🎚️ Applied direct parameter: ${paramName} = ${value} (unified messaging)`);
     }
   }
 
