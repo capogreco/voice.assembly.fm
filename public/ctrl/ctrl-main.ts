@@ -58,7 +58,7 @@ class ControlClient {
   // Bulk mode properties
   bulkModeEnabled: boolean;
   bulkChanges: Array<
-    { type: string; paramPath?: string; value?: any; portamentoTime?: number }
+    { type: string; paramPath?: string; param?: string; value?: any; portamentoTime?: number }
   >;
 
   private _createDefaultState(): IMusicalState {
@@ -226,9 +226,12 @@ class ControlClient {
       ? this._mapPortamentoNormToMs(parseFloat(this.elements.portamentoTime.value))
       : 100;
 
-    // Use targeted parameter update instead of broadcasting entire program
-    // This avoids re-randomizing unchanged parameters
-    this.broadcastSingleParameterUpdate(action.param, portamentoTime);
+    // Use unified broadcast method that respects bulk mode
+    this._broadcastParameterChange({
+      type: 'single',
+      param: action.param,
+      portamentoTime: portamentoTime,
+    });
   }
 
   /**
@@ -591,6 +594,13 @@ class ControlClient {
     if (this.elements.periodInput) {
       this.elements.periodInput.addEventListener("input", (e) => {
         const newPeriod = parseFloat(e.target.value);
+        
+        // Validate period is within safe bounds
+        if (isNaN(newPeriod) || newPeriod < 0.05 || newPeriod > 10) {
+          this.log(`Invalid period: ${e.target.value}s (must be 0.05-10s)`, "error");
+          return;
+        }
+        
         // Always apply timing changes at EOC
         this.pendingPeriodSec = newPeriod;
         this.log(`Period staged for EOC: ${newPeriod}s (pending)`, "info");
@@ -2259,48 +2269,11 @@ class ControlClient {
     paramName: keyof IMusicalState,
     portamentoTime: number,
   ) {
-    if (!this.star) return;
-
-    const paramState = this.pendingMusicalState[paramName];
-
-    // Strict validation: reject forbidden scope field
-    if ("scope" in (paramState as any)) {
-      throw new Error(
-        `CRITICAL: Parameter '${paramName}' has forbidden 'scope' field`,
-      );
-    }
-
-    // Create minimal payload with only the changed parameter
-    const wirePayload: any = {
-      synthesisActive: this.synthesisActive,
+    this._broadcastParameterChange({
+      type: 'single',
+      param: paramName,
       portamentoTime: portamentoTime,
-    };
-
-    // Prepare unified parameter format (no scope)
-    const startGen = { ...paramState.startValueGenerator };
-
-    let endGen = undefined;
-    if (paramState.interpolation === "cosine" && paramState.endValueGenerator) {
-      endGen = { ...paramState.endValueGenerator };
-    }
-
-    wirePayload[paramName] = {
-      interpolation: paramState.interpolation,
-      startValueGenerator: startGen,
-      endValueGenerator: endGen,
-      baseValue: paramState.baseValue,
-    };
-
-    const message = MessageBuilder.createParameterUpdate(
-      MessageTypes.PROGRAM_UPDATE,
-      wirePayload,
-    );
-    // Send over control channel for reliability/priority
-    this.star.broadcastToType("synth", message, "control");
-    this.log(
-      `📡 Broadcasted ${paramName} update with ${portamentoTime}ms portamento`,
-      "info",
-    );
+    });
   }
 
   /**
@@ -2311,20 +2284,12 @@ class ControlClient {
     value: any,
     portamentoTime: number,
   ) {
-    if (!this.star) return;
-
-    const message = MessageBuilder.subParamUpdate(
-      paramPath,
-      value,
-      portamentoTime,
-    );
-
-    // Send over control channel for reliability/priority
-    this.star.broadcastToType("synth", message, "control");
-    this.log(
-      `📡 Broadcasted sub-parameter ${paramPath} = ${value} with ${portamentoTime}ms portamento`,
-      "info",
-    );
+    this._broadcastParameterChange({
+      type: 'sub',
+      paramPath: paramPath,
+      value: value,
+      portamentoTime: portamentoTime,
+    });
   }
 
   // Broadcast a single parameter update for staging at EOC (no portamento field)
@@ -2394,6 +2359,13 @@ class ControlClient {
     let changed = false;
 
     if (this.pendingPeriodSec !== null) {
+      // Validate pending period is within safe bounds
+      if (isNaN(this.pendingPeriodSec) || this.pendingPeriodSec < 0.05 || this.pendingPeriodSec > 10) {
+        this.log(`Rejected invalid pending period: ${this.pendingPeriodSec}s`, "error");
+        this.pendingPeriodSec = null;
+        return false;
+      }
+      
       this.periodSec = this.pendingPeriodSec;
       this.cycleLength = this.periodSec;
       this.log(`Applied period change: ${this.periodSec}s`, "info");
@@ -2449,8 +2421,20 @@ class ControlClient {
 
     // Only advance phasor when playing
     if (this.isPlaying) {
-      // Update phasor
+      // Update phasor with safety checks
+      if (this.cycleLength <= 0) {
+        console.error(`Invalid cycleLength: ${this.cycleLength}, using fallback`);
+        this.cycleLength = 0.05; // Fallback to minimum safe value
+      }
+      
       const phasorIncrement = deltaTime / this.cycleLength;
+      
+      // Safety check for infinity or NaN
+      if (!isFinite(phasorIncrement)) {
+        console.error(`Invalid phasorIncrement: ${phasorIncrement}, deltaTime: ${deltaTime}, cycleLength: ${this.cycleLength}`);
+        return; // Skip this frame
+      }
+      
       const previousPhasor = this.phasor;
       this.phasor += phasorIncrement;
 
@@ -2703,57 +2687,18 @@ class ControlClient {
   handleUnifiedParameterUpdate(paramName: keyof IMusicalState, value: string) {
     console.log(`🎛️ Unified parameter update: ${paramName} = ${value}`);
 
-    // Update the baseValue in our state
-    this._updatePendingState({
-      type: "SET_BASE_VALUE",
-      param: paramName,
-      value: parseFloat(value) || 0,
-    });
-
-    // Resolve HRG values here in controller
-    const paramState = this.pendingMusicalState[paramName];
-    const resolvedValues = this.resolveParameterValues(paramName, paramState);
-
     // Get portamento time (exponential mapping)
     const portamentoTime = this.elements.portamentoTime
       ? this._mapPortamentoNormToMs(parseFloat(this.elements.portamentoTime.value))
       : 100;
 
-    // Create unified parameter message using message builder
-    const message = MessageBuilder.unifiedParamUpdate(
-      paramName,
-      resolvedValues.start,
-      resolvedValues.end,
-      paramState.interpolation,
-      this.isPlaying,
-      portamentoTime,
-      this.phasor, // Include current phase for interpolation
-    );
-
-    // Send immediately - synths will decide when to apply based on transport state
-    if (this.star) {
-      this.star.broadcastToType("synth", message, "control");
-    }
-
-    // Track pending changes when playing for visual feedback
-    if (this.isPlaying) {
-      this.pendingParameterChanges.add(paramName);
-      this.updateParameterVisualFeedback(paramName);
-    } else {
-      // When paused, changes are immediate, so clear any pending status
-      this.pendingParameterChanges.delete(paramName);
-      this.updateParameterVisualFeedback(paramName);
-    }
-
-    const statusIcon = this.isPlaying ? "📋*" : "⚡";
-    this.log(
-      `${statusIcon} ${paramName}: ${resolvedValues.start}${
-        resolvedValues.end !== undefined ? ` → ${resolvedValues.end}` : ""
-      } (${
-        this.isPlaying ? "staged for EOC" : `immediate +${portamentoTime}ms`
-      })`,
-      "info",
-    );
+    // Use unified broadcast method that respects bulk mode
+    this._broadcastParameterChange({
+      type: 'full',
+      param: paramName,
+      value: value,
+      portamentoTime: portamentoTime,
+    });
   }
 
   updateParameterVisualFeedback(paramName: keyof IMusicalState) {
@@ -3526,17 +3471,38 @@ class ControlClient {
 
     // Send all accumulated changes
     this.bulkChanges.forEach((change) => {
-      if (change.type === "sub-param-update") {
-        // Send the actual message that was deferred
-        const message = MessageBuilder.subParamUpdate(
-          change.paramPath!,
-          change.value,
-          change.portamentoTime,
-        );
+      switch (change.type) {
+        case "sub-param-update":
+          // Send sub-parameter update
+          this._sendImmediateParameterChange({
+            type: 'sub',
+            paramPath: change.paramPath!,
+            value: change.value,
+            portamentoTime: change.portamentoTime!,
+          });
+          break;
 
-        if (this.star) {
-          this.star.broadcastToType("synth", message, "control");
-        }
+        case "single-param-update":
+          // Send single parameter update
+          this._sendImmediateParameterChange({
+            type: 'single',
+            param: change.param as keyof IMusicalState,
+            portamentoTime: change.portamentoTime!,
+          });
+          break;
+
+        case "unified-param-update":
+          // Send unified parameter update  
+          this._sendImmediateParameterChange({
+            type: 'full',
+            param: change.param as keyof IMusicalState,
+            value: change.value,
+            portamentoTime: change.portamentoTime!,
+          });
+          break;
+
+        default:
+          console.warn(`🔄 Unknown bulk change type: ${change.type}`);
       }
     });
 
@@ -3576,6 +3542,198 @@ class ControlClient {
       `📋 Added to bulk queue: ${change.paramPath} = ${change.value} (${this.bulkChanges.length} total)`,
     );
     return true; // Successfully added to bulk queue
+  }
+
+  /**
+   * Unified method for broadcasting parameter changes that respects bulk mode
+   */
+  private _broadcastParameterChange(change: {
+    type: 'full' | 'single' | 'sub';
+    param?: keyof IMusicalState;
+    paramPath?: string;
+    value?: any;
+    portamentoTime: number;
+    payload?: any;
+  }) {
+    if (!this.star) return;
+
+    // For sub-parameter updates, try to add to bulk mode first
+    if (change.type === 'sub' && change.paramPath) {
+      if (this.addToBulkChanges({
+        type: "sub-param-update",
+        paramPath: change.paramPath,
+        value: change.value,
+        portamentoTime: change.portamentoTime,
+      })) {
+        // Successfully added to bulk queue, don't send immediately
+        return;
+      }
+    }
+
+    // For single parameter updates, create bulk change format
+    if (change.type === 'single' && change.param) {
+      if (this.addToBulkChanges({
+        type: "single-param-update",
+        param: change.param,
+        portamentoTime: change.portamentoTime,
+      })) {
+        // Successfully added to bulk queue, don't send immediately
+        return;
+      }
+    }
+
+    // For full parameter updates
+    if (change.type === 'full' && change.param && change.value !== undefined) {
+      if (this.addToBulkChanges({
+        type: "unified-param-update",
+        param: change.param,
+        value: change.value,
+        portamentoTime: change.portamentoTime,
+      })) {
+        // Successfully added to bulk queue, don't send immediately  
+        return;
+      }
+    }
+
+    // Not in bulk mode or bulk mode disabled, send immediately
+    this._sendImmediateParameterChange(change);
+  }
+
+  /**
+   * Send parameter change immediately (bypassing bulk mode)
+   */
+  private _sendImmediateParameterChange(change: {
+    type: 'full' | 'single' | 'sub';
+    param?: keyof IMusicalState;
+    paramPath?: string;
+    value?: any;
+    portamentoTime: number;
+    payload?: any;
+  }) {
+    if (!this.star) return;
+
+    switch (change.type) {
+      case 'sub':
+        if (change.paramPath && change.value !== undefined) {
+          const message = MessageBuilder.subParamUpdate(
+            change.paramPath,
+            change.value,
+            change.portamentoTime,
+          );
+          this.star.broadcastToType("synth", message, "control");
+          this.log(
+            `📡 Sub-param: ${change.paramPath} = ${change.value} (${change.portamentoTime}ms)`,
+            "info"
+          );
+        }
+        break;
+
+      case 'single':
+        if (change.param) {
+          // Use existing broadcastSingleParameterUpdate logic
+          this._sendSingleParameterImmediate(change.param, change.portamentoTime);
+        }
+        break;
+
+      case 'full':
+        if (change.param && change.value !== undefined) {
+          // Use existing handleUnifiedParameterUpdate logic
+          this._sendUnifiedParameterImmediate(change.param, change.value, change.portamentoTime);
+        }
+        break;
+    }
+  }
+
+  /**
+   * Send single parameter update immediately (extracted from broadcastSingleParameterUpdate)
+   */
+  private _sendSingleParameterImmediate(paramName: keyof IMusicalState, portamentoTime: number) {
+    const paramState = this.pendingMusicalState[paramName];
+
+    // Strict validation: reject forbidden scope field
+    if ("scope" in (paramState as any)) {
+      throw new Error(
+        `CRITICAL: Parameter '${paramName}' has forbidden 'scope' field`,
+      );
+    }
+
+    // Create minimal payload with only the changed parameter
+    const wirePayload: any = {
+      synthesisActive: this.synthesisActive,
+      portamentoTime: portamentoTime,
+    };
+
+    // Prepare unified parameter format (no scope)
+    const startGen = { ...paramState.startValueGenerator };
+
+    let endGen = undefined;
+    if (paramState.interpolation === "cosine" && paramState.endValueGenerator) {
+      endGen = { ...paramState.endValueGenerator };
+    }
+
+    wirePayload[paramName] = {
+      interpolation: paramState.interpolation,
+      startValueGenerator: startGen,
+      endValueGenerator: endGen,
+      baseValue: paramState.baseValue,
+    };
+
+    const message = MessageBuilder.createParameterUpdate(
+      MessageTypes.PROGRAM_UPDATE,
+      wirePayload,
+    );
+    this.star.broadcastToType("synth", message, "control");
+    this.log(
+      `📡 Broadcasted ${paramName} update with ${portamentoTime}ms portamento`,
+      "info",
+    );
+  }
+
+  /**
+   * Send unified parameter update immediately (extracted from handleUnifiedParameterUpdate)
+   */
+  private _sendUnifiedParameterImmediate(paramName: keyof IMusicalState, value: string, portamentoTime: number) {
+    // Update the baseValue in our state
+    this._updatePendingState({
+      type: "SET_BASE_VALUE",
+      param: paramName,
+      value: parseFloat(value) || 0,
+    });
+
+    // Resolve HRG values here in controller
+    const paramState = this.pendingMusicalState[paramName];
+    const resolvedValues = this.resolveParameterValues(paramName, paramState);
+
+    // Create unified parameter message using message builder
+    const message = MessageBuilder.unifiedParamUpdate(
+      paramName,
+      resolvedValues.start,
+      resolvedValues.end,
+      paramState.interpolation,
+      this.isPlaying,
+      portamentoTime,
+      this.phasor, // Include current phase for interpolation
+    );
+
+    this.star.broadcastToType("synth", message, "control");
+
+    // Track pending changes when playing for visual feedback
+    if (this.isPlaying) {
+      this.pendingParameterChanges.add(paramName);
+      this.updateParameterVisualFeedback(paramName);
+    } else {
+      // When paused, changes are immediate, so clear any pending status
+      this.pendingParameterChanges.delete(paramName);
+      this.updateParameterVisualFeedback(paramName);
+    }
+
+    const statusIcon = this.isPlaying ? "📋*" : "⚡";
+    this.log(
+      `${statusIcon} ${paramName}: ${resolvedValues.start}${
+        resolvedValues.end !== undefined ? ` → ${resolvedValues.end}` : ""
+      } (${portamentoTime}ms)`,
+      "info",
+    );
   }
 }
 

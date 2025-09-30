@@ -1509,7 +1509,11 @@ var ControlClient = class {
   _applyHRGChangeWithPortamento(action) {
     this._updateActiveState(action);
     const portamentoTime = this.elements.portamentoTime ? this._mapPortamentoNormToMs(parseFloat(this.elements.portamentoTime.value)) : 100;
-    this.broadcastSingleParameterUpdate(action.param, portamentoTime);
+    this._broadcastParameterChange({
+      type: "single",
+      param: action.param,
+      portamentoTime
+    });
   }
   /**
    * Check if an input value represents a range (contains hyphen between numbers)
@@ -1750,6 +1754,10 @@ var ControlClient = class {
     if (this.elements.periodInput) {
       this.elements.periodInput.addEventListener("input", (e) => {
         const newPeriod = parseFloat(e.target.value);
+        if (isNaN(newPeriod) || newPeriod < 0.05 || newPeriod > 10) {
+          this.log(`Invalid period: ${e.target.value}s (must be 0.05-10s)`, "error");
+          return;
+        }
         this.pendingPeriodSec = newPeriod;
         this.log(`Period staged for EOC: ${newPeriod}s (pending)`, "info");
       });
@@ -2967,42 +2975,22 @@ var ControlClient = class {
    * More efficient than broadcasting entire state when only one parameter changed
    */
   broadcastSingleParameterUpdate(paramName, portamentoTime) {
-    if (!this.star) return;
-    const paramState = this.pendingMusicalState[paramName];
-    if ("scope" in paramState) {
-      throw new Error(`CRITICAL: Parameter '${paramName}' has forbidden 'scope' field`);
-    }
-    const wirePayload = {
-      synthesisActive: this.synthesisActive,
+    this._broadcastParameterChange({
+      type: "single",
+      param: paramName,
       portamentoTime
-    };
-    const startGen = {
-      ...paramState.startValueGenerator
-    };
-    let endGen = void 0;
-    if (paramState.interpolation === "cosine" && paramState.endValueGenerator) {
-      endGen = {
-        ...paramState.endValueGenerator
-      };
-    }
-    wirePayload[paramName] = {
-      interpolation: paramState.interpolation,
-      startValueGenerator: startGen,
-      endValueGenerator: endGen,
-      baseValue: paramState.baseValue
-    };
-    const message = MessageBuilder.createParameterUpdate(MessageTypes.PROGRAM_UPDATE, wirePayload);
-    this.star.broadcastToType("synth", message, "control");
-    this.log(`\u{1F4E1} Broadcasted ${paramName} update with ${portamentoTime}ms portamento`, "info");
+    });
   }
   /**
    * Broadcast a sub-parameter update (e.g., frequency.baseValue)
    */
   broadcastSubParameterUpdate(paramPath, value, portamentoTime) {
-    if (!this.star) return;
-    const message = MessageBuilder.subParamUpdate(paramPath, value, portamentoTime);
-    this.star.broadcastToType("synth", message, "control");
-    this.log(`\u{1F4E1} Broadcasted sub-parameter ${paramPath} = ${value} with ${portamentoTime}ms portamento`, "info");
+    this._broadcastParameterChange({
+      type: "sub",
+      paramPath,
+      value,
+      portamentoTime
+    });
   }
   // Broadcast a single parameter update for staging at EOC (no portamento field)
   broadcastSingleParameterStaged(paramName) {
@@ -3048,6 +3036,11 @@ var ControlClient = class {
   applyPendingTimingChanges() {
     let changed = false;
     if (this.pendingPeriodSec !== null) {
+      if (isNaN(this.pendingPeriodSec) || this.pendingPeriodSec < 0.05 || this.pendingPeriodSec > 10) {
+        this.log(`Rejected invalid pending period: ${this.pendingPeriodSec}s`, "error");
+        this.pendingPeriodSec = null;
+        return false;
+      }
       this.periodSec = this.pendingPeriodSec;
       this.cycleLength = this.periodSec;
       this.log(`Applied period change: ${this.periodSec}s`, "info");
@@ -3091,7 +3084,15 @@ var ControlClient = class {
     const currentTime = performance.now() / 1e3;
     const deltaTime = currentTime - this.lastPhasorTime;
     if (this.isPlaying) {
+      if (this.cycleLength <= 0) {
+        console.error(`Invalid cycleLength: ${this.cycleLength}, using fallback`);
+        this.cycleLength = 0.05;
+      }
       const phasorIncrement = deltaTime / this.cycleLength;
+      if (!isFinite(phasorIncrement)) {
+        console.error(`Invalid phasorIncrement: ${phasorIncrement}, deltaTime: ${deltaTime}, cycleLength: ${this.cycleLength}`);
+        return;
+      }
       const previousPhasor = this.phasor;
       this.phasor += phasorIncrement;
       const eocCrossed = this.phasor >= 1;
@@ -3272,27 +3273,13 @@ var ControlClient = class {
   }
   handleUnifiedParameterUpdate(paramName, value) {
     console.log(`\u{1F39B}\uFE0F Unified parameter update: ${paramName} = ${value}`);
-    this._updatePendingState({
-      type: "SET_BASE_VALUE",
-      param: paramName,
-      value: parseFloat(value) || 0
-    });
-    const paramState = this.pendingMusicalState[paramName];
-    const resolvedValues = this.resolveParameterValues(paramName, paramState);
     const portamentoTime = this.elements.portamentoTime ? this._mapPortamentoNormToMs(parseFloat(this.elements.portamentoTime.value)) : 100;
-    const message = MessageBuilder.unifiedParamUpdate(paramName, resolvedValues.start, resolvedValues.end, paramState.interpolation, this.isPlaying, portamentoTime, this.phasor);
-    if (this.star) {
-      this.star.broadcastToType("synth", message, "control");
-    }
-    if (this.isPlaying) {
-      this.pendingParameterChanges.add(paramName);
-      this.updateParameterVisualFeedback(paramName);
-    } else {
-      this.pendingParameterChanges.delete(paramName);
-      this.updateParameterVisualFeedback(paramName);
-    }
-    const statusIcon = this.isPlaying ? "\u{1F4CB}*" : "\u26A1";
-    this.log(`${statusIcon} ${paramName}: ${resolvedValues.start}${resolvedValues.end !== void 0 ? ` \u2192 ${resolvedValues.end}` : ""} (${this.isPlaying ? "staged for EOC" : `immediate +${portamentoTime}ms`})`, "info");
+    this._broadcastParameterChange({
+      type: "full",
+      param: paramName,
+      value,
+      portamentoTime
+    });
   }
   updateParameterVisualFeedback(paramName) {
     const paramLabels = document.querySelectorAll(".param-label");
@@ -3835,11 +3822,32 @@ var ControlClient = class {
     }
     console.log(`\u{1F504} Applying ${this.bulkChanges.length} bulk changes`);
     this.bulkChanges.forEach((change) => {
-      if (change.type === "sub-param-update") {
-        const message = MessageBuilder.subParamUpdate(change.paramPath, change.value, change.portamentoTime);
-        if (this.star) {
-          this.star.broadcastToType("synth", message, "control");
-        }
+      switch (change.type) {
+        case "sub-param-update":
+          this._sendImmediateParameterChange({
+            type: "sub",
+            paramPath: change.paramPath,
+            value: change.value,
+            portamentoTime: change.portamentoTime
+          });
+          break;
+        case "single-param-update":
+          this._sendImmediateParameterChange({
+            type: "single",
+            param: change.param,
+            portamentoTime: change.portamentoTime
+          });
+          break;
+        case "unified-param-update":
+          this._sendImmediateParameterChange({
+            type: "full",
+            param: change.param,
+            value: change.value,
+            portamentoTime: change.portamentoTime
+          });
+          break;
+        default:
+          console.warn(`\u{1F504} Unknown bulk change type: ${change.type}`);
       }
     });
     this.bulkChanges = [];
@@ -3860,6 +3868,121 @@ var ControlClient = class {
     this.updateBulkButtonState();
     console.log(`\u{1F4CB} Added to bulk queue: ${change.paramPath} = ${change.value} (${this.bulkChanges.length} total)`);
     return true;
+  }
+  /**
+   * Unified method for broadcasting parameter changes that respects bulk mode
+   */
+  _broadcastParameterChange(change) {
+    if (!this.star) return;
+    if (change.type === "sub" && change.paramPath) {
+      if (this.addToBulkChanges({
+        type: "sub-param-update",
+        paramPath: change.paramPath,
+        value: change.value,
+        portamentoTime: change.portamentoTime
+      })) {
+        return;
+      }
+    }
+    if (change.type === "single" && change.param) {
+      if (this.addToBulkChanges({
+        type: "single-param-update",
+        param: change.param,
+        portamentoTime: change.portamentoTime
+      })) {
+        return;
+      }
+    }
+    if (change.type === "full" && change.param && change.value !== void 0) {
+      if (this.addToBulkChanges({
+        type: "unified-param-update",
+        param: change.param,
+        value: change.value,
+        portamentoTime: change.portamentoTime
+      })) {
+        return;
+      }
+    }
+    this._sendImmediateParameterChange(change);
+  }
+  /**
+   * Send parameter change immediately (bypassing bulk mode)
+   */
+  _sendImmediateParameterChange(change) {
+    if (!this.star) return;
+    switch (change.type) {
+      case "sub":
+        if (change.paramPath && change.value !== void 0) {
+          const message = MessageBuilder.subParamUpdate(change.paramPath, change.value, change.portamentoTime);
+          this.star.broadcastToType("synth", message, "control");
+          this.log(`\u{1F4E1} Sub-param: ${change.paramPath} = ${change.value} (${change.portamentoTime}ms)`, "info");
+        }
+        break;
+      case "single":
+        if (change.param) {
+          this._sendSingleParameterImmediate(change.param, change.portamentoTime);
+        }
+        break;
+      case "full":
+        if (change.param && change.value !== void 0) {
+          this._sendUnifiedParameterImmediate(change.param, change.value, change.portamentoTime);
+        }
+        break;
+    }
+  }
+  /**
+   * Send single parameter update immediately (extracted from broadcastSingleParameterUpdate)
+   */
+  _sendSingleParameterImmediate(paramName, portamentoTime) {
+    const paramState = this.pendingMusicalState[paramName];
+    if ("scope" in paramState) {
+      throw new Error(`CRITICAL: Parameter '${paramName}' has forbidden 'scope' field`);
+    }
+    const wirePayload = {
+      synthesisActive: this.synthesisActive,
+      portamentoTime
+    };
+    const startGen = {
+      ...paramState.startValueGenerator
+    };
+    let endGen = void 0;
+    if (paramState.interpolation === "cosine" && paramState.endValueGenerator) {
+      endGen = {
+        ...paramState.endValueGenerator
+      };
+    }
+    wirePayload[paramName] = {
+      interpolation: paramState.interpolation,
+      startValueGenerator: startGen,
+      endValueGenerator: endGen,
+      baseValue: paramState.baseValue
+    };
+    const message = MessageBuilder.createParameterUpdate(MessageTypes.PROGRAM_UPDATE, wirePayload);
+    this.star.broadcastToType("synth", message, "control");
+    this.log(`\u{1F4E1} Broadcasted ${paramName} update with ${portamentoTime}ms portamento`, "info");
+  }
+  /**
+   * Send unified parameter update immediately (extracted from handleUnifiedParameterUpdate)
+   */
+  _sendUnifiedParameterImmediate(paramName, value, portamentoTime) {
+    this._updatePendingState({
+      type: "SET_BASE_VALUE",
+      param: paramName,
+      value: parseFloat(value) || 0
+    });
+    const paramState = this.pendingMusicalState[paramName];
+    const resolvedValues = this.resolveParameterValues(paramName, paramState);
+    const message = MessageBuilder.unifiedParamUpdate(paramName, resolvedValues.start, resolvedValues.end, paramState.interpolation, this.isPlaying, portamentoTime, this.phasor);
+    this.star.broadcastToType("synth", message, "control");
+    if (this.isPlaying) {
+      this.pendingParameterChanges.add(paramName);
+      this.updateParameterVisualFeedback(paramName);
+    } else {
+      this.pendingParameterChanges.delete(paramName);
+      this.updateParameterVisualFeedback(paramName);
+    }
+    const statusIcon = this.isPlaying ? "\u{1F4CB}*" : "\u26A1";
+    this.log(`${statusIcon} ${paramName}: ${resolvedValues.start}${resolvedValues.end !== void 0 ? ` \u2192 ${resolvedValues.end}` : ""} (${portamentoTime}ms)`, "info");
   }
 };
 console.log("About to create ControlClient");
