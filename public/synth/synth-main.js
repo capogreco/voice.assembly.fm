@@ -2719,7 +2719,8 @@ class SynthClient {
       state.orderN = this._shuffleArray([...state.numerators]);
       state.indexN = 0;
     } else {
-      state.indexN = 0; // Reset for ascending/descending
+      // Don't reset indexN for ascending/descending - preserve sequence continuity
+      // This allows proper LCM emergence when numerators/denominators have different lengths
       state.orderN = null;
     }
 
@@ -2758,7 +2759,8 @@ class SynthClient {
       state.orderD = this._shuffleArray([...state.denominators]);
       state.indexD = 0;
     } else {
-      state.indexD = 0; // Reset for ascending/descending
+      // Don't reset indexD for ascending/descending - preserve sequence continuity
+      // This allows proper LCM emergence when numerators/denominators have different lengths
       state.orderD = null;
     }
 

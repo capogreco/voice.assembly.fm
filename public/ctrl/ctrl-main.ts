@@ -596,8 +596,8 @@ class ControlClient {
         const newPeriod = parseFloat(e.target.value);
         
         // Validate period is within safe bounds
-        if (isNaN(newPeriod) || newPeriod < 0.05 || newPeriod > 10) {
-          this.log(`Invalid period: ${e.target.value}s (must be 0.05-10s)`, "error");
+        if (isNaN(newPeriod) || newPeriod < 0.05 || newPeriod > 60) {
+          this.log(`Invalid period: ${e.target.value}s (must be 0.05-60s)`, "error");
           return;
         }
         
@@ -1892,8 +1892,14 @@ class ControlClient {
         const startDenBeh = document.getElementById(
           `${paramName}-start-denominators-behavior`,
         ) as HTMLSelectElement | null;
-        if (startNums) startNums.value = startGen.numerators ?? "1";
-        if (startDens) startDens.value = startGen.denominators ?? "1";
+        
+        // Only update input values if they're not currently being edited
+        if (startNums && document.activeElement !== startNums) {
+          startNums.value = startGen.numerators ?? "1";
+        }
+        if (startDens && document.activeElement !== startDens) {
+          startDens.value = startGen.denominators ?? "1";
+        }
         if (startNumBeh) {
           startNumBeh.value = startGen.numeratorBehavior ?? "static";
         }
@@ -1917,8 +1923,13 @@ class ControlClient {
           const endDenBeh = document.getElementById(
             `${paramName}-end-denominators-behavior`,
           ) as HTMLSelectElement | null;
-          if (endNums) endNums.value = endGen.numerators ?? "1";
-          if (endDens) endDens.value = endGen.denominators ?? "1";
+          // Only update input values if they're not currently being edited
+          if (endNums && document.activeElement !== endNums) {
+            endNums.value = endGen.numerators ?? "1";
+          }
+          if (endDens && document.activeElement !== endDens) {
+            endDens.value = endGen.denominators ?? "1";
+          }
           if (endNumBeh) {
             endNumBeh.value = endGen.numeratorBehavior ?? "static";
           }
@@ -2377,7 +2388,7 @@ class ControlClient {
 
     if (this.pendingPeriodSec !== null) {
       // Validate pending period is within safe bounds
-      if (isNaN(this.pendingPeriodSec) || this.pendingPeriodSec < 0.05 || this.pendingPeriodSec > 10) {
+      if (isNaN(this.pendingPeriodSec) || this.pendingPeriodSec < 0.05 || this.pendingPeriodSec > 60) {
         this.log(`Rejected invalid pending period: ${this.pendingPeriodSec}s`, "error");
         this.pendingPeriodSec = null;
         return false;

@@ -1754,8 +1754,8 @@ var ControlClient = class {
     if (this.elements.periodInput) {
       this.elements.periodInput.addEventListener("input", (e) => {
         const newPeriod = parseFloat(e.target.value);
-        if (isNaN(newPeriod) || newPeriod < 0.05 || newPeriod > 10) {
-          this.log(`Invalid period: ${e.target.value}s (must be 0.05-10s)`, "error");
+        if (isNaN(newPeriod) || newPeriod < 0.05 || newPeriod > 60) {
+          this.log(`Invalid period: ${e.target.value}s (must be 0.05-60s)`, "error");
           return;
         }
         this.pendingPeriodSec = newPeriod;
@@ -2738,8 +2738,12 @@ var ControlClient = class {
         const startDens = document.getElementById(`${paramName}-start-denominators`);
         const startNumBeh = document.getElementById(`${paramName}-start-numerators-behavior`);
         const startDenBeh = document.getElementById(`${paramName}-start-denominators-behavior`);
-        if (startNums) startNums.value = startGen.numerators ?? "1";
-        if (startDens) startDens.value = startGen.denominators ?? "1";
+        if (startNums && document.activeElement !== startNums) {
+          startNums.value = startGen.numerators ?? "1";
+        }
+        if (startDens && document.activeElement !== startDens) {
+          startDens.value = startGen.denominators ?? "1";
+        }
         if (startNumBeh) {
           startNumBeh.value = startGen.numeratorBehavior ?? "static";
         }
@@ -2754,8 +2758,12 @@ var ControlClient = class {
           const endDens = document.getElementById(`${paramName}-end-denominators`);
           const endNumBeh = document.getElementById(`${paramName}-end-numerators-behavior`);
           const endDenBeh = document.getElementById(`${paramName}-end-denominators-behavior`);
-          if (endNums) endNums.value = endGen.numerators ?? "1";
-          if (endDens) endDens.value = endGen.denominators ?? "1";
+          if (endNums && document.activeElement !== endNums) {
+            endNums.value = endGen.numerators ?? "1";
+          }
+          if (endDens && document.activeElement !== endDens) {
+            endDens.value = endGen.denominators ?? "1";
+          }
           if (endNumBeh) {
             endNumBeh.value = endGen.numeratorBehavior ?? "static";
           }
@@ -3048,7 +3056,7 @@ var ControlClient = class {
   applyPendingTimingChanges() {
     let changed = false;
     if (this.pendingPeriodSec !== null) {
-      if (isNaN(this.pendingPeriodSec) || this.pendingPeriodSec < 0.05 || this.pendingPeriodSec > 10) {
+      if (isNaN(this.pendingPeriodSec) || this.pendingPeriodSec < 0.05 || this.pendingPeriodSec > 60) {
         this.log(`Rejected invalid pending period: ${this.pendingPeriodSec}s`, "error");
         this.pendingPeriodSec = null;
         return false;
