@@ -2910,8 +2910,8 @@ var ControlClient = class {
    * Used by both broadcastMusicalParameters and sendCompleteStateToSynth
    */
   _getWirePayload(portamentoTime) {
-    for (const key in this.musicalState) {
-      const paramState = this.musicalState[key];
+    for (const key in this.pendingMusicalState) {
+      const paramState = this.pendingMusicalState[key];
       if (typeof paramState !== "object" || paramState === null) {
         throw new Error(`CRITICAL: Parameter '${key}' is not an object, got: ${typeof paramState} (${paramState})`);
       }
@@ -2926,9 +2926,9 @@ var ControlClient = class {
     if (portamentoTime !== void 0) {
       wirePayload.portamentoTime = portamentoTime;
     }
-    for (const key in this.musicalState) {
+    for (const key in this.pendingMusicalState) {
       const paramKey = key;
-      const paramState = this.musicalState[paramKey];
+      const paramState = this.pendingMusicalState[paramKey];
       if (!paramState.interpolation || ![
         "step",
         "cosine"
@@ -2963,6 +2963,18 @@ var ControlClient = class {
     return wirePayload;
   }
   broadcastMusicalParameters(portamentoTime) {
+    if (this.addToBulkChanges({
+      type: "full-program-update",
+      portamentoTime: portamentoTime || 100
+    })) {
+      return;
+    }
+    this._sendFullProgramImmediate(portamentoTime);
+  }
+  /**
+   * Send full program update immediately (extracted from broadcastMusicalParameters)
+   */
+  _sendFullProgramImmediate(portamentoTime) {
     if (!this.star) return;
     const wirePayload = this._getWirePayload(portamentoTime);
     console.log("Broadcasting translated payload:", wirePayload);
@@ -3845,6 +3857,9 @@ var ControlClient = class {
             value: change.value,
             portamentoTime: change.portamentoTime
           });
+          break;
+        case "full-program-update":
+          this._sendFullProgramImmediate(change.portamentoTime);
           break;
         default:
           console.warn(`\u{1F504} Unknown bulk change type: ${change.type}`);

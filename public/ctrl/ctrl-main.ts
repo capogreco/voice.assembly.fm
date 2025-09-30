@@ -2156,8 +2156,8 @@ class ControlClient {
    */
   private _getWirePayload(portamentoTime?: number): any {
     // Strict validation: reject any state with forbidden fields
-    for (const key in this.musicalState) {
-      const paramState = this.musicalState[key as keyof IMusicalState] as any;
+    for (const key in this.pendingMusicalState) {
+      const paramState = this.pendingMusicalState[key as keyof IMusicalState] as any;
       
       // Debug: Check if paramState is an object
       if (typeof paramState !== "object" || paramState === null) {
@@ -2184,9 +2184,9 @@ class ControlClient {
     }
 
     // Send unified parameter format - interpolation + generators only
-    for (const key in this.musicalState) {
+    for (const key in this.pendingMusicalState) {
       const paramKey = key as keyof IMusicalState;
-      const paramState = this.musicalState[paramKey];
+      const paramState = this.pendingMusicalState[paramKey];
 
       // Strict validation: require all necessary fields
       if (
@@ -2243,6 +2243,23 @@ class ControlClient {
   }
 
   broadcastMusicalParameters(portamentoTime?: number) {
+    // Check if we should accumulate this change for bulk mode
+    if (this.addToBulkChanges({
+      type: "full-program-update",
+      portamentoTime: portamentoTime || 100,
+    })) {
+      // Successfully added to bulk queue, don't send immediately
+      return;
+    }
+
+    // Not in bulk mode, send immediately
+    this._sendFullProgramImmediate(portamentoTime);
+  }
+
+  /**
+   * Send full program update immediately (extracted from broadcastMusicalParameters)
+   */
+  private _sendFullProgramImmediate(portamentoTime?: number) {
     if (!this.star) return;
 
     const wirePayload = this._getWirePayload(portamentoTime);
@@ -3499,6 +3516,11 @@ class ControlClient {
             value: change.value,
             portamentoTime: change.portamentoTime!,
           });
+          break;
+
+        case "full-program-update":
+          // Send full program update
+          this._sendFullProgramImmediate(change.portamentoTime);
           break;
 
         default:
