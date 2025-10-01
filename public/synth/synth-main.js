@@ -2375,8 +2375,7 @@ class SynthClient {
             }
             this.programConfig[message.param].startValueGenerator = startGen;
           }
-          // Clear end generator for step interpolation
-          delete this.programConfig[message.param].endValueGenerator;
+          // Keep end generator present (will be ignored for step interpolation)
         } else if (message.interpolation === "cosine") {
           // Cosine interpolation - preserve both generators, create end generator if missing
           if (existingConfig.startValueGenerator) {

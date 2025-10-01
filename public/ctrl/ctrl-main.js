@@ -1512,7 +1512,15 @@ var ControlClient = class {
         type: "periodic",
         numerators: "1",
         denominators: "1",
-        sequenceBehavior: "static"
+        numeratorBehavior: "static",
+        denominatorBehavior: "static"
+      },
+      endValueGenerator: {
+        type: "periodic",
+        numerators: "1",
+        denominators: "1",
+        numeratorBehavior: "static",
+        denominatorBehavior: "static"
       }
     });
     const defaultNormalizedState = () => ({
@@ -1567,7 +1575,15 @@ var ControlClient = class {
           type: "periodic",
           numerators: "1",
           denominators: "1",
-          sequenceBehavior: "static"
+          numeratorBehavior: "static",
+          denominatorBehavior: "static"
+        },
+        endValueGenerator: {
+          type: "periodic",
+          numerators: "1",
+          denominators: "1",
+          numeratorBehavior: "static",
+          denominatorBehavior: "static"
         }
       }
     };
@@ -2012,27 +2028,6 @@ var ControlClient = class {
           param: paramName,
           interpolation
         });
-        if (interpolation === "cosine") {
-          const param = this.pendingMusicalState[paramName];
-          const start = param.startValueGenerator;
-          if (start) {
-            if (start.type === "normalised") {
-              param.endValueGenerator = {
-                type: "normalised",
-                range: start.range,
-                sequenceBehavior: "static"
-              };
-            } else if (start.type === "periodic") {
-              param.endValueGenerator = {
-                type: "periodic",
-                numerators: start.numerators,
-                denominators: start.denominators,
-                numeratorBehavior: start.numeratorBehavior || "static",
-                denominatorBehavior: start.denominatorBehavior || "static"
-              };
-            }
-          }
-        }
         this._updateUIFromState(paramName);
         this.markPendingChanges();
         if (this.isPlaying) {

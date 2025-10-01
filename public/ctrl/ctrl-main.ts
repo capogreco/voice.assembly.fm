@@ -69,7 +69,7 @@ class ControlClient {
   >;
 
   private _createDefaultState(): IMusicalState {
-    // Helper for frequency (uses HRG)
+    // Helper for frequency (uses HRG with both start and end generators)
     const defaultFrequencyState = (): ParameterState => ({
       interpolation: "step",
       baseValue: 220,
@@ -77,7 +77,15 @@ class ControlClient {
         type: "periodic",
         numerators: "1",
         denominators: "1",
-        sequenceBehavior: "static",
+        numeratorBehavior: "static",
+        denominatorBehavior: "static",
+      },
+      endValueGenerator: {
+        type: "periodic",
+        numerators: "1",
+        denominators: "1",
+        numeratorBehavior: "static",
+        denominatorBehavior: "static",
       },
     });
 
@@ -131,7 +139,15 @@ class ControlClient {
           type: "periodic",
           numerators: "1",
           denominators: "1",
-          sequenceBehavior: "static",
+          numeratorBehavior: "static",
+          denominatorBehavior: "static",
+        },
+        endValueGenerator: {
+          type: "periodic",
+          numerators: "1",
+          denominators: "1",
+          numeratorBehavior: "static",
+          denominatorBehavior: "static",
         },
       },
     };
@@ -832,28 +848,6 @@ class ControlClient {
           interpolation: interpolation,
         });
 
-        // When switching to cosine, build end generator from start's selection fields
-        if (interpolation === "cosine") {
-          const param = this.pendingMusicalState[paramName];
-          const start = param.startValueGenerator;
-          if (start) {
-            if (start.type === "normalised") {
-              param.endValueGenerator = {
-                type: "normalised",
-                range: start.range,
-                sequenceBehavior: "static"
-              };
-            } else if (start.type === "periodic") {
-              param.endValueGenerator = {
-                type: "periodic",
-                numerators: start.numerators,
-                denominators: start.denominators,
-                numeratorBehavior: start.numeratorBehavior || "static",
-                denominatorBehavior: start.denominatorBehavior || "static"
-              };
-            }
-          }
-        }
 
         // UI will be updated automatically by _updatePendingState → _updateUIFromState
         this._updateUIFromState(paramName);
