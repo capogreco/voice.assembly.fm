@@ -565,6 +565,11 @@ var WebRTCStar = class extends EventTarget {
           if (this.verbose) {
             console.log("\u{1F4CB} Received synths list:", message.synths);
           }
+          this.dispatchEvent(new CustomEvent("controller-active", {
+            detail: {
+              synths: message.synths
+            }
+          }));
           for (const synthId of message.synths) {
             if (!this.peers.has(synthId)) {
               if (this.verbose) {
@@ -1475,7 +1480,6 @@ var ControlClient = class {
   musicalState;
   pendingMusicalState;
   star;
-  forceTakeover;
   peerId;
   phasor;
   periodSec;
@@ -1604,17 +1608,11 @@ var ControlClient = class {
             ...param.startValueGenerator,
             ...action.config
           };
-          if (param.startValueGenerator.type === "periodic") {
-            param.startValueGenerator.baseValue = param.baseValue;
-          }
         } else if (action.position === "end" && param.interpolation !== "step" && param.endValueGenerator) {
           param.endValueGenerator = {
             ...param.endValueGenerator,
             ...action.config
           };
-          if (param.endValueGenerator.type === "periodic") {
-            param.endValueGenerator.baseValue = param.baseValue;
-          }
         }
         break;
       }
@@ -1716,17 +1714,11 @@ var ControlClient = class {
             ...param.startValueGenerator,
             ...action.config
           };
-          if (param.startValueGenerator.type === "periodic") {
-            param.startValueGenerator.baseValue = param.baseValue;
-          }
         } else if (action.position === "end" && param.interpolation !== "step" && param.endValueGenerator) {
           param.endValueGenerator = {
             ...param.endValueGenerator,
             ...action.config
           };
-          if (param.endValueGenerator.type === "periodic") {
-            param.endValueGenerator.baseValue = param.baseValue;
-          }
         }
         break;
       }
@@ -1739,8 +1731,6 @@ var ControlClient = class {
   }
   constructor() {
     console.log("ControlClient constructor starting");
-    const urlParams = new URLSearchParams(globalThis.location.search);
-    this.forceTakeover = urlParams.get("force") === "true";
     this.peerId = generatePeerId("ctrl");
     this.star = null;
     this.phasor = 0;
@@ -1755,6 +1745,12 @@ var ControlClient = class {
     this.lastPausedHeartbeat = 0;
     this.pendingPeriodSec = null;
     this.pendingStepsPerCycle = null;
+    this.stepRefSec = 0.2;
+    this.linkStepsToPeriod = true;
+    this.currentStepIndex = 0;
+    this.previousStepIndex = 0;
+    this.lastPausedBeaconAt = 0;
+    this.MIN_BEACON_INTERVAL_SEC = 0.2;
     this.audioContext = null;
     this.es8Enabled = false;
     this.es8Node = null;
@@ -1773,8 +1769,6 @@ var ControlClient = class {
       synthesisStatus: document.getElementById("synthesis-status"),
       networkDiagnostics: document.getElementById("network-diagnostics"),
       // Removed peers status - now using synth count in connected synths panel
-      takeoverSection: document.getElementById("takeover-section"),
-      takeoverBtn: document.getElementById("force-takeover-btn"),
       manualModeBtn: document.getElementById("manual-mode-btn"),
       // Musical controls
       // Simplified musical controls
@@ -1793,6 +1787,7 @@ var ControlClient = class {
       phasorTicks: document.getElementById("phasor-ticks"),
       // ES-8 controls
       es8EnableBtn: document.getElementById("es8-enable-btn"),
+      es8Status: document.getElementById("es8-status"),
       // Parameter controls
       portamentoTime: document.getElementById("portamento-time"),
       portamentoValue: document.getElementById("portamento-value"),
@@ -1803,6 +1798,8 @@ var ControlClient = class {
       synthCount: document.getElementById("synth-count"),
       debugLog: document.getElementById("debug-log"),
       clearLogBtn: document.getElementById("clear-log-btn"),
+      // Period-Steps linkage controls
+      linkStepsCheckbox: document.getElementById("link-steps"),
       // Scene memory
       clearBanksBtn: document.getElementById("clear-banks-btn")
     };
@@ -1823,12 +1820,6 @@ var ControlClient = class {
     if (this.elements.manualModeBtn) {
       this.elements.manualModeBtn.addEventListener("click", () => this.toggleSynthesis());
     }
-    this.elements.takeoverBtn.addEventListener("click", () => {
-      if (confirm("Take control from the current active controller?")) {
-        const currentUrl = globalThis.location.href.split("?")[0];
-        globalThis.location.href = currentUrl + "?force=true";
-      }
-    });
     if (this.elements.clearLogBtn) {
       this.elements.clearLogBtn.addEventListener("click", () => this.clearLog());
     }
@@ -1851,6 +1842,12 @@ var ControlClient = class {
       });
     } else {
       console.error("\u274C Re-resolve button not found in DOM");
+    }
+    if (this.elements.linkStepsCheckbox) {
+      this.elements.linkStepsCheckbox.addEventListener("change", (e) => {
+        this.linkStepsToPeriod = e.target.checked;
+        this.log(`Period-steps linkage: ${this.linkStepsToPeriod ? "ON" : "OFF"}`, "info");
+      });
     }
     this.setupMusicalControls();
   }
@@ -1880,21 +1877,42 @@ var ControlClient = class {
   setupMusicalControls() {
     this.setupEnvelopeControls();
     if (this.elements.periodInput) {
-      this.elements.periodInput.addEventListener("input", (e) => {
+      this.elements.periodInput.addEventListener("blur", (e) => {
         const newPeriod = parseFloat(e.target.value);
-        if (isNaN(newPeriod) || newPeriod < 0.05 || newPeriod > 60) {
-          this.log(`Invalid period: ${e.target.value}s (must be 0.05-60s)`, "error");
+        if (isNaN(newPeriod) || newPeriod < 0.2 || newPeriod > 60) {
+          this.log(`Invalid period: ${e.target.value}s (must be 0.2-60s)`, "error");
           return;
         }
-        this.pendingPeriodSec = newPeriod;
-        this.log(`Period staged for EOC: ${newPeriod}s (pending)`, "info");
+        if (this.linkStepsToPeriod) {
+          let targetSteps = Math.round(newPeriod / this.stepRefSec);
+          targetSteps = Math.max(1, Math.min(256, targetSteps));
+          if (this.elements.stepsInput) {
+            this.elements.stepsInput.value = targetSteps.toString();
+          }
+          this.pendingPeriodSec = newPeriod;
+          this.pendingStepsPerCycle = targetSteps;
+          this.log(`Period staged: ${newPeriod}s, computed steps: ${targetSteps} (pending)`, "info");
+        } else {
+          this.pendingPeriodSec = newPeriod;
+          this.log(`Period staged for EOC: ${newPeriod}s (pending)`, "info");
+        }
       });
     }
     if (this.elements.stepsInput) {
-      this.elements.stepsInput.addEventListener("input", (e) => {
-        const newSteps = parseInt(e.target.value);
+      this.elements.stepsInput.addEventListener("blur", (e) => {
+        let newSteps = parseInt(e.target.value);
+        if (isNaN(newSteps) || newSteps < 1) {
+          newSteps = 1;
+        } else if (newSteps > 256) {
+          newSteps = 256;
+        }
+        if (newSteps !== parseInt(e.target.value)) {
+          e.target.value = newSteps.toString();
+        }
+        const currentPeriod = this.pendingPeriodSec || this.periodSec;
+        this.stepRefSec = Math.max(0.2, currentPeriod / newSteps);
         this.pendingStepsPerCycle = newSteps;
-        this.log(`Steps staged for EOC: ${newSteps} (pending)`, "info");
+        this.log(`Steps staged: ${newSteps} (step ref: ${this.stepRefSec.toFixed(3)}s) (pending)`, "info");
       });
     }
     if (this.elements.playBtn) {
@@ -1996,8 +2014,23 @@ var ControlClient = class {
         });
         if (interpolation === "cosine") {
           const param = this.pendingMusicalState[paramName];
-          if (param.startValueGenerator) {
-            param.endValueGenerator = JSON.parse(JSON.stringify(param.startValueGenerator));
+          const start = param.startValueGenerator;
+          if (start) {
+            if (start.type === "normalised") {
+              param.endValueGenerator = {
+                type: "normalised",
+                range: start.range,
+                sequenceBehavior: "static"
+              };
+            } else if (start.type === "periodic") {
+              param.endValueGenerator = {
+                type: "periodic",
+                numerators: start.numerators,
+                denominators: start.denominators,
+                numeratorBehavior: start.numeratorBehavior || "static",
+                denominatorBehavior: start.denominatorBehavior || "static"
+              };
+            }
           }
         }
         this._updateUIFromState(paramName);
@@ -3186,7 +3219,7 @@ var ControlClient = class {
   applyPendingTimingChanges() {
     let changed = false;
     if (this.pendingPeriodSec !== null) {
-      if (isNaN(this.pendingPeriodSec) || this.pendingPeriodSec < 0.05 || this.pendingPeriodSec > 60) {
+      if (isNaN(this.pendingPeriodSec) || this.pendingPeriodSec < 0.2 || this.pendingPeriodSec > 60) {
         this.log(`Rejected invalid pending period: ${this.pendingPeriodSec}s`, "error");
         this.pendingPeriodSec = null;
         return false;
@@ -3216,6 +3249,8 @@ var ControlClient = class {
   initializePhasor() {
     this.phasor = 0;
     this.lastPhasorTime = performance.now() / 1e3;
+    this.currentStepIndex = 0;
+    this.previousStepIndex = Math.floor(this.phasor * this.stepsPerCycle);
     this.updatePhasorTicks();
     this.startPhasorUpdate();
     this.updatePhasorDisplay();
@@ -3245,13 +3280,28 @@ var ControlClient = class {
       }
       const previousPhasor = this.phasor;
       this.phasor += phasorIncrement;
+      const prevStepIndex = Math.floor(previousPhasor * this.stepsPerCycle);
+      const currStepIndexBeforeWrap = Math.floor(this.phasor * this.stepsPerCycle);
       const eocCrossed = this.phasor >= 1;
-      if (this.phasor >= 1) {
+      if (eocCrossed) {
         this.phasor -= 1;
+      }
+      const currStepIndex = Math.floor(this.phasor * this.stepsPerCycle);
+      if (eocCrossed || currStepIndexBeforeWrap < prevStepIndex) {
+        this.currentStepIndex = 0;
         this.applyPendingTimingChanges();
         this.clearAllPendingChanges();
-        this.broadcastPhasor(currentTime, "eoc");
+        this.sendStepBeacon(0);
+      } else if (currStepIndex !== prevStepIndex) {
+        this.currentStepIndex = currStepIndex;
+        const stepSec = this.cycleLength / this.stepsPerCycle;
+        const stride = Math.max(1, Math.ceil(this.MIN_BEACON_INTERVAL_SEC / stepSec));
+        const latestStridedStep = Math.floor(currStepIndex / stride) * stride;
+        if (latestStridedStep >= prevStepIndex && latestStridedStep <= currStepIndex) {
+          this.sendStepBeacon(latestStridedStep);
+        }
       }
+      this.previousStepIndex = currStepIndex;
     }
     this.lastPhasorTime = currentTime;
     this.updatePhasorDisplay();
@@ -3280,20 +3330,28 @@ var ControlClient = class {
       this.phasorUpdateId = null;
     }
   }
-  broadcastPhasor(currentTime, reason = "continuous") {
+  sendStepBeacon(stepIndex) {
     if (!this.star) return;
+    const boundaryPhasor = stepIndex / this.stepsPerCycle;
+    const message = MessageBuilder.phasorSync(boundaryPhasor, null, this.stepsPerCycle, this.cycleLength, this.isPlaying);
+    this.star.broadcastToType("synth", message, "sync");
+    this.lastBroadcastTime = performance.now() / 1e3;
+  }
+  broadcastPhasor(currentTime, reason = "continuous", explicitPhasor = null) {
+    if (!this.star) return;
+    const phasorToSend = explicitPhasor !== null ? explicitPhasor : this.phasor;
     if (reason === "continuous") {
       if (!this.isPlaying) {
-        const timeSinceLastHeartbeat = currentTime - this.lastPausedHeartbeat;
+        const timeSinceLastHeartbeat = currentTime - this.lastPausedBeaconAt;
         if (timeSinceLastHeartbeat >= 1) {
-          const message2 = MessageBuilder.phasorSync(this.phasor, null, this.stepsPerCycle, this.cycleLength, this.isPlaying);
+          const message2 = MessageBuilder.phasorSync(phasorToSend, null, this.stepsPerCycle, this.cycleLength, this.isPlaying);
           const sent2 = this.star.broadcastToType("synth", message2, "sync");
-          this.lastPausedHeartbeat = currentTime;
+          this.lastPausedBeaconAt = currentTime;
         }
       }
       return;
     }
-    const message = MessageBuilder.phasorSync(this.phasor, null, this.stepsPerCycle, this.cycleLength, this.isPlaying);
+    const message = MessageBuilder.phasorSync(phasorToSend, null, this.stepsPerCycle, this.cycleLength, this.isPlaying);
     const sent = this.star.broadcastToType("synth", message, "sync");
     this.lastBroadcastTime = currentTime;
   }
@@ -3304,11 +3362,19 @@ var ControlClient = class {
       await this.initializeES8();
       this.elements.es8EnableBtn.textContent = "disable es-8";
       this.elements.es8EnableBtn.classList.add("active");
+      if (this.elements.es8Status) {
+        this.elements.es8Status.textContent = "enabled";
+        this.elements.es8Status.style.color = "#8f8";
+      }
       this.log("ES-8 enabled - CV output active", "success");
     } else {
       this.shutdownES8();
       this.elements.es8EnableBtn.textContent = "enable es-8";
       this.elements.es8EnableBtn.classList.remove("active");
+      if (this.elements.es8Status) {
+        this.elements.es8Status.textContent = "disabled";
+        this.elements.es8Status.style.color = "#f0f0f0";
+      }
       this.log("ES-8 disabled", "info");
     }
   }
@@ -3401,7 +3467,7 @@ var ControlClient = class {
           console.log("\u{1F504} Triggering EOC event - playing from reset position");
           const eocMessage = MessageBuilder.jumpToEOC();
           this.star.broadcastToType("synth", eocMessage, "control");
-          this.broadcastPhasor(performance.now() / 1e3, "bootstrap");
+          this.sendStepBeacon(Math.floor(this.phasor * this.stepsPerCycle));
         }
         break;
       case "pause":
@@ -3475,6 +3541,8 @@ var ControlClient = class {
       this.updateParameterVisualFeedback(paramName);
     }
     this.pendingParameterChanges.clear();
+    this.pendingPeriodSec = null;
+    this.pendingStepsPerCycle = null;
   }
   resolveParameterValues(paramName, paramState) {
     if (paramState.interpolation === "step") {
@@ -3531,7 +3599,10 @@ var ControlClient = class {
   }
   handleReset() {
     console.log("Reset phasor");
+    this.applyPendingTimingChanges();
     this.phasor = 0;
+    this.currentStepIndex = 0;
+    this.previousStepIndex = 0;
     this.lastPhasorTime = performance.now() / 1e3;
     this.updatePhasorDisplay();
     this.isPlaying = false;
@@ -3540,7 +3611,7 @@ var ControlClient = class {
       const message = MessageBuilder.jumpToEOC();
       this.star.broadcastToType("synth", message, "control");
     }
-    this.broadcastPhasor(performance.now() / 1e3, "transport");
+    this.sendStepBeacon(0);
     this.log("Global phasor reset to 0.0", "info");
   }
   async connectToNetwork() {
@@ -3556,12 +3627,8 @@ var ControlClient = class {
       const protocol = globalThis.location.protocol === "https:" ? "wss:" : "ws:";
       const port = globalThis.location.port ? `:${globalThis.location.port}` : "";
       const signalingUrl = `${protocol}//${globalThis.location.hostname}${port}/ws`;
-      await this.star.connect(signalingUrl, this.forceTakeover);
-      if (this.forceTakeover) {
-        this.updateConnectionStatus("active");
-      } else {
-        this.updateConnectionStatus("inactive");
-      }
+      await this.star.connect(signalingUrl);
+      this.updateConnectionStatus("connected");
       this._updateUIState();
       this.log("Connected to network successfully", "success");
     } catch (error) {
@@ -3576,6 +3643,11 @@ var ControlClient = class {
   setupStarEventHandlers() {
     this.star.addEventListener("became-leader", () => {
       this.log("Became network leader", "success");
+      this._updateUIState();
+    });
+    this.star.addEventListener("controller-active", (event) => {
+      this.log("Controller is now active", "success");
+      this.updateConnectionStatus("active");
       this._updateUIState();
     });
     this.star.addEventListener("peer-connected", (event) => {
@@ -3666,11 +3738,7 @@ var ControlClient = class {
   updateConnectionStatus(status) {
     const statusElement = this.elements.connectionStatus;
     const valueElement = this.elements.connectionValue;
-    const takeoverSection = this.elements.takeoverSection;
     statusElement.classList.remove("connected", "syncing", "active", "inactive", "kicked", "error");
-    if (takeoverSection) {
-      takeoverSection.style.display = "none";
-    }
     switch (status) {
       case "active":
         valueElement.textContent = "Active Controller \u2713";
@@ -3679,16 +3747,10 @@ var ControlClient = class {
       case "inactive":
         valueElement.textContent = "Inactive (view only)";
         statusElement.classList.add("inactive");
-        if (takeoverSection) {
-          takeoverSection.style.display = "block";
-        }
         break;
       case "kicked":
         valueElement.textContent = "Kicked (reload to retry)";
         statusElement.classList.add("kicked");
-        if (takeoverSection) {
-          takeoverSection.style.display = "block";
-        }
         break;
       case "connected":
         valueElement.textContent = "Connected";

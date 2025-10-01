@@ -9,20 +9,17 @@
 export interface GeneratorConfig {
   type: "periodic" | "normalised";
 
-  // Sequence behavior - how values are selected from the set
-  sequenceBehavior:
-    | "static"
-    | "ascending"
-    | "descending"
-    | "shuffle"
-    | "random";
+  // --- If type is 'normalised' (RBG) ---
+  // Sequence behavior for normalised generators only
+  sequenceBehavior?: "static" | "random";
+  range?: number | { min: number; max: number };
 
   // --- If type is 'periodic' (HRG) ---
   numerators?: string; // e.g., "1-3,5"
   denominators?: string; // e.g., "2,4"
-
-  // --- If type is 'normalised' (RBG) ---
-  range?: number | { min: number; max: number };
+  // Independent behaviors for numerator and denominator sequences
+  numeratorBehavior?: "static" | "ascending" | "descending" | "shuffle" | "random";
+  denominatorBehavior?: "static" | "ascending" | "descending" | "shuffle" | "random";
 }
 
 /**

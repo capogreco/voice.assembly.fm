@@ -33,7 +33,6 @@ class ControlClient {
   musicalState: IMusicalState;
   pendingMusicalState: IMusicalState;
   star: any; // WebRTC star connection
-  forceTakeover: boolean;
   peerId: string;
   phasor: number;
   periodSec: number;
@@ -182,10 +181,6 @@ class ControlClient {
             ...param.startValueGenerator,
             ...action.config,
           };
-          // Update baseValue if this is a periodic generator
-          if (param.startValueGenerator.type === "periodic") {
-            param.startValueGenerator.baseValue = param.baseValue;
-          }
         } else if (
           action.position === "end" && param.interpolation !== "step" &&
           param.endValueGenerator
@@ -195,10 +190,6 @@ class ControlClient {
             ...param.endValueGenerator,
             ...action.config,
           };
-          // Update baseValue if this is a periodic generator
-          if (param.endValueGenerator.type === "periodic") {
-            param.endValueGenerator.baseValue = param.baseValue;
-          }
         }
 
         break;
@@ -355,10 +346,6 @@ class ControlClient {
             ...param.startValueGenerator,
             ...action.config,
           };
-          // Update baseValue if this is a periodic generator
-          if (param.startValueGenerator.type === "periodic") {
-            param.startValueGenerator.baseValue = param.baseValue;
-          }
         } else if (
           action.position === "end" && param.interpolation !== "step" &&
           param.endValueGenerator
@@ -368,10 +355,6 @@ class ControlClient {
             ...param.endValueGenerator,
             ...action.config,
           };
-          // Update baseValue if this is a periodic generator
-          if (param.endValueGenerator.type === "periodic") {
-            param.endValueGenerator.baseValue = param.baseValue;
-          }
         }
         break;
       }
@@ -390,9 +373,6 @@ class ControlClient {
 
   constructor() {
     console.log("ControlClient constructor starting");
-    // Check for force takeover mode
-    const urlParams = new URLSearchParams(globalThis.location.search);
-    this.forceTakeover = urlParams.get("force") === "true";
 
     this.peerId = generatePeerId("ctrl");
     this.star = null;
@@ -413,6 +393,16 @@ class ControlClient {
     // EOC-staged timing changes
     this.pendingPeriodSec = null; // Pending period change
     this.pendingStepsPerCycle = null; // Pending steps change
+
+    // Period-Steps linkage system
+    this.stepRefSec = 0.2; // Reference step interval (≥0.2s)
+    this.linkStepsToPeriod = true; // Auto-compute steps from period
+    this.currentStepIndex = 0; // Track current step for boundary detection
+    this.previousStepIndex = 0; // For detecting step transitions
+    this.lastPausedBeaconAt = 0; // Track last paused beacon time
+
+    // Beacon stride constants
+    this.MIN_BEACON_INTERVAL_SEC = 0.2;
 
     // ES-8 Integration
     this.audioContext = null; // AudioContext for ES-8 CV output
@@ -448,8 +438,6 @@ class ControlClient {
       networkDiagnostics: document.getElementById("network-diagnostics"),
       // Removed peers status - now using synth count in connected synths panel
 
-      takeoverSection: document.getElementById("takeover-section"),
-      takeoverBtn: document.getElementById("force-takeover-btn"),
 
       manualModeBtn: document.getElementById("manual-mode-btn"),
 
@@ -473,6 +461,7 @@ class ControlClient {
 
       // ES-8 controls
       es8EnableBtn: document.getElementById("es8-enable-btn"),
+      es8Status: document.getElementById("es8-status"),
 
       // Parameter controls
       portamentoTime: document.getElementById("portamento-time"),
@@ -485,6 +474,9 @@ class ControlClient {
       synthCount: document.getElementById("synth-count"),
       debugLog: document.getElementById("debug-log"),
       clearLogBtn: document.getElementById("clear-log-btn"), // Note: removed from layout
+
+      // Period-Steps linkage controls
+      linkStepsCheckbox: document.getElementById("link-steps"),
 
       // Scene memory
       clearBanksBtn: document.getElementById("clear-banks-btn"),
@@ -520,13 +512,6 @@ class ControlClient {
       );
     }
 
-    // Takeover button
-    this.elements.takeoverBtn.addEventListener("click", () => {
-      if (confirm("Take control from the current active controller?")) {
-        const currentUrl = globalThis.location.href.split("?")[0];
-        globalThis.location.href = currentUrl + "?force=true";
-      }
-    });
 
     // Debug log
     // Clear log button (removed from layout)
@@ -565,6 +550,15 @@ class ControlClient {
     } else {
       console.error("❌ Re-resolve button not found in DOM");
     }
+
+    // Period-Steps linkage controls
+    if (this.elements.linkStepsCheckbox) {
+      this.elements.linkStepsCheckbox.addEventListener("change", (e) => {
+        this.linkStepsToPeriod = e.target.checked;
+        this.log(`Period-steps linkage: ${this.linkStepsToPeriod ? 'ON' : 'OFF'}`, "info");
+      });
+    }
+
 
     // Musical controls
     this.setupMusicalControls();
@@ -606,30 +600,70 @@ class ControlClient {
 
     // Period and steps inputs
     if (this.elements.periodInput) {
-      this.elements.periodInput.addEventListener("input", (e) => {
+      this.elements.periodInput.addEventListener("blur", (e) => {
         const newPeriod = parseFloat(e.target.value);
 
-        // Validate period is within safe bounds
-        if (isNaN(newPeriod) || newPeriod < 0.05 || newPeriod > 60) {
+        // Validate period is within safe bounds (now 0.2s minimum)
+        if (isNaN(newPeriod) || newPeriod < 0.2 || newPeriod > 60) {
           this.log(
-            `Invalid period: ${e.target.value}s (must be 0.05-60s)`,
+            `Invalid period: ${e.target.value}s (must be 0.2-60s)`,
             "error",
           );
           return;
         }
 
-        // Always apply timing changes at EOC
-        this.pendingPeriodSec = newPeriod;
-        this.log(`Period staged for EOC: ${newPeriod}s (pending)`, "info");
+        // Period→Steps linkage
+        if (this.linkStepsToPeriod) {
+          let targetSteps = Math.round(newPeriod / this.stepRefSec);
+          
+          // Clamp to [1, 256] - no step interval clamping (beacon stride handles network protection)
+          targetSteps = Math.max(1, Math.min(256, targetSteps));
+          
+          // Update steps input to show computed value
+          if (this.elements.stepsInput) {
+            this.elements.stepsInput.value = targetSteps.toString();
+          }
+          
+          // Stage both period and computed steps
+          this.pendingPeriodSec = newPeriod;
+          this.pendingStepsPerCycle = targetSteps;
+          
+          this.log(`Period staged: ${newPeriod}s, computed steps: ${targetSteps} (pending)`, "info");
+        } else {
+          // Only stage period change
+          this.pendingPeriodSec = newPeriod;
+          
+          this.log(`Period staged for EOC: ${newPeriod}s (pending)`, "info");
+        }
       });
     }
 
     if (this.elements.stepsInput) {
-      this.elements.stepsInput.addEventListener("input", (e) => {
-        const newSteps = parseInt(e.target.value);
-        // Always apply timing changes at EOC
+      this.elements.stepsInput.addEventListener("blur", (e) => {
+        let newSteps = parseInt(e.target.value);
+        
+        // Validate and clamp steps to [1, 256] - no step interval clamping
+        if (isNaN(newSteps) || newSteps < 1) {
+          newSteps = 1;
+        } else if (newSteps > 256) {
+          newSteps = 256;
+        }
+        
+        // Update input field if clamped
+        if (newSteps !== parseInt(e.target.value)) {
+          e.target.value = newSteps.toString();
+        }
+        
+        // Get current or pending period
+        const currentPeriod = this.pendingPeriodSec || this.periodSec;
+        
+        // Update reference step duration based on manual edit
+        this.stepRefSec = Math.max(0.2, currentPeriod / newSteps);
+        
+        // Stage steps change
         this.pendingStepsPerCycle = newSteps;
-        this.log(`Steps staged for EOC: ${newSteps} (pending)`, "info");
+        
+        this.log(`Steps staged: ${newSteps} (step ref: ${this.stepRefSec.toFixed(3)}s) (pending)`, "info");
       });
     }
 
@@ -798,13 +832,26 @@ class ControlClient {
           interpolation: interpolation,
         });
 
-        // When switching to cosine, copy start generator to end generator
+        // When switching to cosine, build end generator from start's selection fields
         if (interpolation === "cosine") {
           const param = this.pendingMusicalState[paramName];
-          if (param.startValueGenerator) {
-            param.endValueGenerator = JSON.parse(
-              JSON.stringify(param.startValueGenerator),
-            );
+          const start = param.startValueGenerator;
+          if (start) {
+            if (start.type === "normalised") {
+              param.endValueGenerator = {
+                type: "normalised",
+                range: start.range,
+                sequenceBehavior: "static"
+              };
+            } else if (start.type === "periodic") {
+              param.endValueGenerator = {
+                type: "periodic",
+                numerators: start.numerators,
+                denominators: start.denominators,
+                numeratorBehavior: start.numeratorBehavior || "static",
+                denominatorBehavior: start.denominatorBehavior || "static"
+              };
+            }
           }
         }
 
@@ -2423,7 +2470,7 @@ class ControlClient {
     if (this.pendingPeriodSec !== null) {
       // Validate pending period is within safe bounds
       if (
-        isNaN(this.pendingPeriodSec) || this.pendingPeriodSec < 0.05 ||
+        isNaN(this.pendingPeriodSec) || this.pendingPeriodSec < 0.2 ||
         this.pendingPeriodSec > 60
       ) {
         this.log(
@@ -2457,12 +2504,18 @@ class ControlClient {
       if (this.elements.stepsInput) {
         this.elements.stepsInput.value = this.stepsPerCycle.toString();
       }
+      
     }
   }
 
   initializePhasor() {
     this.phasor = 0.0;
     this.lastPhasorTime = performance.now() / 1000.0;
+    
+    // Initialize step indices to avoid spurious initial beacon
+    this.currentStepIndex = 0;
+    this.previousStepIndex = Math.floor(this.phasor * this.stepsPerCycle);
+    
     this.updatePhasorTicks();
     this.startPhasorUpdate();
     this.updatePhasorDisplay();
@@ -2510,22 +2563,51 @@ class ControlClient {
       const previousPhasor = this.phasor;
       this.phasor += phasorIncrement;
 
+      // Robust step boundary detection using integer indices
+      const prevStepIndex = Math.floor(previousPhasor * this.stepsPerCycle);
+      const currStepIndexBeforeWrap = Math.floor(this.phasor * this.stepsPerCycle);
+
       // Detect EOC (End of Cycle)
       const eocCrossed = this.phasor >= 1.0;
 
       // Wrap around at 1.0
-      if (this.phasor >= 1.0) {
+      if (eocCrossed) {
         this.phasor -= 1.0;
-
-        // Apply pending timing changes at EOC
-        this.applyPendingTimingChanges();
-
-        // Clear pending parameter changes at EOC (staged changes have been applied)
-        this.clearAllPendingChanges();
-
-        // Send EOC beacon
-        this.broadcastPhasor(currentTime, "eoc");
       }
+
+      // Calculate step index after wrapping for display purposes
+      const currStepIndex = Math.floor(this.phasor * this.stepsPerCycle);
+
+      // Handle step boundary crossings (use pre-wrap indices for EOC detection)
+      if (eocCrossed || currStepIndexBeforeWrap < prevStepIndex) {
+        // EOC wrapped - treat as step 0
+        this.currentStepIndex = 0;
+        
+        // Apply timing changes at EOC
+        this.applyPendingTimingChanges();
+        this.clearAllPendingChanges();
+        
+        // Send EOC beacon
+        this.sendStepBeacon(0);
+        
+      } else if (currStepIndex !== prevStepIndex) {
+        // Normal step boundary crossing
+        this.currentStepIndex = currStepIndex;
+        
+        
+        // Calculate stride with current timing (post-apply)
+        const stepSec = this.cycleLength / this.stepsPerCycle;
+        const stride = Math.max(1, Math.ceil(this.MIN_BEACON_INTERVAL_SEC / stepSec));
+        
+        // Find latest boundary divisible by stride (handle large jumps)
+        const latestStridedStep = Math.floor(currStepIndex / stride) * stride;
+        if (latestStridedStep >= prevStepIndex && latestStridedStep <= currStepIndex) {
+          this.sendStepBeacon(latestStridedStep);
+        }
+      }
+      
+      // Update previous step index
+      this.previousStepIndex = currStepIndex;
     }
 
     this.lastPhasorTime = currentTime;
@@ -2549,6 +2631,7 @@ class ControlClient {
     }
   }
 
+
   startPhasorUpdate() {
     const updateLoop = () => {
       this.updatePhasor();
@@ -2564,17 +2647,36 @@ class ControlClient {
     }
   }
 
-  broadcastPhasor(currentTime, reason = "continuous") {
+  sendStepBeacon(stepIndex: number) {
     if (!this.star) return;
+    
+    const boundaryPhasor = stepIndex / this.stepsPerCycle;
+    const message = MessageBuilder.phasorSync(
+      boundaryPhasor,
+      null, // cpm omitted (legacy)
+      this.stepsPerCycle,
+      this.cycleLength,
+      this.isPlaying
+    );
+    
+    this.star.broadcastToType("synth", message, "sync");
+    this.lastBroadcastTime = performance.now() / 1000;
+  }
+
+  broadcastPhasor(currentTime, reason = "continuous", explicitPhasor = null) {
+    if (!this.star) return;
+
+    // Determine phasor value to use
+    const phasorToSend = explicitPhasor !== null ? explicitPhasor : this.phasor;
 
     // EOC-only broadcasting: only send at specific events, not continuously
     if (reason === "continuous") {
       // Send paused heartbeat at 1 Hz when not playing
       if (!this.isPlaying) {
-        const timeSinceLastHeartbeat = currentTime - this.lastPausedHeartbeat;
+        const timeSinceLastHeartbeat = currentTime - this.lastPausedBeaconAt;
         if (timeSinceLastHeartbeat >= 1.0) { // 1 Hz heartbeat
           const message = MessageBuilder.phasorSync(
-            this.phasor,
+            phasorToSend,
             null, // cpm omitted (legacy)
             this.stepsPerCycle,
             this.cycleLength,
@@ -2582,15 +2684,15 @@ class ControlClient {
           );
 
           const sent = this.star.broadcastToType("synth", message, "sync");
-          this.lastPausedHeartbeat = currentTime;
+          this.lastPausedBeaconAt = currentTime;
         }
       }
       return; // No continuous broadcasts while playing
     }
 
-    // Send beacon for specific events (EOC, bootstrap, transport changes)
+    // Send beacon for specific events (step, EOC, bootstrap, transport changes)
     const message = MessageBuilder.phasorSync(
-      this.phasor,
+      phasorToSend,
       null, // cpm omitted (legacy)
       this.stepsPerCycle,
       this.cycleLength,
@@ -2609,11 +2711,19 @@ class ControlClient {
       await this.initializeES8();
       this.elements.es8EnableBtn.textContent = "disable es-8";
       this.elements.es8EnableBtn.classList.add("active");
+      if (this.elements.es8Status) {
+        this.elements.es8Status.textContent = "enabled";
+        this.elements.es8Status.style.color = "#8f8";
+      }
       this.log("ES-8 enabled - CV output active", "success");
     } else {
       this.shutdownES8();
       this.elements.es8EnableBtn.textContent = "enable es-8";
       this.elements.es8EnableBtn.classList.remove("active");
+      if (this.elements.es8Status) {
+        this.elements.es8Status.textContent = "disabled";
+        this.elements.es8Status.style.color = "#f0f0f0";
+      }
       this.log("ES-8 disabled", "info");
     }
   }
@@ -2738,8 +2848,8 @@ class ControlClient {
           const eocMessage = MessageBuilder.jumpToEOC();
           this.star.broadcastToType("synth", eocMessage, "control");
 
-          // Send bootstrap beacon on Play
-          this.broadcastPhasor(performance.now() / 1000.0, "bootstrap");
+          // Send bootstrap beacon immediately (ignore stride)
+          this.sendStepBeacon(Math.floor(this.phasor * this.stepsPerCycle));
         }
         break;
       case "pause":
@@ -2839,6 +2949,10 @@ class ControlClient {
       this.updateParameterVisualFeedback(paramName);
     }
     this.pendingParameterChanges.clear();
+    
+    // Clear pending timing changes
+    this.pendingPeriodSec = null;
+    this.pendingStepsPerCycle = null;
   }
 
   resolveParameterValues(
@@ -2939,8 +3053,14 @@ class ControlClient {
 
   handleReset() {
     console.log("Reset phasor");
+    
+    // Apply any pending timing changes immediately
+    this.applyPendingTimingChanges();
+    
     // Reset global phasor to 0.0
     this.phasor = 0.0;
+    this.currentStepIndex = 0;
+    this.previousStepIndex = 0;
     this.lastPhasorTime = performance.now() / 1000.0;
     this.updatePhasorDisplay();
 
@@ -2954,8 +3074,8 @@ class ControlClient {
       this.star.broadcastToType("synth", message, "control");
     }
 
-    // Broadcast current phasor state
-    this.broadcastPhasor(performance.now() / 1000.0, "transport");
+    // Send beacon for immediate reset
+    this.sendStepBeacon(0);
 
     this.log("Global phasor reset to 0.0", "info");
   }
@@ -2989,16 +3109,10 @@ class ControlClient {
         : "";
       const signalingUrl =
         `${protocol}//${globalThis.location.hostname}${port}/ws`;
-      await this.star.connect(signalingUrl, this.forceTakeover);
+      await this.star.connect(signalingUrl);
 
-      // Determine controller status based on force takeover flag
-      if (this.forceTakeover) {
-        // If we used force takeover and weren't kicked, we're the active controller
-        this.updateConnectionStatus("active");
-      } else {
-        // Connected without force takeover means we're inactive (view-only)
-        this.updateConnectionStatus("inactive");
-      }
+      // Initially connected - status will be determined by server response
+      this.updateConnectionStatus("connected");
 
       this._updateUIState();
 
@@ -3019,6 +3133,12 @@ class ControlClient {
   setupStarEventHandlers() {
     this.star.addEventListener("became-leader", () => {
       this.log("Became network leader", "success");
+      this._updateUIState();
+    });
+
+    this.star.addEventListener("controller-active", (event) => {
+      this.log("Controller is now active", "success");
+      this.updateConnectionStatus("active");
       this._updateUIState();
     });
 
@@ -3154,7 +3274,6 @@ class ControlClient {
   updateConnectionStatus(status) {
     const statusElement = this.elements.connectionStatus;
     const valueElement = this.elements.connectionValue;
-    const takeoverSection = this.elements.takeoverSection;
 
     // Remove all status classes
     statusElement.classList.remove(
@@ -3166,10 +3285,6 @@ class ControlClient {
       "error",
     );
 
-    // Hide takeover section by default (if it exists)
-    if (takeoverSection) {
-      takeoverSection.style.display = "none";
-    }
 
     switch (status) {
       case "active":
@@ -3179,16 +3294,10 @@ class ControlClient {
       case "inactive":
         valueElement.textContent = "Inactive (view only)";
         statusElement.classList.add("inactive");
-        if (takeoverSection) {
-          takeoverSection.style.display = "block";
-        }
         break;
       case "kicked":
         valueElement.textContent = "Kicked (reload to retry)";
         statusElement.classList.add("kicked");
-        if (takeoverSection) {
-          takeoverSection.style.display = "block";
-        }
         break;
       case "connected":
         valueElement.textContent = "Connected";

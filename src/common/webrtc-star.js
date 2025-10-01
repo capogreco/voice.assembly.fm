@@ -363,6 +363,13 @@ export class WebRTCStar extends EventTarget {
           if (this.verbose) {
             console.log("📋 Received synths list:", message.synths);
           }
+          
+          // Dispatch event to indicate this controller is now active
+          this.dispatchEvent(
+            new CustomEvent("controller-active", {
+              detail: { synths: message.synths },
+            }),
+          );
           // Ctrl initiates connections to all synths
           for (const synthId of message.synths) {
             if (!this.peers.has(synthId)) {

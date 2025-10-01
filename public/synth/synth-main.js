@@ -1050,7 +1050,6 @@ class SynthClient {
         stepsPerCycle: this.receivedStepsPerCycle,
       };
 
-      // Treat beacon as EOC marker - schedule next cycle reset
       // Estimate message arrival time accounting for network delay
       const estimatedSendTime = messageTimestamp / 1000.0; // Convert to seconds
       const estimatedArrivalDelay = 0.01; // Assume ~10ms network delay
@@ -1060,24 +1059,46 @@ class SynthClient {
       this.lastBeaconTime = beaconAudioTime;
       this.lastBeaconPhasor = this.receivedPhasor;
 
-      // Schedule next cycle reset
-      this.nextCycleTime = beaconAudioTime + this.receivedCycleLength;
+      // Detect beacon type: EOC vs step beacon
+      const isEOC = Math.abs(this.receivedPhasor) < 0.001; // phasor ≈ 0
 
-      // Send EOC scheduling to phasor worklet
-      if (this.phasorWorklet) {
-        this.phasorWorklet.port.postMessage({
-          type: "schedule-eoc-reset",
-          nextCycleTime: this.nextCycleTime,
-          cycleLength: this.receivedCycleLength,
-          correctionFactor: this.pllCorrectionFactor,
-        });
+      if (isEOC) {
+        // EOC beacon - schedule next cycle reset
+        this.nextCycleTime = beaconAudioTime + this.receivedCycleLength;
+
+        // Send EOC scheduling to phasor worklet
+        if (this.phasorWorklet) {
+          this.phasorWorklet.port.postMessage({
+            type: "schedule-eoc-reset",
+            nextCycleTime: this.nextCycleTime,
+            cycleLength: this.receivedCycleLength,
+            correctionFactor: this.pllCorrectionFactor,
+          });
+        }
+
+        console.log(
+          `🎯 EOC beacon: scheduled next cycle at audio time ${
+            this.nextCycleTime.toFixed(3)
+          }s`,
+        );
+      } else {
+        // Step beacon - apply gentle PLL correction
+        const expectedStepIndex = Math.round(this.receivedPhasor * this.receivedStepsPerCycle);
+        const stepPhase = expectedStepIndex / this.receivedStepsPerCycle;
+
+        // Send step-aligned phase correction to worklet
+        if (this.phasorWorklet) {
+          this.phasorWorklet.port.postMessage({
+            type: "phase-correction",
+            targetPhase: stepPhase,
+            correctionFactor: this.pllCorrectionFactor * 0.5, // Gentler correction for steps
+          });
+        }
+
+        console.log(
+          `🔄 Step beacon: step ${expectedStepIndex} (phase ${stepPhase.toFixed(3)})`,
+        );
       }
-
-      console.log(
-        `🎯 EOC beacon: scheduled next cycle at audio time ${
-          this.nextCycleTime.toFixed(3)
-        }s`,
-      );
     } else {
       // Not playing - cache timing but don't advance
       this.cachedTimingForPause = {
@@ -1958,15 +1979,6 @@ class SynthClient {
   buildSceneSnapshot() {
     const program = JSON.parse(JSON.stringify(this.programConfig || {}));
 
-    // Strip any generator.baseValue (canonical: param-level only)
-    for (const param in program) {
-      if (program[param].startValueGenerator?.baseValue) {
-        delete program[param].startValueGenerator.baseValue;
-      }
-      if (program[param].endValueGenerator?.baseValue) {
-        delete program[param].endValueGenerator.baseValue;
-      }
-    }
 
     // Capture complete HRG state
     const hrg = {};

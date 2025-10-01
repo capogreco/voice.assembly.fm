@@ -139,7 +139,7 @@
       }
 
       .peer-item.ctrl {
-        color: #88f;
+        color: #888;
       }
 
       /* Phasor controls styling */
@@ -375,20 +375,6 @@
         margin: 0 6px;
       }
 
-      /* Control buttons in parameters */
-      .param-actions {
-        margin-top: 20px;
-        padding-top: 15px;
-        border-top: 1px solid #222;
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-      }
-
-      .param-actions .button {
-        flex: 1;
-        min-width: 120px;
-      }
 
       /* Scene memory styling */
       .scene-grid {
@@ -494,6 +480,11 @@
         border: 1px solid #444;
       }
 
+      /* Black radio button styling */
+      input[type="radio"] {
+        accent-color: #333;
+      }
+
       /* Dark slider styling */
       .dark-slider {
         -webkit-appearance: none;
@@ -552,10 +543,24 @@
 
       <!-- Row 1: Phasor Panel (wide, center) -->
       <div class="panel">
-        <h2>phasor</h2>
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px;">
+          <h2 style="margin: 0;">phasor</h2>
+          <div style="display: flex; flex-direction: column; gap: 8px; align-items: flex-end;">
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <span style="color: #f0f0f0; font-size: 10px;">es-8: </span>
+              <span style="color: #f0f0f0; font-size: 10px;" id="es8-status">disabled</span>
+              <button class="button" id="es8-enable-btn">enable es-8</button>
+            </div>
+            <div style="display: flex; gap: 6px;">
+              <button id="play-btn" class="button">play</button>
+              <button id="stop-btn" class="button">stop</button>
+              <button id="reset-btn" class="button">reset</button>
+            </div>
+          </div>
+        </div>
 
-        <!-- Period and Steps Horizontal Layout -->
-        <div class="timing-controls">
+        <!-- Row 1: Timing Configuration -->
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
           <div class="timing-input">
             <label for="period-seconds">period</label>
             <input id="period-seconds" type="number" step="0.01" min="0.05" max="60" value="2.0" style="width: 60px; margin-left: 5px;">
@@ -564,15 +569,12 @@
             <label for="steps-per-cycle">steps</label>
             <input id="steps-per-cycle" type="number" step="1" min="1" value="16" style="width: 50px; margin-left: 5px;">
           </div>
+          <label style="font-size: 10px; color: #666;">
+            <input type="checkbox" id="link-steps" checked style="margin-right: 4px;">
+            link
+          </label>
         </div>
 
-        <!-- Transport Controls -->
-        <div class="transport-controls">
-          <button id="play-btn" class="button">play</button>
-          <button id="stop-btn" class="button">stop</button>
-          <button id="reset-btn" class="button">reset</button>
-          <button class="button" id="es8-enable-btn">enable es-8</button>
-        </div>
 
         <div class="param-control">
           <div class="phasor-value" id="phasor-display">0.000</div>
@@ -599,16 +601,18 @@
           </div>
         </div>
 
-        <div class="control-section">
-          <button class="button" id="calibration-btn">calibration mode</button>
-          <button class="button" id="force-takeover-btn" style="margin-top: 8px;">force takeover</button>
-        </div>
       </div>
 
       <!-- Scene Memory Panel (under system, right column) -->
       <div class="panel narrow">
-        <h2>scene memory</h2>
-        <div class="control-section">
+        <!-- Modes (no title) -->
+        <div style="margin-bottom: 15px;">
+          <button class="button" id="calibration-btn" style="width: 100%; font-size: 10px;">calibration mode</button>
+        </div>
+        
+        <!-- Scenes section -->
+        <div>
+          <h2>scenes</h2>
           <div class="scene-grid">
             <div class="scene-row">
               <button class="scene-btn" data-location="0">0</button>
@@ -635,9 +639,20 @@
 
       <!-- Row 2: Parameters Panel (wide, center) -->
       <div class="panel">
-        <div style="margin-bottom: 15px; text-align: center;">
-          <span style="color: #f0f0f0; font-size: 10px;">synthesis: </span>
-          <span style="color: #f0f0f0; font-size: 10px;" id="synthesis-status">inactive</span>
+        <div style="margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <span style="color: #f0f0f0; font-size: 10px;">synthesis: </span>
+            <span style="color: #f0f0f0; font-size: 10px;" id="synthesis-status">inactive</span>
+          </div>
+          <div style="display: flex; gap: 6px; align-items: center;">
+            <div class="timing-checkbox">
+              <input type="checkbox" id="bulk-mode-checkbox">
+              <label for="bulk-mode-checkbox">bulk mode</label>
+            </div>
+            <button class="button" id="apply-bulk-btn" style="display: none;">apply bulk</button>
+            <button class="button" id="reresolve-btn">re-resolve</button>
+            <button class="button manual-mode-btn" id="manual-mode-btn">enable synthesis</button>
+          </div>
         </div>
 
         <div class="param-control compact-control">
@@ -1232,21 +1247,12 @@
             </select>
           </div>
           
-        <!-- Parameter Control Actions -->
-        <div class="param-actions">
-          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-            <div class="portamento-control">
-              <label for="portamento-time">portamento</label>
-              <input id="portamento-time" type="range" min="0" max="1" step="0.001" value="0.5" style="width: 200px;" class="dark-slider">
-              <span id="portamento-value">100ms</span>
-            </div>
-            <div class="timing-checkbox">
-              <input type="checkbox" id="bulk-mode-checkbox">
-              <label for="bulk-mode-checkbox">bulk mode</label>
-            </div>
-            <button class="button" id="apply-bulk-btn" style="display: none;">apply bulk</button>
-            <button class="button" id="reresolve-btn">re-resolve</button>
-            <button class="button manual-mode-btn" id="manual-mode-btn">enable synthesis</button>
+        <!-- Portamento Control -->
+        <div style="margin-top: 20px;">
+          <div class="portamento-control">
+            <label for="portamento-time">portamento</label>
+            <input id="portamento-time" type="range" min="0" max="1" step="0.001" value="0.5" style="width: 200px;" class="dark-slider">
+            <span id="portamento-value">100ms</span>
           </div>
         </div>
       </div>
