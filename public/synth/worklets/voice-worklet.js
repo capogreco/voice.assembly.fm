@@ -701,7 +701,7 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
       }
 
       // Skip synthesis if inactive or silent
-      if (!active || freqFinal <= 0 || amplitude <= 0) {
+      if (!active || freqFinal <= 0) {
         outputChannel[sample] = 0;
         if (outputDuplicate) outputDuplicate[sample] = 0;
         if (f1FullChannel) f1FullChannel[sample] = 0;
