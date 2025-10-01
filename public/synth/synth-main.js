@@ -93,6 +93,11 @@ class SynthClient {
     this.nextCycleTime = null; // When the next cycle should start
     this.schedulerTimerId = null; // setTimeout ID for scheduler
 
+    // EOC beacon PLL state
+    this.lastBeaconTime = null; // AudioContext time when last beacon arrived
+    this.lastBeaconPhasor = null; // Phasor value from last beacon
+    this.cachedTimingForPause = null; // Cache timing when paused
+
     // Rhythm settings
     this.rhythmEnabled = false; // Enable/disable rhythmic events
     this.stepsPerCycle = 16; // Number of steps per cycle (16 = 16th notes)
@@ -487,15 +492,19 @@ class SynthClient {
         startValue: message.value,
         endValue: message.value,
         interpolation: "step",
-        portamentoMs: 15  // Convert 0.015s to ms
+        portamentoMs: 15, // Convert 0.015s to ms
       });
-      console.log(`🔌 Route for '${message.param}': Main Thread -> Voice (SET_ENV)`);
+      console.log(
+        `🔌 Route for '${message.param}': Main Thread -> Voice (SET_ENV)`,
+      );
     }
   }
 
   isReadyToReceiveParameters() {
     if (!this.voiceNode) {
-      console.warn("⚠️ Cannot apply musical parameters: voice worklet not ready");
+      console.warn(
+        "⚠️ Cannot apply musical parameters: voice worklet not ready",
+      );
       return false;
     }
 
@@ -604,14 +613,14 @@ class SynthClient {
           interpolation: cfg.interpolation,
           portamentoMs: 0, // Immediate, no portamento
         };
-        
+
         // Update tracking
-        this.lastResolvedValues[paramName] = cfg.interpolation === "step" 
-          ? resolved.startValue 
+        this.lastResolvedValues[paramName] = cfg.interpolation === "step"
+          ? resolved.startValue
           : resolved.endValue;
       }
 
-      // Send batch envelope update to voice worklet  
+      // Send batch envelope update to voice worklet
       this.voiceNode.port.postMessage({
         type: "SET_ALL_ENV",
         v: 1,
@@ -654,14 +663,14 @@ class SynthClient {
         interpolation: cfg.interpolation,
         portamentoMs: portamentoTime,
       };
-      
+
       // Update tracking
-      this.lastResolvedValues[paramName] = cfg.interpolation === "step" 
-        ? resolved.startValue 
+      this.lastResolvedValues[paramName] = cfg.interpolation === "step"
+        ? resolved.startValue
         : resolved.endValue;
     }
 
-    // Send batch envelope update to voice worklet  
+    // Send batch envelope update to voice worklet
     this.voiceNode.port.postMessage({
       type: "SET_ALL_ENV",
       v: 1,
@@ -986,6 +995,101 @@ class SynthClient {
     // Calculate phasor rate
     this.phasorRate = 1.0 / this.receivedCycleLength;
 
+    // EOC Beacon PLL Implementation
+    // Guard against null audioContext during initialization
+    if (!this.audioContext) {
+      console.log("⏳ Audio context not ready, deferring EOC beacon PLL");
+      // Fall back to legacy behavior until audio context is available
+      
+      // Update phasor worklet parameters when ready
+      if (this.phasorWorklet) {
+        this.phasorWorklet.parameters.get("cycleLength").value = this.receivedCycleLength;
+        this.phasorWorklet.parameters.get("stepsPerCycle").value = this.receivedStepsPerCycle;
+        
+        if (this.receivedIsPlaying) {
+          this.phasorWorklet.port.postMessage({ type: "start" });
+        } else {
+          this.phasorWorklet.port.postMessage({ type: "stop" });
+        }
+      }
+      
+      // Continue with rest of method for compatibility
+      if (this.unifiedSynthNode && this.unifiedSynthNode.parameters.has("isPlaying")) {
+        this.unifiedSynthNode.parameters.get("isPlaying").value = this.receivedIsPlaying ? 1 : 0;
+      }
+      
+      if (this.programNode) {
+        const periodDisplay = message.cpm ? `${message.cpm} CPM` : `${this.receivedCycleLength}s period`;
+        console.log(`⏰ Received phasor sync: ${periodDisplay}`);
+        
+        const newTimingConfig = {
+          cpm: message.cpm,
+          stepsPerCycle: message.stepsPerCycle,
+          cycleLength: message.cycleLength,
+          phasor: message.phasor,
+        };
+        
+        this.timingConfig = newTimingConfig;
+      }
+      
+      this.updatePhasorWorklet();
+      
+      if (!this.phasorUpdateId) {
+        this.startPhasorInterpolation();
+      }
+      return;
+    }
+    
+    const currentAudioTime = this.audioContext.currentTime;
+    const messageTimestamp = message.timestamp || performance.now();
+
+    if (this.receivedIsPlaying) {
+      // Cache timing for later use
+      this.cachedTimingForPause = {
+        cycleLength: this.receivedCycleLength,
+        stepsPerCycle: this.receivedStepsPerCycle,
+      };
+
+      // Treat beacon as EOC marker - schedule next cycle reset
+      // Estimate message arrival time accounting for network delay
+      const estimatedSendTime = messageTimestamp / 1000.0; // Convert to seconds
+      const estimatedArrivalDelay = 0.01; // Assume ~10ms network delay
+      const beaconAudioTime = currentAudioTime - estimatedArrivalDelay;
+
+      // Store beacon timing for PLL
+      this.lastBeaconTime = beaconAudioTime;
+      this.lastBeaconPhasor = this.receivedPhasor;
+
+      // Schedule next cycle reset
+      this.nextCycleTime = beaconAudioTime + this.receivedCycleLength;
+
+      // Send EOC scheduling to phasor worklet
+      if (this.phasorWorklet) {
+        this.phasorWorklet.port.postMessage({
+          type: "schedule-eoc-reset",
+          nextCycleTime: this.nextCycleTime,
+          cycleLength: this.receivedCycleLength,
+          correctionFactor: this.pllCorrectionFactor,
+        });
+      }
+
+      console.log(
+        `🎯 EOC beacon: scheduled next cycle at audio time ${
+          this.nextCycleTime.toFixed(3)
+        }s`,
+      );
+    } else {
+      // Not playing - cache timing but don't advance
+      this.cachedTimingForPause = {
+        cycleLength: this.receivedCycleLength,
+        stepsPerCycle: this.receivedStepsPerCycle,
+      };
+
+      console.log(
+        `⏸️ Paused heartbeat: cached timing (${this.receivedCycleLength}s cycle)`,
+      );
+    }
+
     // Update phasor worklet parameters
     if (this.phasorWorklet) {
       this.phasorWorklet.parameters.get("cycleLength").value =
@@ -1030,15 +1134,12 @@ class SynthClient {
 
       // Store the new timing config
       this.timingConfig = newTimingConfig;
-
-      // Scheduler disabled - using phasor worklet cycle resets instead
-      // console.log(`📡 Timing config updated, relying on phasor worklet cycle resets`);
     }
 
     // Update legacy phasor worklet (if still needed)
     this.updatePhasorWorklet();
 
-    // Send phase correction to worklet (PLL behavior)
+    // Apply gentle PLL correction between beacons
     this.sendPhaseCorrection();
 
     // Start interpolation if not already running (for phase display)
@@ -1232,8 +1333,9 @@ class SynthClient {
     if (!this.voiceNode) return;
 
     // Calculate sample-accurate reset time for boundary snapping
-    const resetTime = this.audioContext.currentTime - 
-      ((resetData.blockSize - resetData.sampleIndex) / this.audioContext.sampleRate);
+    const resetTime = this.audioContext.currentTime -
+      ((resetData.blockSize - resetData.sampleIndex) /
+        this.audioContext.sampleRate);
 
     // Validate program config before EOC resolution
     if (!this.programConfig || Object.keys(this.programConfig).length === 0) {
@@ -1245,14 +1347,13 @@ class SynthClient {
       return;
     }
 
-
     // Apply staged scene (takes precedence over re-resolve)
     if (this._pendingSceneAtEoc) {
       if (this.voiceNode) {
         this.voiceNode.port.postMessage({
           type: "SET_ALL_ENV",
           v: 1,
-          params: this._pendingSceneAtEoc
+          params: this._pendingSceneAtEoc,
         });
         console.log("🎬 Applied staged scene at EOC boundary");
       }
@@ -1319,34 +1420,39 @@ class SynthClient {
     // Regular EOC: always resolve and push ALL parameters to Voice (snap at boundary)
     const resolved = this._resolveProgram(this.programConfig);
     const payload = this._toEnvPayload(resolved, 0);
-    
+
     // ALWAYS send batch envelope update to voice worklet
     this.voiceNode?.port.postMessage({
       type: "SET_ALL_ENV",
       v: 1,
-      params: payload
+      params: payload,
     });
 
     console.log(`[EOC] Sent envelope updates to voice worklet:`, payload);
   }
 
   sendPhaseCorrection() {
-    if (!this.phasorWorklet || !this.pllEnabled) {
+    if (!this.phasorWorklet || !this.pllEnabled || !this.receivedIsPlaying) {
       return;
     }
 
-    // Calculate what the ctrl's phasor should be right now
-    const currentTime = performance.now();
-    const timeSinceMessage = (currentTime - this.lastPhasorMessage) / 1000.0;
-    const expectedCtrlPhasor =
-      (this.receivedPhasor + (timeSinceMessage * this.phasorRate)) % 1.0;
+    // EOC Beacon PLL: apply gentle correction based on expected phase
+    if (this.lastBeaconTime !== null) {
+      const currentAudioTime = this.audioContext.currentTime;
+      const timeSinceBeacon = currentAudioTime - this.lastBeaconTime;
 
-    // Send phase correction to worklet
-    this.phasorWorklet.port.postMessage({
-      type: "phase-correction",
-      targetPhase: expectedCtrlPhasor,
-      correctionFactor: this.pllCorrectionFactor,
-    });
+      // Calculate expected phasor based on beacon timing
+      const expectedPhase =
+        (this.lastBeaconPhasor + (timeSinceBeacon / this.receivedCycleLength)) %
+        1.0;
+
+      // Send gentle correction to worklet
+      this.phasorWorklet.port.postMessage({
+        type: "phase-correction",
+        targetPhase: expectedPhase,
+        correctionFactor: this.pllCorrectionFactor,
+      });
+    }
   }
 
   onStepTrigger(stepNumber, stepsPerCycle) {
@@ -1750,7 +1856,7 @@ class SynthClient {
 
     // Resolve fresh values using stochastic generators
     const resolvedParams = this._resolveProgram(this.programConfig);
-    
+
     // Send new envelopes to voice worklet (instant portamento)
     this.voiceNode.port.postMessage({
       type: "SET_ALL_ENV",
@@ -1764,7 +1870,11 @@ class SynthClient {
       this.phasorWorklet.port.postMessage({ type: "reset" });
     }
 
-    console.log(`⚡ Sent immediate re-initialization to voice worklet: ${Object.keys(resolvedParams).length} parameters`);
+    console.log(
+      `⚡ Sent immediate re-initialization to voice worklet: ${
+        Object.keys(resolvedParams).length
+      } parameters`,
+    );
 
     // Update status
     this.updateSynthesisStatus(
@@ -1847,7 +1957,7 @@ class SynthClient {
   // Build complete scene snapshot with versioned schema
   buildSceneSnapshot() {
     const program = JSON.parse(JSON.stringify(this.programConfig || {}));
-    
+
     // Strip any generator.baseValue (canonical: param-level only)
     for (const param in program) {
       if (program[param].startValueGenerator?.baseValue) {
@@ -1857,7 +1967,7 @@ class SynthClient {
         delete program[param].endValueGenerator.baseValue;
       }
     }
-    
+
     // Capture complete HRG state
     const hrg = {};
     for (const [param, state] of Object.entries(this.hrgState || {})) {
@@ -1869,7 +1979,7 @@ class SynthClient {
           indexN: state.start.indexN,
           indexD: state.start.indexD,
           orderN: state.start.orderN || null,
-          orderD: state.start.orderD || null
+          orderD: state.start.orderD || null,
         };
       }
       if (state.end) {
@@ -1879,16 +1989,16 @@ class SynthClient {
           indexN: state.end.indexN,
           indexD: state.end.indexD,
           orderN: state.end.orderN || null,
-          orderD: state.end.orderD || null
+          orderD: state.end.orderD || null,
         };
       }
     }
-    
+
     // Capture RBG cache
     const rbg = { ...(this.rbgState || {}) };
-    
+
     return {
-      v: 1,  // Version for future compatibility
+      v: 1, // Version for future compatibility
       program,
       stochastic: { hrg, rbg },
       meta: {
@@ -1896,8 +2006,8 @@ class SynthClient {
         sampleRate: this.audioContext?.sampleRate || 48000,
         synthesisActive: this.synthesisActive,
         isPlaying: this.isPlaying,
-        createdAt: Date.now()
-      }
+        createdAt: Date.now(),
+      },
     };
   }
 
@@ -1906,23 +2016,25 @@ class SynthClient {
     if (!snapshot || snapshot.v !== 1) {
       throw new Error("Unsupported scene snapshot version");
     }
-    
+
     // 1) Restore program
     this.programConfig = JSON.parse(JSON.stringify(snapshot.program));
-    
+
     // 2) Restore HRG with bounds clamping
     this.hrgState = {};
-    for (const [param, positions] of Object.entries(snapshot.stochastic.hrg || {})) {
+    for (
+      const [param, positions] of Object.entries(snapshot.stochastic.hrg || {})
+    ) {
       if (!this.programConfig[param]) continue;
-      
+
       this.hrgState[param] = {};
-      
+
       // Restore start position
       if (positions.start) {
         const startGen = this.programConfig[param].startValueGenerator;
         const numerators = this._parseSIN(startGen?.numerators || "1");
         const denominators = this._parseSIN(startGen?.denominators || "1");
-        
+
         this.hrgState[param].start = {
           numerators,
           denominators,
@@ -1932,16 +2044,16 @@ class SynthClient {
           indexN: Math.min(positions.start.indexN, numerators.length - 1),
           indexD: Math.min(positions.start.indexD, denominators.length - 1),
           orderN: positions.start.orderN || null,
-          orderD: positions.start.orderD || null
+          orderD: positions.start.orderD || null,
         };
       }
-      
+
       // Restore end position (for cosine)
       if (positions.end) {
         const endGen = this.programConfig[param].endValueGenerator;
         const numerators = this._parseSIN(endGen?.numerators || "1");
         const denominators = this._parseSIN(endGen?.denominators || "1");
-        
+
         this.hrgState[param].end = {
           numerators,
           denominators,
@@ -1951,41 +2063,45 @@ class SynthClient {
           indexN: Math.min(positions.end.indexN, numerators.length - 1),
           indexD: Math.min(positions.end.indexD, denominators.length - 1),
           orderN: positions.end.orderN || null,
-          orderD: positions.end.orderD || null
+          orderD: positions.end.orderD || null,
         };
       }
     }
-    
+
     // 3) Restore RBG cache
     this.rbgState = { ...(snapshot.stochastic.rbg || {}) };
-    
-    console.log(`✅ Restored scene snapshot v${snapshot.v}: ${Object.keys(snapshot.program).length} params, HRG for [${Object.keys(snapshot.stochastic.hrg).join(',')}]`);
+
+    console.log(
+      `✅ Restored scene snapshot v${snapshot.v}: ${
+        Object.keys(snapshot.program).length
+      } params, HRG for [${Object.keys(snapshot.stochastic.hrg).join(",")}]`,
+    );
   }
 
   // Convert resolved parameters to worklet envelope payload
   _toEnvPayload(resolved, portamentoMs = 0) {
     const payload = {};
-    
+
     for (const [param, config] of Object.entries(this.programConfig || {})) {
       if (!resolved.hasOwnProperty(param)) continue;
-      
+
       if (config.interpolation === "step") {
         payload[param] = {
           interpolation: "step",
           startValue: resolved[param].startValue || resolved[param],
           endValue: resolved[param].startValue || resolved[param],
-          portamentoMs: portamentoMs  // Always explicit
+          portamentoMs: portamentoMs, // Always explicit
         };
       } else if (config.interpolation === "cosine") {
         payload[param] = {
           interpolation: "cosine",
           startValue: resolved[param].startValue,
           endValue: resolved[param].endValue,
-          portamentoMs: portamentoMs  // Always explicit
+          portamentoMs: portamentoMs, // Always explicit
         };
       }
     }
-    
+
     return payload;
   }
 
@@ -1995,34 +2111,34 @@ class SynthClient {
       console.warn("⚠️ No snapshot to load");
       return;
     }
-    
+
     // Restore state
     this.restoreSceneSnapshot(snapshot);
-    
+
     // Resolve targets from restored state
     const resolved = this._resolveProgram(this.programConfig);
-    
+
     if (!this.voiceNode) {
       console.error("❌ Voice worklet not ready for scene load");
       return;
     }
-    
+
     if (this.isPlaying) {
       // Playing: stage for EOC snap (no portamento)
       const payload = this._toEnvPayload(resolved, 0);
       this._pendingSceneAtEoc = payload;
-      this.reresolveAtNextEOC = false;  // Explicitly not re-resolving
+      this.reresolveAtNextEOC = false; // Explicitly not re-resolving
       console.log("📋 Scene staged for EOC boundary snap");
     } else {
       // Paused: glide with portamento
-      const portMs = this.elements?.portamentoTime 
-        ? parseInt(this.elements.portamentoTime.value, 10) 
+      const portMs = this.elements?.portamentoTime
+        ? parseInt(this.elements.portamentoTime.value, 10)
         : 100;
       const payload = this._toEnvPayload(resolved, portMs);
       this.voiceNode.port.postMessage({
         type: "SET_ALL_ENV",
         v: 1,
-        params: payload
+        params: payload,
       });
       console.log(`⚡ Scene loaded with ${portMs}ms portamento (paused)`);
     }
@@ -2303,7 +2419,7 @@ class SynthClient {
       console.log(
         `⚡ Applying ${message.param} immediately with ${message.portamentoTime}ms portamento`,
       );
-      
+
       if (this.voiceNode) {
         this.voiceNode.port.postMessage({
           type: "SET_ENV",
@@ -2312,14 +2428,14 @@ class SynthClient {
           startValue: message.startValue,
           endValue: message.endValue,
           interpolation: message.interpolation,
-          portamentoMs: message.portamentoTime || 0
+          portamentoMs: message.portamentoTime || 0,
         });
       }
 
       // Update programConfig to persist the change across EOC
       if (this.programConfig && this.programConfig[message.param]) {
         const config = this.programConfig[message.param];
-        
+
         // For normalised parameters, update generators with resolved scalars
         if (config.startValueGenerator?.type === "normalised") {
           // Step param: update start generator to scalar
@@ -2327,7 +2443,7 @@ class SynthClient {
           // Clear RBG cache
           delete this.rbgState[`${message.param}_start`];
         }
-        
+
         // For cosine interpolation, update both generators
         if (message.interpolation === "cosine") {
           if (config.endValueGenerator?.type === "normalised") {
@@ -2335,11 +2451,13 @@ class SynthClient {
             delete this.rbgState[`${message.param}_end`];
           }
         }
-        
+
         // For periodic params (HRG), prefer SUB_PARAM_UPDATE - don't overwrite generators
         // Unified updates for periodic are rare and should preserve HRG state
-        
-        console.log(`⚡ Updated programConfig.${message.param} to persist paused change`);
+
+        console.log(
+          `⚡ Updated programConfig.${message.param} to persist paused change`,
+        );
       }
     }
   }
@@ -2390,7 +2508,7 @@ class SynthClient {
 
     // Build SET_ALL_ENV payload for voice parameters
     const voiceParams = {};
-    
+
     for (const [paramName, value] of Object.entries(resolvedState)) {
       const v = Number.isFinite(value) ? value : 0;
 
@@ -2399,7 +2517,7 @@ class SynthClient {
         startValue: v,
         endValue: v,
         interpolation: "step",
-        portamentoMs: 15  // Convert 0.015s to ms
+        portamentoMs: 15, // Convert 0.015s to ms
       };
       if (this.verbose) {
         console.log(`🎚️ Scene apply: ${paramName} -> ${v} (via SET_ALL_ENV)`);
@@ -2411,10 +2529,13 @@ class SynthClient {
       this.voiceNode.port.postMessage({
         type: "SET_ALL_ENV",
         v: 1,
-        params: voiceParams
+        params: voiceParams,
       });
       if (this.verbose) {
-        console.log("📦 SET_ALL_ENV sent for scene state with parameters:", Object.keys(voiceParams));
+        console.log(
+          "📦 SET_ALL_ENV sent for scene state with parameters:",
+          Object.keys(voiceParams),
+        );
       }
     }
 
@@ -2435,7 +2556,7 @@ class SynthClient {
 
     // Build SET_ALL_ENV payload for voice parameters
     const voiceParams = {};
-    
+
     for (const [paramName, value] of Object.entries(resolvedState)) {
       const v = Number.isFinite(value) ? value : 0;
 
@@ -2444,7 +2565,7 @@ class SynthClient {
         startValue: v,
         endValue: v,
         interpolation: "step",
-        portamentoMs: 15  // Convert 0.015s to ms
+        portamentoMs: 15, // Convert 0.015s to ms
       };
       if (this.verbose) {
         console.log(`🎚️ Scene apply: ${paramName} -> ${v} (via SET_ALL_ENV)`);
@@ -2456,10 +2577,13 @@ class SynthClient {
       this.voiceNode.port.postMessage({
         type: "SET_ALL_ENV",
         v: 1,
-        params: voiceParams
+        params: voiceParams,
       });
       if (this.verbose) {
-        console.log("📦 SET_ALL_ENV sent for resolved scene values with parameters:", Object.keys(voiceParams));
+        console.log(
+          "📦 SET_ALL_ENV sent for resolved scene values with parameters:",
+          Object.keys(voiceParams),
+        );
       }
     }
 
@@ -2633,7 +2757,7 @@ class SynthClient {
 
     const state = this.hrgState[param][position];
     const newNumerators = this._parseSIN(generator.numerators || "1");
-    
+
     // Update numerators array and re-randomize ONLY numerator index
     state.numerators = newNumerators;
     if (state.numeratorBehavior === "static") {
@@ -2673,7 +2797,7 @@ class SynthClient {
 
     const state = this.hrgState[param][position];
     const newDenominators = this._parseSIN(generator.denominators || "1");
-    
+
     // Update denominators array and re-randomize ONLY denominator index
     state.denominators = newDenominators;
     if (state.denominatorBehavior === "static") {
@@ -2709,7 +2833,7 @@ class SynthClient {
 
     const state = this.hrgState[param][position];
     const newBehavior = generator.numeratorBehavior || "static";
-    
+
     // Update behavior and re-randomize ONLY numerator index
     state.numeratorBehavior = newBehavior;
     if (newBehavior === "static") {
@@ -2729,7 +2853,7 @@ class SynthClient {
     );
   }
 
-  // Update only denominator behavior for a specific parameter position  
+  // Update only denominator behavior for a specific parameter position
   _updateHRGDenominatorBehavior(param, position) {
     const config = this.programConfig[param];
     if (!config) {
@@ -2749,7 +2873,7 @@ class SynthClient {
 
     const state = this.hrgState[param][position];
     const newBehavior = generator.denominatorBehavior || "static";
-    
+
     // Update behavior and re-randomize ONLY denominator index
     state.denominatorBehavior = newBehavior;
     if (newBehavior === "static") {
@@ -2897,10 +3021,18 @@ class SynthClient {
     }
 
     const result = {
-      startValue: this._resolveParameterValue(cfg.startValueGenerator, paramName, "start"),
-      endValue: cfg.interpolation === "step" 
-        ? this._resolveParameterValue(cfg.startValueGenerator, paramName, "start")
-        : this._resolveParameterValue(cfg.endValueGenerator, paramName, "end")
+      startValue: this._resolveParameterValue(
+        cfg.startValueGenerator,
+        paramName,
+        "start",
+      ),
+      endValue: cfg.interpolation === "step"
+        ? this._resolveParameterValue(
+          cfg.startValueGenerator,
+          paramName,
+          "start",
+        )
+        : this._resolveParameterValue(cfg.endValueGenerator, paramName, "end"),
     };
 
     return result;
@@ -2916,7 +3048,7 @@ class SynthClient {
 
     // Resolve stochastic values at current phase
     const resolvedParam = this.resolveParameter(paramName, cfg, phase);
-    
+
     console.log(
       `⚡ Sending SET_ENV for ${paramName}: start=${resolvedParam.startValue}, end=${resolvedParam.endValue}, portamento=${portamentoMs}ms`,
     );
@@ -2933,8 +3065,8 @@ class SynthClient {
     });
 
     // Update tracking for current values
-    this.lastResolvedValues[paramName] = cfg.interpolation === "step" 
-      ? resolvedParam.startValue 
+    this.lastResolvedValues[paramName] = cfg.interpolation === "step"
+      ? resolvedParam.startValue
       : resolvedParam.endValue;
   }
 
@@ -3259,12 +3391,14 @@ class SynthClient {
         startValue: value,
         endValue: value,
         interpolation: "step",
-        portamentoMs: 15  // Convert 0.015s to ms
+        portamentoMs: 15, // Convert 0.015s to ms
       });
     }
 
     if (this.verbose) {
-      console.log(`🎚️ Applied direct parameter: ${paramName} = ${value} (unified messaging)`);
+      console.log(
+        `🎚️ Applied direct parameter: ${paramName} = ${value} (unified messaging)`,
+      );
     }
   }
 
@@ -3296,7 +3430,7 @@ class SynthClient {
             interpolation: "step",
             startValue: stepValue,
             endValue: stepValue,
-            portamentoMs: 0 // Instant for re-resolve
+            portamentoMs: 0, // Instant for re-resolve
           };
         }
       } else if (config.interpolation === "cosine") {
@@ -3320,7 +3454,11 @@ class SynthClient {
         if (config.endValueGenerator?.type === "periodic") {
           endValue = this._resolveHRG(paramName, "end");
         } else if (config.endValueGenerator?.type === "normalised") {
-          endValue = this._resolveRBG(config.endValueGenerator, paramName, "end");
+          endValue = this._resolveRBG(
+            config.endValueGenerator,
+            paramName,
+            "end",
+          );
         } else {
           throw new Error(
             `CRITICAL: Unknown end generator type for ${paramName}: ${config.endValueGenerator?.type}`,
@@ -3332,7 +3470,7 @@ class SynthClient {
             interpolation: "cosine",
             startValue: startValue,
             endValue: endValue,
-            portamentoMs: 0 // Instant for re-resolve
+            portamentoMs: 0, // Instant for re-resolve
           };
         }
       }
@@ -3340,7 +3478,6 @@ class SynthClient {
 
     return resolvedParams;
   }
-
 
   _parseSIN(sinString) {
     // Simple parser for SIN (Simple Integer Notation) strings

@@ -32,99 +32,99 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
     super();
 
     // ===== ENVELOPE GENERATION STATE =====
-    
+
     // Per-parameter envelope state
     this.env = {
-      frequency: { 
-        interpolation: 'step', 
-        start: 220, 
-        end: 220, 
-        portamentoMs: 0, 
-        current: 220, 
-        alpha: 1 
+      frequency: {
+        interpolation: "step",
+        start: 220,
+        end: 220,
+        portamentoMs: 0,
+        current: 220,
+        alpha: 1,
       },
-      zingMorph: { 
-        interpolation: 'step', 
-        start: 0.5, 
-        end: 0.5, 
-        portamentoMs: 0, 
-        current: 0.5, 
-        alpha: 1 
+      zingMorph: {
+        interpolation: "step",
+        start: 0.5,
+        end: 0.5,
+        portamentoMs: 0,
+        current: 0.5,
+        alpha: 1,
       },
-      zingAmount: { 
-        interpolation: 'step', 
-        start: 0.5, 
-        end: 0.5, 
-        portamentoMs: 0, 
-        current: 0.5, 
-        alpha: 1 
+      zingAmount: {
+        interpolation: "step",
+        start: 0.5,
+        end: 0.5,
+        portamentoMs: 0,
+        current: 0.5,
+        alpha: 1,
       },
-      vowelX: { 
-        interpolation: 'step', 
-        start: 0.5, 
-        end: 0.5, 
-        portamentoMs: 0, 
-        current: 0.5, 
-        alpha: 1 
+      vowelX: {
+        interpolation: "step",
+        start: 0.5,
+        end: 0.5,
+        portamentoMs: 0,
+        current: 0.5,
+        alpha: 1,
       },
-      vowelY: { 
-        interpolation: 'step', 
-        start: 0.5, 
-        end: 0.5, 
-        portamentoMs: 0, 
-        current: 0.5, 
-        alpha: 1 
+      vowelY: {
+        interpolation: "step",
+        start: 0.5,
+        end: 0.5,
+        portamentoMs: 0,
+        current: 0.5,
+        alpha: 1,
       },
-      symmetry: { 
-        interpolation: 'step', 
-        start: 0.5, 
-        end: 0.5, 
-        portamentoMs: 0, 
-        current: 0.5, 
-        alpha: 1 
+      symmetry: {
+        interpolation: "step",
+        start: 0.5,
+        end: 0.5,
+        portamentoMs: 0,
+        current: 0.5,
+        alpha: 1,
       },
-      amplitude: { 
-        interpolation: 'step', 
-        start: 0.1, 
-        end: 0.1, 
-        portamentoMs: 0, 
-        current: 0.1, 
-        alpha: 1 
+      amplitude: {
+        interpolation: "step",
+        start: 0.1,
+        end: 0.1,
+        portamentoMs: 0,
+        current: 0.1,
+        alpha: 1,
       },
-      whiteNoise: { 
-        interpolation: 'step', 
-        start: 0, 
-        end: 0, 
-        portamentoMs: 0, 
-        current: 0, 
-        alpha: 1 
+      whiteNoise: {
+        interpolation: "step",
+        start: 0,
+        end: 0,
+        portamentoMs: 0,
+        current: 0,
+        alpha: 1,
       },
-      vibratoWidth: { 
-        interpolation: 'step', 
-        start: 0, 
-        end: 0, 
-        portamentoMs: 0, 
-        current: 0, 
-        alpha: 1 
+      vibratoWidth: {
+        interpolation: "step",
+        start: 0,
+        end: 0,
+        portamentoMs: 0,
+        current: 0,
+        alpha: 1,
       },
-      vibratoRate: { 
-        interpolation: 'step', 
-        start: 5, 
-        end: 5, 
-        portamentoMs: 0, 
-        current: 5, 
-        alpha: 1 
-      }
+      vibratoRate: {
+        interpolation: "step",
+        start: 5,
+        end: 5,
+        portamentoMs: 0,
+        current: 5,
+        alpha: 1,
+      },
     };
 
     // Phase tracking for envelope calculations
     this.lastPhase = 0;
-    
+
     // Vibrato LFO state
     this.vibratoPhase = 0;
-    
+
     // ===== DSP SYNTHESIS STATE =====
-    
+
     // Shared UPHO master phase for both synthesis paths
     this.masterPhase = 0.0;
     this.fundamentalFreq = 220.0;
@@ -184,7 +184,7 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
 
     // Initialize formant carriers
     this.updateFormantCarriers();
-    
+
     // Set up port message handling
     this.port.onmessage = (event) => {
       this.handleMessage(event);
@@ -196,57 +196,59 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
    */
   handleMessage(event) {
     const msg = event.data;
-    
+
     switch (msg.type) {
-      case 'SET_ENV':
+      case "SET_ENV":
         this.handleSetEnv(msg);
         break;
-        
-      case 'SET_ALL_ENV':
+
+      case "SET_ALL_ENV":
         this.handleSetAllEnv(msg);
         break;
-        
-      case 'PROGRAM':
+
+      case "PROGRAM":
         this.handleProgram(msg);
         break;
-        
-      case 'TRANSPORT':
+
+      case "TRANSPORT":
         // Optional - could be used for future transport-specific behavior
         break;
-        
+
       default:
         console.warn(`Voice worklet: Unknown message type: ${msg.type}`);
     }
   }
-  
+
   /**
    * Handle SET_ENV message - update single parameter envelope
    */
   handleSetEnv(msg) {
     // Handle 'active' parameter as direct AudioParam (not envelope)
-    if (msg.param === 'active') {
+    if (msg.param === "active") {
       // 'active' is a direct AudioParam, not an envelope parameter
       // The main thread should handle this via direct AudioParam write
       // This message type is not appropriate for the 'active' parameter
-      console.warn(`Voice worklet: 'active' parameter should be set via AudioParam, not SET_ENV`);
+      console.warn(
+        `Voice worklet: 'active' parameter should be set via AudioParam, not SET_ENV`,
+      );
       return;
     }
-    
+
     const env = this.env[msg.param];
     if (!env) {
       console.warn(`Voice worklet: Unknown parameter: ${msg.param}`);
       return;
     }
-    
+
     env.interpolation = msg.interpolation;
     env.start = msg.startValue;
     env.end = msg.endValue !== undefined ? msg.endValue : msg.startValue;
     env.portamentoMs = msg.portamentoMs || 0;
-    
+
     // Calculate portamento coefficient
     this.updatePortamentoCoeff(msg.param);
   }
-  
+
   /**
    * Handle SET_ALL_ENV message - batch update all parameters
    */
@@ -255,15 +257,17 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
       if (this.env[param]) {
         this.env[param].interpolation = config.interpolation;
         this.env[param].start = config.startValue;
-        this.env[param].end = config.endValue !== undefined ? config.endValue : config.startValue;
+        this.env[param].end = config.endValue !== undefined
+          ? config.endValue
+          : config.startValue;
         this.env[param].portamentoMs = config.portamentoMs || 0;
-        
+
         // Calculate portamento coefficient
         this.updatePortamentoCoeff(param);
       }
     }
   }
-  
+
   /**
    * Handle PROGRAM message - initialize all envelopes
    */
@@ -271,20 +275,22 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
     // Initialize envelope state from program config
     for (const [param, config] of Object.entries(msg.config)) {
       if (this.env[param]) {
-        this.env[param].interpolation = config.interpolation || 'step';
+        this.env[param].interpolation = config.interpolation || "step";
         // Use baseValue for start if available, otherwise use default
         const defaultValue = this.env[param].current;
-        this.env[param].start = config.baseValue !== undefined ? config.baseValue : defaultValue;
+        this.env[param].start = config.baseValue !== undefined
+          ? config.baseValue
+          : defaultValue;
         this.env[param].end = this.env[param].start;
         this.env[param].portamentoMs = 0;
         this.env[param].current = this.env[param].start;
-        
+
         // Calculate portamento coefficient
         this.updatePortamentoCoeff(param);
       }
     }
   }
-  
+
   /**
    * Update portamento coefficient for a parameter
    */
@@ -631,27 +637,27 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
 
     for (let sample = 0; sample < blockSize; sample++) {
       const currentPhase = phase[sample];
-      
+
       // ===== ENVELOPE GENERATION =====
-      
+
       // Update each parameter's envelope value
       for (const [param, env] of Object.entries(this.env)) {
         let target;
-        
+
         // Calculate target based on interpolation
-        if (env.interpolation === 'step') {
+        if (env.interpolation === "step") {
           target = env.start;
         } else { // cosine
           const cosPhase = Math.cos(currentPhase * Math.PI);
           target = env.start + (env.end - env.start) * (1 - cosPhase) / 2;
         }
-        
+
         // Apply portamento smoothing
         env.current += env.alpha * (target - env.current);
       }
 
       // ===== DSP SYNTHESIS =====
-      
+
       // Extract current envelope values
       const frequency = this.env.frequency.current;
       const vowelX = this.env.vowelX.current;
@@ -660,18 +666,27 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
       const zingAmount = this.env.zingAmount.current;
       const zingMorph = this.env.zingMorph.current;
       const symmetry = this.env.symmetry.current;
-      
+
       // Apply vibrato modulation to frequency
-      const rate = Math.min(Math.max(this.env.vibratoRate.current || 0, 0), 1024);
-      const width = Math.min(Math.max(this.env.vibratoWidth.current || 0, 0), 1);
-      
+      const rate = Math.min(
+        Math.max(this.env.vibratoRate.current || 0, 0),
+        1024,
+      );
+      const width = Math.min(
+        Math.max(this.env.vibratoWidth.current || 0, 0),
+        1,
+      );
+
       let freqFinal = frequency;
       if (rate > 0 && width > 0) {
         // Exponential cents mapping: f(0)=0, f(0.5)≈100c, f(1)≈1200c
         const depthCents = 10 * (Math.pow(121, width) - 1);
-        const modFactor = Math.pow(2, (depthCents * Math.sin(this.vibratoPhase)) / 1200);
+        const modFactor = Math.pow(
+          2,
+          (depthCents * Math.sin(this.vibratoPhase)) / 1200,
+        );
         freqFinal = frequency * modFactor;
-        
+
         // Update phase
         this.vibratoPhase += (2 * Math.PI * rate) / this.sampleRate;
         if (this.vibratoPhase >= 2 * Math.PI) {
@@ -700,7 +715,7 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
 
       // Calculate frequency increment per sample for internal phasor
       const freqIncrement = freqFinal / this.sampleRate;
-      
+
       // Update shared master phasor (UPHO architecture)
       this.masterPhase = (this.masterPhase + freqIncrement) % 1.0;
 
@@ -743,16 +758,22 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
       // Blend between synthesis paths
       const blendedOutput = scaledFormantOutput * (1.0 - zingAmount) +
         scaledZingOutput * zingAmount;
-      const blendedF1 = scaledFormantF1 * (1.0 - zingAmount) + scaledZingF1 * zingAmount;
-      const blendedF2 = scaledFormantF2 * (1.0 - zingAmount) + scaledZingF2 * zingAmount;
-      const blendedF3 = scaledFormantF3 * (1.0 - zingAmount) + scaledZingF3 * zingAmount;
+      const blendedF1 = scaledFormantF1 * (1.0 - zingAmount) +
+        scaledZingF1 * zingAmount;
+      const blendedF2 = scaledFormantF2 * (1.0 - zingAmount) +
+        scaledZingF2 * zingAmount;
+      const blendedF3 = scaledFormantF3 * (1.0 - zingAmount) +
+        scaledZingF3 * zingAmount;
 
       // Parallel paths: voice with amplitude, noise with whiteNoise envelope
       const voiceOutput = blendedOutput * 10.0 * amplitude;
-      
-      const noiseLevel = Math.min(Math.max(this.env.whiteNoise.current || 0, 0), 1);
+
+      const noiseLevel = Math.min(
+        Math.max(this.env.whiteNoise.current || 0, 0),
+        1,
+      );
       const noiseSample = (Math.random() * 2 - 1) * noiseLevel * 10.0;
-      
+
       // Mix the parallel paths
       const finalOutput = voiceOutput + noiseSample;
       outputChannel[sample] = finalOutput;
@@ -765,15 +786,23 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
       const noiseY = (Math.random() * 2 - 1) * noiseLevel * 10.0;
 
       // Output parallel paths: voice (with amplitude) + noise (independent) for visualization
-      if (f1FullChannel) f1FullChannel[sample] = blendedF1 * 10.0 * amplitude + noiseX;
-      if (f2FullChannel) f2FullChannel[sample] = blendedF2 * 10.0 * amplitude + noiseY;
+      if (f1FullChannel) {
+        f1FullChannel[sample] = blendedF1 * 10.0 * amplitude + noiseX;
+      }
+      if (f2FullChannel) {
+        f2FullChannel[sample] = blendedF2 * 10.0 * amplitude + noiseY;
+      }
       if (f3FullChannel) f3FullChannel[sample] = blendedF3 * 10.0 * amplitude;
     }
 
     // Debug envelope values occasionally
     this.debugCounter++;
     if (this.debugCounter % 44100 === 0) {
-      console.log(`🎵 Voice envelopes: freq=${this.env.frequency.current.toFixed(1)}Hz, amp=${this.env.amplitude.current.toFixed(3)}`);
+      console.log(
+        `🎵 Voice envelopes: freq=${
+          this.env.frequency.current.toFixed(1)
+        }Hz, amp=${this.env.amplitude.current.toFixed(3)}`,
+      );
     }
 
     return true;

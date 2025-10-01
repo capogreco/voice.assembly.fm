@@ -427,7 +427,9 @@ var WebRTCStar = class extends EventTarget {
               type: "request-ctrls"
             });
           } else if (this.peerType === "ctrl") {
-            if (this.verbose) console.log("CTRL-DISCOVERY: Connection open, requesting synth list.");
+            if (this.verbose) {
+              console.log("CTRL-DISCOVERY: Connection open, requesting synth list.");
+            }
             this.sendSignalingMessage({
               type: "request-synths"
             });
@@ -469,7 +471,9 @@ var WebRTCStar = class extends EventTarget {
     switch (message.type) {
       case "ctrls-list":
         if (this.peerType === "synth") {
-          if (this.verbose) console.log("SYNTH-DISCOVERY: Received ctrls list:", message.ctrls);
+          if (this.verbose) {
+            console.log("SYNTH-DISCOVERY: Received ctrls list:", message.ctrls);
+          }
           if (this.verbose) {
             console.log("\u{1F4CB} Received ctrls list:", message.ctrls);
           }
@@ -486,23 +490,31 @@ var WebRTCStar = class extends EventTarget {
               }
               this.ctrlRetryTimeout = setTimeout(() => {
                 if (this.signalingSocket && this.signalingSocket.readyState === WebSocket.OPEN) {
-                  if (this.verbose) console.log("[SYNTH-RETRY] Executing retry request for controllers.");
+                  if (this.verbose) {
+                    console.log("[SYNTH-RETRY] Executing retry request for controllers.");
+                  }
                   this.sendSignalingMessage({
                     type: "request-ctrls"
                   });
                 }
               }, retryDelay);
             } else {
-              if (this.verbose) console.warn(`[SYNTH-RETRY] No controllers found after ${this.maxCtrlRetries} attempts. Giving up.`);
+              if (this.verbose) {
+                console.warn(`[SYNTH-RETRY] No controllers found after ${this.maxCtrlRetries} attempts. Giving up.`);
+              }
             }
           } else {
             this.ctrlRetryCount = 0;
             for (const ctrlId of message.ctrls) {
               if (!this.peers.has(ctrlId)) {
-                if (this.verbose) console.log(`[SYNTH-HANDSHAKE] Discovered new controller ${ctrlId}. Creating placeholder peer connection.`);
+                if (this.verbose) {
+                  console.log(`[SYNTH-HANDSHAKE] Discovered new controller ${ctrlId}. Creating placeholder peer connection.`);
+                }
                 await this.createPeerConnection(ctrlId, false);
               } else {
-                if (this.verbose) console.log(`[SYNTH-HANDSHAKE] Discovered controller ${ctrlId}, but a peer record already exists. Skipping creation.`);
+                if (this.verbose) {
+                  console.log(`[SYNTH-HANDSHAKE] Discovered controller ${ctrlId}, but a peer record already exists. Skipping creation.`);
+                }
               }
             }
           }
@@ -515,7 +527,9 @@ var WebRTCStar = class extends EventTarget {
             clearTimeout(this.ctrlRetryTimeout);
             this.ctrlRetryTimeout = null;
           }
-          if (this.verbose) console.log(`\u{1F39B}\uFE0F Ctrl joined: ${message.ctrl_id} (waiting for offer)`);
+          if (this.verbose) {
+            console.log(`\u{1F39B}\uFE0F Ctrl joined: ${message.ctrl_id} (waiting for offer)`);
+          }
           if (!this.peers.has(message.ctrl_id)) {
             await this.createPeerConnection(message.ctrl_id, false);
           }
@@ -545,16 +559,22 @@ var WebRTCStar = class extends EventTarget {
         break;
       case "synths-list":
         if (this.peerType === "ctrl") {
-          if (this.verbose) console.log("CTRL-DISCOVERY: Received synths list:", message.synths);
+          if (this.verbose) {
+            console.log("CTRL-DISCOVERY: Received synths list:", message.synths);
+          }
           if (this.verbose) {
             console.log("\u{1F4CB} Received synths list:", message.synths);
           }
           for (const synthId of message.synths) {
             if (!this.peers.has(synthId)) {
-              if (this.verbose) console.log(`[CTRL-HANDSHAKE] Discovered new synth ${synthId}. Creating peer connection and sending offer.`);
+              if (this.verbose) {
+                console.log(`[CTRL-HANDSHAKE] Discovered new synth ${synthId}. Creating peer connection and sending offer.`);
+              }
               await this.createPeerConnection(synthId, true);
             } else {
-              if (this.verbose) console.log(`[CTRL-HANDSHAKE] Discovered synth ${synthId}, but a peer record already exists. Skipping creation.`);
+              if (this.verbose) {
+                console.log(`[CTRL-HANDSHAKE] Discovered synth ${synthId}, but a peer record already exists. Skipping creation.`);
+              }
             }
           }
         }
@@ -628,7 +648,7 @@ var WebRTCStar = class extends EventTarget {
       restartAttempted: false,
       restartTimer: null,
       disconnectedSince: null,
-      // Full rebuild tracking  
+      // Full rebuild tracking
       reconnectAttempted: false,
       reconnectTimer: null
     });
@@ -707,7 +727,9 @@ var WebRTCStar = class extends EventTarget {
         if (peer) {
           if (!peer.disconnectedSince) {
             peer.disconnectedSince = Date.now();
-            if (this.verbose) console.log(`\u26A0\uFE0F Connection to ${peerId} disconnected, monitoring for recovery...`);
+            if (this.verbose) {
+              console.log(`\u26A0\uFE0F Connection to ${peerId} disconnected, monitoring for recovery...`);
+            }
           }
           if (!peer.restartAttempted && peer.initiator && Date.now() - peer.disconnectedSince > 3e3) {
             this.scheduleIceRestart(peerId);
@@ -746,6 +768,18 @@ var WebRTCStar = class extends EventTarget {
     }
     channel.addEventListener("open", () => {
       console.log(`\u{1F4E1} ${channel.label} channel open to ${peerId}`);
+      if (channel.label === "sync") {
+        try {
+          channel.bufferedAmountLowThreshold = 16384;
+          if (this.verbose) {
+            console.log(`\u2705 Set bufferedAmountLowThreshold to 16KB for sync channel to ${peerId}`);
+          }
+        } catch (error) {
+          if (this.verbose) {
+            console.log(`\u26A0\uFE0F Could not set bufferedAmountLowThreshold: ${error.message}`);
+          }
+        }
+      }
       this.checkPeerReadiness(peerId);
     });
     console.log(`\u{1F4E1} Channel '${channel.label}' for ${peerId} initial state: ${channel.readyState}`);
@@ -857,7 +891,9 @@ var WebRTCStar = class extends EventTarget {
           return;
         }
         await pc.addIceCandidate(new RTCIceCandidate(candidate));
-        if (this.verbose) console.log(`\u2705 Added ICE candidate from ${fromPeerId}`);
+        if (this.verbose) {
+          console.log(`\u2705 Added ICE candidate from ${fromPeerId}`);
+        }
       }
     } catch (error) {
       if (this.verbose) {
@@ -881,7 +917,9 @@ var WebRTCStar = class extends EventTarget {
     for (const candidate of candidates) {
       try {
         await peer.connection.addIceCandidate(new RTCIceCandidate(candidate));
-        if (this.verbose) console.log(`\u2705 Added buffered ICE candidate for ${peerId}`);
+        if (this.verbose) {
+          console.log(`\u2705 Added buffered ICE candidate for ${peerId}`);
+        }
       } catch (error) {
         if (this.verbose) {
           console.warn(`\u26A0\uFE0F Non-fatal error adding buffered ICE candidate for ${peerId}:`, error.message);
@@ -926,6 +964,10 @@ var WebRTCStar = class extends EventTarget {
       clearTimeout(timeout);
       this.pingTimeouts.delete(pingId);
       const rtt = performance.now() - pongMessage.pingTimestamp;
+      const peer = this.peers.get(peerId);
+      if (peer) {
+        peer.lastPingRtt = rtt;
+      }
       if (this.verbose) {
         console.log(`\u{1F3D3} Pong from ${peerId}: ${Math.round(rtt)}ms`);
       }
@@ -956,6 +998,17 @@ var WebRTCStar = class extends EventTarget {
         console.warn(`\u26A0\uFE0F Channel ${channelType} to ${peerId} not ready (${channel?.readyState || "none"})`);
       }
       return false;
+    }
+    if (channelType === "sync") {
+      const threshold = channel.bufferedAmountLowThreshold || 16384;
+      if (channel.bufferedAmount > threshold) {
+        if (!peer.droppedSyncCount) peer.droppedSyncCount = 0;
+        peer.droppedSyncCount++;
+        if (peer.droppedSyncCount <= 3) {
+          console.warn(`\u23F8\uFE0F Sync channel to ${peerId} buffered ${channel.bufferedAmount} bytes > ${threshold}, dropping message`);
+        }
+        return false;
+      }
     }
     try {
       channel.send(JSON.stringify(message));
@@ -1090,7 +1143,9 @@ var WebRTCStar = class extends EventTarget {
     }
     peer.restartAttempted = true;
     const delay = 1e3 + Math.random() * 500;
-    if (this.verbose) console.log(`\u{1F504} Scheduling ICE restart to ${peerId} in ${Math.round(delay)}ms...`);
+    if (this.verbose) {
+      console.log(`\u{1F504} Scheduling ICE restart to ${peerId} in ${Math.round(delay)}ms...`);
+    }
     if (peer.restartTimer) {
       clearTimeout(peer.restartTimer);
     }
@@ -1142,12 +1197,16 @@ var WebRTCStar = class extends EventTarget {
       return;
     }
     if (peer.reconnectAttempted) {
-      if (this.verbose) console.log(`\u21A9\uFE0F Reconnect already attempted for ${peerId}`);
+      if (this.verbose) {
+        console.log(`\u21A9\uFE0F Reconnect already attempted for ${peerId}`);
+      }
       return;
     }
     peer.reconnectAttempted = true;
     const delay = 2e3 + Math.random() * 1e3;
-    if (this.verbose) console.log(`\u{1F504} Scheduling reconnection to ${peerId} in ${Math.round(delay)}ms...`);
+    if (this.verbose) {
+      console.log(`\u{1F504} Scheduling reconnection to ${peerId} in ${Math.round(delay)}ms...`);
+    }
     if (peer.reconnectTimer) {
       clearTimeout(peer.reconnectTimer);
     }
@@ -1166,7 +1225,9 @@ var WebRTCStar = class extends EventTarget {
       clearTimeout(peer.reconnectTimer);
       peer.reconnectTimer = null;
     }
-    if (this.verbose) console.log(`\u{1F504} Attempting reconnection to ${peerId} (initiator=${wasInitiator})...`);
+    if (this.verbose) {
+      console.log(`\u{1F504} Attempting reconnection to ${peerId} (initiator=${wasInitiator})...`);
+    }
     try {
       try {
         peer.connection.close();
@@ -1212,13 +1273,17 @@ var WebRTCStar = class extends EventTarget {
         } else if (state === "closed") {
           this.removePeer(peerId);
         } else if (state === "disconnected") {
-          if (this.verbose) console.log(`\u26A0\uFE0F ${peerId} disconnected; waiting for recovery`);
+          if (this.verbose) {
+            console.log(`\u26A0\uFE0F ${peerId} disconnected; waiting for recovery`);
+          }
         }
       });
       pc.addEventListener("iceconnectionstatechange", () => {
         if (this.peers.get(peerId)?.connection !== currentPc) return;
         const ice = pc.iceConnectionState;
-        if (ice === "connected" || ice === "completed") this.checkPeerReadiness(peerId);
+        if (ice === "connected" || ice === "completed") {
+          this.checkPeerReadiness(peerId);
+        }
       });
       if (wasInitiator) {
         peer.initiator = true;
@@ -1238,7 +1303,9 @@ var WebRTCStar = class extends EventTarget {
           targetPeerId: peerId,
           offer
         });
-        if (this.verbose) console.log(`\u{1F4E4} Sent reconnection offer to ${peerId}`);
+        if (this.verbose) {
+          console.log(`\u{1F4E4} Sent reconnection offer to ${peerId}`);
+        }
       } else {
         peer.initiator = false;
       }
@@ -1260,6 +1327,8 @@ var WebRTCStar = class extends EventTarget {
       clearTimeout(peer.reconnectTimer);
     }
     peer.pendingCandidates = [];
+    peer.droppedSyncCount = 0;
+    peer.channelWarningCount = {};
     if (peer.connection.connectionState !== "closed") {
       peer.connection.close();
     }
@@ -1305,6 +1374,61 @@ var WebRTCStar = class extends EventTarget {
       connectedPeers: this.peers.size,
       peerStats
     };
+  }
+  /**
+   * Get detailed peer diagnostics including ICE type and RTT
+   */
+  async getPeerDiagnostics() {
+    const diagnostics = [];
+    for (const [peerId, peer] of this.peers) {
+      const diag = {
+        peerId,
+        peerType: peer.peerType,
+        connectionState: peer.connection.connectionState,
+        iceConnectionState: peer.connection.iceConnectionState,
+        syncChannelState: peer.syncChannel?.readyState || "none",
+        controlChannelState: peer.controlChannel?.readyState || "none",
+        droppedSyncMessages: peer.droppedSyncCount || 0,
+        iceType: "unknown",
+        rtt: null
+      };
+      try {
+        const stats = await peer.connection.getStats();
+        let selectedPair = null;
+        let transport = null;
+        stats.forEach((stat) => {
+          if (stat.type === "transport") {
+            transport = stat;
+          }
+          if (stat.type === "candidate-pair") {
+            if (stat.nominated || transport && stat.id === transport.selectedCandidatePairId) {
+              if (stat.state === "succeeded" || !selectedPair) {
+                selectedPair = stat;
+              }
+            }
+          }
+        });
+        if (selectedPair) {
+          if (selectedPair.currentRoundTripTime !== void 0) {
+            diag.rtt = Math.round(selectedPair.currentRoundTripTime * 1e3);
+          }
+          stats.forEach((stat) => {
+            if (stat.type === "remote-candidate" && stat.id === selectedPair.remoteCandidateId) {
+              diag.iceType = stat.candidateType || "unknown";
+            }
+          });
+        }
+      } catch (error) {
+        if (this.verbose) {
+          console.warn(`\u26A0\uFE0F Could not get stats for ${peerId}:`, error.message);
+        }
+      }
+      if (diag.rtt === null && peer.lastPingRtt !== void 0) {
+        diag.rtt = Math.round(peer.lastPingRtt);
+      }
+      diagnostics.push(diag);
+    }
+    return diagnostics;
   }
   /**
    * Cleanup resources
@@ -1364,6 +1488,8 @@ var ControlClient = class {
   audioContext;
   es8Enabled;
   es8Node;
+  lastPausedHeartbeat;
+  diagnosticsUpdateId;
   hasPendingChanges;
   pendingParameterChanges;
   elements;
@@ -1625,7 +1751,8 @@ var ControlClient = class {
     this.lastPhasorTime = 0;
     this.phasorUpdateId = null;
     this.lastBroadcastTime = 0;
-    this.phasorBroadcastRate = 30;
+    this.phasorBroadcastRate = 10;
+    this.lastPausedHeartbeat = 0;
     this.pendingPeriodSec = null;
     this.pendingStepsPerCycle = null;
     this.audioContext = null;
@@ -1644,6 +1771,7 @@ var ControlClient = class {
       connectionStatus: document.getElementById("connection-status"),
       connectionValue: document.getElementById("connection-status"),
       synthesisStatus: document.getElementById("synthesis-status"),
+      networkDiagnostics: document.getElementById("network-diagnostics"),
       // Removed peers status - now using synth count in connected synths panel
       takeoverSection: document.getElementById("takeover-section"),
       takeoverBtn: document.getElementById("force-takeover-btn"),
@@ -2774,7 +2902,9 @@ var ControlClient = class {
       }
       const isCosine = paramState.interpolation === "cosine";
       if (hrgArrow) hrgArrow.style.display = isCosine ? "inline-block" : "none";
-      if (hrgEndControls) hrgEndControls.style.display = isCosine ? "inline-block" : "none";
+      if (hrgEndControls) {
+        hrgEndControls.style.display = isCosine ? "inline-block" : "none";
+      }
     }
     if (paramName !== "frequency") {
       const valueInput2 = document.getElementById(`${paramName}-value`);
@@ -3120,6 +3250,7 @@ var ControlClient = class {
         this.phasor -= 1;
         this.applyPendingTimingChanges();
         this.clearAllPendingChanges();
+        this.broadcastPhasor(currentTime, "eoc");
       }
     }
     this.lastPhasorTime = currentTime;
@@ -3149,15 +3280,22 @@ var ControlClient = class {
       this.phasorUpdateId = null;
     }
   }
-  broadcastPhasor(currentTime) {
+  broadcastPhasor(currentTime, reason = "continuous") {
     if (!this.star) return;
-    const timeSinceLastBroadcast = currentTime - this.lastBroadcastTime;
-    const broadcastInterval = 1 / this.phasorBroadcastRate;
-    if (timeSinceLastBroadcast >= broadcastInterval) {
-      const message = MessageBuilder.phasorSync(this.phasor, null, this.stepsPerCycle, this.cycleLength, this.isPlaying);
-      const sent = this.star.broadcastToType("synth", message, "sync");
-      this.lastBroadcastTime = currentTime;
+    if (reason === "continuous") {
+      if (!this.isPlaying) {
+        const timeSinceLastHeartbeat = currentTime - this.lastPausedHeartbeat;
+        if (timeSinceLastHeartbeat >= 1) {
+          const message2 = MessageBuilder.phasorSync(this.phasor, null, this.stepsPerCycle, this.cycleLength, this.isPlaying);
+          const sent2 = this.star.broadcastToType("synth", message2, "sync");
+          this.lastPausedHeartbeat = currentTime;
+        }
+      }
+      return;
     }
+    const message = MessageBuilder.phasorSync(this.phasor, null, this.stepsPerCycle, this.cycleLength, this.isPlaying);
+    const sent = this.star.broadcastToType("synth", message, "sync");
+    this.lastBroadcastTime = currentTime;
   }
   // ES-8 Integration Methods
   async toggleES8() {
@@ -3263,6 +3401,7 @@ var ControlClient = class {
           console.log("\u{1F504} Triggering EOC event - playing from reset position");
           const eocMessage = MessageBuilder.jumpToEOC();
           this.star.broadcastToType("synth", eocMessage, "control");
+          this.broadcastPhasor(performance.now() / 1e3, "bootstrap");
         }
         break;
       case "pause":
@@ -3284,7 +3423,7 @@ var ControlClient = class {
       const transportMessage = MessageBuilder.transport(action);
       this.star.broadcastToType("synth", transportMessage, "control");
     }
-    this.broadcastPhasor(performance.now() / 1e3);
+    this.broadcastPhasor(performance.now() / 1e3, "transport");
   }
   updatePlayPauseButton() {
     if (this.elements.playBtn) {
@@ -3401,7 +3540,7 @@ var ControlClient = class {
       const message = MessageBuilder.jumpToEOC();
       this.star.broadcastToType("synth", message, "control");
     }
-    this.broadcastPhasor(performance.now() / 1e3);
+    this.broadcastPhasor(performance.now() / 1e3, "transport");
     this.log("Global phasor reset to 0.0", "info");
   }
   async connectToNetwork() {
@@ -3444,6 +3583,7 @@ var ControlClient = class {
       this.log(`Peer connected: ${peerId}`, "info");
       this.updatePeerList();
       this._updateUIState();
+      this.startNetworkDiagnostics();
       if (peerId.startsWith("synth-")) {
         this.sendCompleteStateToSynth(peerId);
       }
@@ -3452,6 +3592,9 @@ var ControlClient = class {
       this.log(`Peer disconnected: ${event.detail.peerId}`, "info");
       this.updatePeerList();
       this._updateUIState();
+      if (this.star.peers.size === 0) {
+        this.stopNetworkDiagnostics();
+      }
     });
     this.star.addEventListener("kicked", (event) => {
       this.handleKicked(event.detail.reason);
@@ -3503,7 +3646,7 @@ var ControlClient = class {
       this.log("Synthesis disabled", "info");
     }
     this.broadcastMusicalParameters();
-    this.broadcastPhasor(performance.now() / 1e3);
+    this.broadcastPhasor(performance.now() / 1e3, "transport");
   }
   // Deprecated - use toggleSynthesis instead
   toggleManualMode() {
@@ -3658,6 +3801,50 @@ var ControlClient = class {
   clearLog() {
     if (this.elements.debugLog) {
       this.elements.debugLog.textContent = "";
+    }
+  }
+  startNetworkDiagnostics() {
+    if (this.diagnosticsUpdateId) {
+      return;
+    }
+    this.diagnosticsUpdateId = setInterval(async () => {
+      await this.updateNetworkDiagnostics();
+    }, 3e3);
+    this.updateNetworkDiagnostics();
+  }
+  stopNetworkDiagnostics() {
+    if (this.diagnosticsUpdateId) {
+      clearInterval(this.diagnosticsUpdateId);
+      this.diagnosticsUpdateId = null;
+    }
+    if (this.elements.networkDiagnostics) {
+      this.elements.networkDiagnostics.innerHTML = '<div style="color: #666;">no peers</div>';
+    }
+  }
+  async updateNetworkDiagnostics() {
+    if (!this.star || !this.elements.networkDiagnostics) {
+      return;
+    }
+    try {
+      const diagnostics = await this.star.getPeerDiagnostics();
+      if (diagnostics.length === 0) {
+        this.elements.networkDiagnostics.innerHTML = '<div style="color: #666;">no peers</div>';
+        return;
+      }
+      const diagnosticsHTML = diagnostics.map((diag) => {
+        const connectionColor = diag.connectionState === "connected" ? "#8f8" : "#f88";
+        const iceColor = diag.iceType === "host" ? "#8f8" : diag.iceType === "srflx" ? "#ff8" : diag.iceType === "relay" ? "#f88" : "#888";
+        const rttDisplay = diag.rtt !== null ? `${diag.rtt}ms` : "?";
+        const droppedWarning = diag.droppedSyncMessages > 0 ? ` \u26A0${diag.droppedSyncMessages}` : "";
+        return `<div style="margin-bottom: 1px;">
+          <span style="color: ${connectionColor};">${diag.peerId.split("-")[0]}</span>
+          <span style="color: ${iceColor}; margin-left: 4px;">${diag.iceType}</span>
+          <span style="color: #ccc; margin-left: 4px;">${rttDisplay}</span>${droppedWarning}
+        </div>`;
+      }).join("");
+      this.elements.networkDiagnostics.innerHTML = diagnosticsHTML;
+    } catch (error) {
+      console.warn("Failed to update network diagnostics:", error);
     }
   }
   setupSceneMemoryUI() {

@@ -108,7 +108,10 @@ export class WebRTCStar extends EventTarget {
   scheduleSignalingReconnect() {
     if (this.wasKicked) {
       if (this.verbose) {
-        console.log("🚫 Not scheduling reconnection - was kicked:", this.kickedReason);
+        console.log(
+          "🚫 Not scheduling reconnection - was kicked:",
+          this.kickedReason,
+        );
       }
       return;
     }
@@ -116,7 +119,9 @@ export class WebRTCStar extends EventTarget {
     if (this.signalingReconnectTimer) return; // Already scheduled
 
     if (this.verbose) {
-      console.log(`🔄 Scheduling signaling reconnection in ${this.signalingBackoffMs}ms`);
+      console.log(
+        `🔄 Scheduling signaling reconnection in ${this.signalingBackoffMs}ms`,
+      );
     }
 
     this.signalingReconnectTimer = setTimeout(() => {
@@ -130,7 +135,7 @@ export class WebRTCStar extends EventTarget {
     // Exponential backoff
     this.signalingBackoffMs = Math.min(
       this.signalingBackoffMs * 2,
-      this.signalingMaxBackoffMs
+      this.signalingMaxBackoffMs,
     );
   }
 
@@ -148,7 +153,7 @@ export class WebRTCStar extends EventTarget {
 
       this.signalingSocket.addEventListener("open", () => {
         if (this.verbose) console.log("📡 Connected to signaling server");
-        
+
         // Reset backoff on successful connection
         this.signalingBackoffMs = 1000;
 
@@ -171,7 +176,11 @@ export class WebRTCStar extends EventTarget {
               type: "request-ctrls",
             });
           } else if (this.peerType === "ctrl") {
-            if (this.verbose) console.log("CTRL-DISCOVERY: Connection open, requesting synth list.");
+            if (this.verbose) {
+              console.log(
+                "CTRL-DISCOVERY: Connection open, requesting synth list.",
+              );
+            }
             this.sendSignalingMessage({
               type: "request-synths",
             });
@@ -224,17 +233,19 @@ export class WebRTCStar extends EventTarget {
     switch (message.type) {
       case "ctrls-list":
         if (this.peerType === "synth") {
-          if (this.verbose) console.log("SYNTH-DISCOVERY: Received ctrls list:", message.ctrls);
+          if (this.verbose) {
+            console.log("SYNTH-DISCOVERY: Received ctrls list:", message.ctrls);
+          }
           if (this.verbose) {
             console.log("📋 Received ctrls list:", message.ctrls);
           }
-          
+
           // Clear any pending retry
           if (this.ctrlRetryTimeout) {
             clearTimeout(this.ctrlRetryTimeout);
             this.ctrlRetryTimeout = null;
           }
-          
+
           if (message.ctrls.length === 0) {
             // If we get an empty list, a ctrl client may be in the process of reconnecting.
             // We will retry requesting the list a few times.
@@ -244,17 +255,32 @@ export class WebRTCStar extends EventTarget {
               const retryDelay = 1000 + Math.random() * 1000; // 1-2s with jitter
 
               if (this.verbose) {
-                console.log(`[SYNTH-RETRY] No controllers found. Retrying in ${Math.round(retryDelay)}ms (attempt ${this.ctrlRetryCount}/${this.maxCtrlRetries})`);
+                console.log(
+                  `[SYNTH-RETRY] No controllers found. Retrying in ${
+                    Math.round(retryDelay)
+                  }ms (attempt ${this.ctrlRetryCount}/${this.maxCtrlRetries})`,
+                );
               }
-              
+
               this.ctrlRetryTimeout = setTimeout(() => {
-                if (this.signalingSocket && this.signalingSocket.readyState === WebSocket.OPEN) {
-                  if (this.verbose) console.log("[SYNTH-RETRY] Executing retry request for controllers.");
+                if (
+                  this.signalingSocket &&
+                  this.signalingSocket.readyState === WebSocket.OPEN
+                ) {
+                  if (this.verbose) {
+                    console.log(
+                      "[SYNTH-RETRY] Executing retry request for controllers.",
+                    );
+                  }
                   this.sendSignalingMessage({ type: "request-ctrls" });
                 }
               }, retryDelay);
             } else {
-              if (this.verbose) console.warn(`[SYNTH-RETRY] No controllers found after ${this.maxCtrlRetries} attempts. Giving up.`);
+              if (this.verbose) {
+                console.warn(
+                  `[SYNTH-RETRY] No controllers found after ${this.maxCtrlRetries} attempts. Giving up.`,
+                );
+              }
             }
           } else {
             // Reset retry counter on successful response
@@ -263,10 +289,18 @@ export class WebRTCStar extends EventTarget {
             // We simply ensure a placeholder peer record exists and wait for ctrl to offer.
             for (const ctrlId of message.ctrls) {
               if (!this.peers.has(ctrlId)) {
-                if (this.verbose) console.log(`[SYNTH-HANDSHAKE] Discovered new controller ${ctrlId}. Creating placeholder peer connection.`);
+                if (this.verbose) {
+                  console.log(
+                    `[SYNTH-HANDSHAKE] Discovered new controller ${ctrlId}. Creating placeholder peer connection.`,
+                  );
+                }
                 await this.createPeerConnection(ctrlId, false);
               } else {
-                if (this.verbose) console.log(`[SYNTH-HANDSHAKE] Discovered controller ${ctrlId}, but a peer record already exists. Skipping creation.`);
+                if (this.verbose) {
+                  console.log(
+                    `[SYNTH-HANDSHAKE] Discovered controller ${ctrlId}, but a peer record already exists. Skipping creation.`,
+                  );
+                }
               }
             }
           }
@@ -281,7 +315,11 @@ export class WebRTCStar extends EventTarget {
             clearTimeout(this.ctrlRetryTimeout);
             this.ctrlRetryTimeout = null;
           }
-          if (this.verbose) console.log(`🎛️ Ctrl joined: ${message.ctrl_id} (waiting for offer)`);
+          if (this.verbose) {
+            console.log(
+              `🎛️ Ctrl joined: ${message.ctrl_id} (waiting for offer)`,
+            );
+          }
           if (!this.peers.has(message.ctrl_id)) {
             await this.createPeerConnection(message.ctrl_id, false);
           }
@@ -316,17 +354,30 @@ export class WebRTCStar extends EventTarget {
 
       case "synths-list":
         if (this.peerType === "ctrl") {
-          if (this.verbose) console.log("CTRL-DISCOVERY: Received synths list:", message.synths);
+          if (this.verbose) {
+            console.log(
+              "CTRL-DISCOVERY: Received synths list:",
+              message.synths,
+            );
+          }
           if (this.verbose) {
             console.log("📋 Received synths list:", message.synths);
           }
           // Ctrl initiates connections to all synths
           for (const synthId of message.synths) {
             if (!this.peers.has(synthId)) {
-              if (this.verbose) console.log(`[CTRL-HANDSHAKE] Discovered new synth ${synthId}. Creating peer connection and sending offer.`);
+              if (this.verbose) {
+                console.log(
+                  `[CTRL-HANDSHAKE] Discovered new synth ${synthId}. Creating peer connection and sending offer.`,
+                );
+              }
               await this.createPeerConnection(synthId, true);
             } else {
-              if (this.verbose) console.log(`[CTRL-HANDSHAKE] Discovered synth ${synthId}, but a peer record already exists. Skipping creation.`);
+              if (this.verbose) {
+                console.log(
+                  `[CTRL-HANDSHAKE] Discovered synth ${synthId}, but a peer record already exists. Skipping creation.`,
+                );
+              }
             }
           }
         }
@@ -410,13 +461,13 @@ export class WebRTCStar extends EventTarget {
       connectedEventSent: false,
       initiator: shouldInitiate, // Track who initiated for reconnection
       pendingCandidates: [], // Buffer ICE candidates when no remote description
-      
+
       // ICE restart tracking
       restartAttempted: false,
       restartTimer: null,
       disconnectedSince: null, // Track disconnected duration
-      
-      // Full rebuild tracking  
+
+      // Full rebuild tracking
       reconnectAttempted: false,
       reconnectTimer: null,
     });
@@ -453,7 +504,7 @@ export class WebRTCStar extends EventTarget {
       if (peer) {
         peer.initiator = true;
       }
-      
+
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
 
@@ -471,7 +522,7 @@ export class WebRTCStar extends EventTarget {
   setupConnectionEventHandlers(peerConnection, peerId) {
     // Capture current connection for stale guard
     const currentPc = peerConnection;
-    
+
     // ICE candidate handling
     peerConnection.addEventListener("icecandidate", (event) => {
       if (this.peers.get(peerId)?.connection !== currentPc) return; // stale guard
@@ -487,7 +538,7 @@ export class WebRTCStar extends EventTarget {
     // Connection state monitoring
     peerConnection.addEventListener("connectionstatechange", () => {
       if (this.peers.get(peerId)?.connection !== currentPc) return; // stale guard
-      
+
       if (this.verbose) {
         console.log(
           `🔗 Connection to ${peerId}: ${peerConnection.connectionState}`,
@@ -520,11 +571,17 @@ export class WebRTCStar extends EventTarget {
         if (peer) {
           if (!peer.disconnectedSince) {
             peer.disconnectedSince = Date.now();
-            if (this.verbose) console.log(`⚠️ Connection to ${peerId} disconnected, monitoring for recovery...`);
+            if (this.verbose) {
+              console.log(
+                `⚠️ Connection to ${peerId} disconnected, monitoring for recovery...`,
+              );
+            }
           }
           // After 3s continuous disconnection, try ICE restart
-          if (!peer.restartAttempted && peer.initiator && 
-              Date.now() - peer.disconnectedSince > 3000) {
+          if (
+            !peer.restartAttempted && peer.initiator &&
+            Date.now() - peer.disconnectedSince > 3000
+          ) {
             this.scheduleIceRestart(peerId);
           }
         }
@@ -534,7 +591,7 @@ export class WebRTCStar extends EventTarget {
     // Also monitor ICE connection state
     peerConnection.addEventListener("iceconnectionstatechange", () => {
       if (this.peers.get(peerId)?.connection !== currentPc) return; // stale guard
-      
+
       if (this.verbose) {
         console.log(
           `🧊 ICE connection to ${peerId}: ${peerConnection.iceConnectionState}`,
@@ -552,7 +609,7 @@ export class WebRTCStar extends EventTarget {
     // Handle incoming data channels (when we're not the initiator)
     peerConnection.ondatachannel = (event) => {
       if (this.peers.get(peerId)?.connection !== currentPc) return; // stale guard
-      
+
       const channel = event.channel;
       if (this.verbose) {
         console.log(
@@ -580,6 +637,25 @@ export class WebRTCStar extends EventTarget {
 
     channel.addEventListener("open", () => {
       console.log(`📡 ${channel.label} channel open to ${peerId}`);
+
+      // Set bufferedAmountLowThreshold for adaptive pacing on sync channel
+      if (channel.label === "sync") {
+        try {
+          channel.bufferedAmountLowThreshold = 16384; // 16 KB
+          if (this.verbose) {
+            console.log(
+              `✅ Set bufferedAmountLowThreshold to 16KB for sync channel to ${peerId}`,
+            );
+          }
+        } catch (error) {
+          // Some browsers may not support this property
+          if (this.verbose) {
+            console.log(
+              `⚠️ Could not set bufferedAmountLowThreshold: ${error.message}`,
+            );
+          }
+        }
+      }
 
       // Check if peer is now ready (both connection and sync channel)
       this.checkPeerReadiness(peerId);
@@ -689,15 +765,18 @@ export class WebRTCStar extends EventTarget {
 
     try {
       await peer.connection.setRemoteDescription(answer);
-      
+
       // Drain any buffered ICE candidates after setting remote description
       await this.drainPendingCandidates(fromPeerId);
-      
+
       if (this.verbose) console.log(`✅ Set answer from ${fromPeerId}`);
     } catch (error) {
       // Log but don't fail - let WebRTC handle signaling issues gracefully
       if (this.verbose) {
-        console.warn(`⚠️ Non-fatal error setting answer from ${fromPeerId}:`, error.message);
+        console.warn(
+          `⚠️ Non-fatal error setting answer from ${fromPeerId}:`,
+          error.message,
+        );
       }
     }
   }
@@ -730,7 +809,7 @@ export class WebRTCStar extends EventTarget {
     try {
       if (candidate) {
         const pc = peer.connection;
-        
+
         // Check if we have a remote description before adding the candidate
         if (!pc.remoteDescription) {
           if (this.verbose) {
@@ -742,16 +821,21 @@ export class WebRTCStar extends EventTarget {
           peer.pendingCandidates.push(candidate);
           return;
         }
-        
+
         // Add the ICE candidate
         await pc.addIceCandidate(new RTCIceCandidate(candidate));
-        
-        if (this.verbose) console.log(`✅ Added ICE candidate from ${fromPeerId}`);
+
+        if (this.verbose) {
+          console.log(`✅ Added ICE candidate from ${fromPeerId}`);
+        }
       }
       // A null candidate indicates the end of the gathering process
     } catch (error) {
       if (this.verbose) {
-        console.warn(`⚠️ Non-fatal error adding ICE candidate for ${fromPeerId}:`, error.message);
+        console.warn(
+          `⚠️ Non-fatal error adding ICE candidate for ${fromPeerId}:`,
+          error.message,
+        );
       }
       // Non-fatal error - let connection continue
     }
@@ -765,7 +849,9 @@ export class WebRTCStar extends EventTarget {
     if (!peer || peer.pendingCandidates.length === 0) return;
 
     if (this.verbose) {
-      console.log(`🔄 Draining ${peer.pendingCandidates.length} buffered ICE candidates for ${peerId}`);
+      console.log(
+        `🔄 Draining ${peer.pendingCandidates.length} buffered ICE candidates for ${peerId}`,
+      );
     }
 
     const candidates = [...peer.pendingCandidates];
@@ -774,10 +860,15 @@ export class WebRTCStar extends EventTarget {
     for (const candidate of candidates) {
       try {
         await peer.connection.addIceCandidate(new RTCIceCandidate(candidate));
-        if (this.verbose) console.log(`✅ Added buffered ICE candidate for ${peerId}`);
+        if (this.verbose) {
+          console.log(`✅ Added buffered ICE candidate for ${peerId}`);
+        }
       } catch (error) {
         if (this.verbose) {
-          console.warn(`⚠️ Non-fatal error adding buffered ICE candidate for ${peerId}:`, error.message);
+          console.warn(
+            `⚠️ Non-fatal error adding buffered ICE candidate for ${peerId}:`,
+            error.message,
+          );
         }
       }
     }
@@ -829,6 +920,13 @@ export class WebRTCStar extends EventTarget {
 
       // Calculate RTT for basic connectivity (suppress noisy logs unless verbose)
       const rtt = performance.now() - pongMessage.pingTimestamp;
+
+      // Store RTT for diagnostics
+      const peer = this.peers.get(peerId);
+      if (peer) {
+        peer.lastPingRtt = rtt;
+      }
+
       if (this.verbose) {
         console.log(`🏓 Pong from ${peerId}: ${Math.round(rtt)}ms`);
       }
@@ -873,6 +971,24 @@ export class WebRTCStar extends EventTarget {
         );
       }
       return false;
+    }
+
+    // Adaptive pacing for sync channel only - never drop control messages
+    if (channelType === "sync") {
+      const threshold = channel.bufferedAmountLowThreshold || 16384; // Fallback to 16KB
+      if (channel.bufferedAmount > threshold) {
+        // Track dropped messages for diagnostics
+        if (!peer.droppedSyncCount) peer.droppedSyncCount = 0;
+        peer.droppedSyncCount++;
+
+        // Log only first few drops to avoid spam
+        if (peer.droppedSyncCount <= 3) {
+          console.warn(
+            `⏸️ Sync channel to ${peerId} buffered ${channel.bufferedAmount} bytes > ${threshold}, dropping message`,
+          );
+        }
+        return false; // Skip this sync message
+      }
     }
 
     try {
@@ -978,12 +1094,13 @@ export class WebRTCStar extends EventTarget {
 
     // Strict readiness: require ALL 4 conditions
     const isConnectionReady = peer.connection.connectionState === "connected";
-    const isIceReady = peer.connection.iceConnectionState === "connected" || 
-                       peer.connection.iceConnectionState === "completed";
+    const isIceReady = peer.connection.iceConnectionState === "connected" ||
+      peer.connection.iceConnectionState === "completed";
     const isSyncChannelReady = peer.syncChannel?.readyState === "open";
     const isControlChannelReady = peer.controlChannel?.readyState === "open";
-    
-    const ready = isConnectionReady && isIceReady && isSyncChannelReady && isControlChannelReady;
+
+    const ready = isConnectionReady && isIceReady && isSyncChannelReady &&
+      isControlChannelReady;
 
     // Debug info
     if (this.verbose) {
@@ -1000,7 +1117,7 @@ export class WebRTCStar extends EventTarget {
       if (this.verbose) {
         console.log(`✅ All conditions met for ${peerId} - fully ready`);
       }
-      
+
       // Clear ALL failure tracking on full readiness
       peer.disconnectedSince = null;
       peer.restartAttempted = false;
@@ -1013,7 +1130,7 @@ export class WebRTCStar extends EventTarget {
         clearTimeout(peer.reconnectTimer);
         peer.reconnectTimer = null;
       }
-      
+
       // Prevent duplicate events
       if (!peer.connectedEventSent) {
         peer.connectedEventSent = true;
@@ -1032,9 +1149,7 @@ export class WebRTCStar extends EventTarget {
         console.log(
           `⏳ Peer ${peerId} - Connection: ${
             isConnectionReady ? "ready" : "waiting"
-          }, ICE: ${
-            isIceReady ? "ready" : "waiting"
-          }, Sync: ${
+          }, ICE: ${isIceReady ? "ready" : "waiting"}, Sync: ${
             isSyncChannelReady ? "ready" : "waiting"
           }, Control: ${isControlChannelReady ? "ready" : "waiting"}`,
         );
@@ -1050,16 +1165,20 @@ export class WebRTCStar extends EventTarget {
     if (!peer || !peer.initiator || peer.restartAttempted) {
       return; // Only initiator can restart, and only once
     }
-    
+
     peer.restartAttempted = true;
     const delay = 1000 + Math.random() * 500; // 1-1.5s with jitter
-    if (this.verbose) console.log(`🔄 Scheduling ICE restart to ${peerId} in ${Math.round(delay)}ms...`);
-    
+    if (this.verbose) {
+      console.log(
+        `🔄 Scheduling ICE restart to ${peerId} in ${Math.round(delay)}ms...`,
+      );
+    }
+
     // Clear any existing timer
     if (peer.restartTimer) {
       clearTimeout(peer.restartTimer);
     }
-    
+
     peer.restartTimer = setTimeout(() => {
       this.attemptIceRestart(peerId);
     }, delay);
@@ -1071,36 +1190,37 @@ export class WebRTCStar extends EventTarget {
   async attemptIceRestart(peerId) {
     const peer = this.peers.get(peerId);
     if (!peer || !peer.initiator) return;
-    
+
     if (peer.restartTimer) {
       clearTimeout(peer.restartTimer);
       peer.restartTimer = null;
     }
-    
+
     if (this.verbose) console.log(`🔄 Attempting ICE restart to ${peerId}...`);
-    
+
     try {
       const pc = peer.connection;
       const offer = await pc.createOffer({ iceRestart: true });
       await pc.setLocalDescription(offer);
-      
+
       this.sendSignalingMessage({
         type: "offer",
         targetPeerId: peerId,
         offer: offer,
       });
-      
+
       if (this.verbose) console.log(`📤 Sent ICE restart offer to ${peerId}`);
-      
+
       // Schedule fallback rebuild if no recovery in 10s
       peer.reconnectTimer = setTimeout(() => {
         const currentPeer = this.peers.get(peerId);
-        if (!currentPeer?.connection || 
-            currentPeer.connection.connectionState !== "connected") {
+        if (
+          !currentPeer?.connection ||
+          currentPeer.connection.connectionState !== "connected"
+        ) {
           this.schedulePeerReconnect(peerId);
         }
       }, 10000);
-      
     } catch (error) {
       console.error(`❌ ICE restart failed for ${peerId}:`, error);
       this.schedulePeerReconnect(peerId); // Fallback to rebuild
@@ -1117,19 +1237,25 @@ export class WebRTCStar extends EventTarget {
       return;
     }
     if (peer.reconnectAttempted) {
-      if (this.verbose) console.log(`↩️ Reconnect already attempted for ${peerId}`);
+      if (this.verbose) {
+        console.log(`↩️ Reconnect already attempted for ${peerId}`);
+      }
       return; // Do NOT remove peer here - prevents deletion loops
     }
-    
+
     peer.reconnectAttempted = true;
     const delay = 2000 + Math.random() * 1000;
-    if (this.verbose) console.log(`🔄 Scheduling reconnection to ${peerId} in ${Math.round(delay)}ms...`);
-    
+    if (this.verbose) {
+      console.log(
+        `🔄 Scheduling reconnection to ${peerId} in ${Math.round(delay)}ms...`,
+      );
+    }
+
     // Clear any existing timer
     if (peer.reconnectTimer) {
       clearTimeout(peer.reconnectTimer);
     }
-    
+
     peer.reconnectTimer = setTimeout(() => {
       this.attemptPeerReconnect(peerId);
     }, delay);
@@ -1143,15 +1269,21 @@ export class WebRTCStar extends EventTarget {
     if (!peer) return;
 
     const wasInitiator = peer.initiator;
-    if (peer.reconnectTimer) { 
-      clearTimeout(peer.reconnectTimer); 
-      peer.reconnectTimer = null; 
+    if (peer.reconnectTimer) {
+      clearTimeout(peer.reconnectTimer);
+      peer.reconnectTimer = null;
     }
-    if (this.verbose) console.log(`🔄 Attempting reconnection to ${peerId} (initiator=${wasInitiator})...`);
+    if (this.verbose) {
+      console.log(
+        `🔄 Attempting reconnection to ${peerId} (initiator=${wasInitiator})...`,
+      );
+    }
 
     try {
       // Close old pc; don't act on its events due to stale guard
-      try { peer.connection.close(); } catch {}
+      try {
+        peer.connection.close();
+      } catch {}
 
       // New pc
       const pc = new RTCPeerConnection({ iceServers: this.iceServers });
@@ -1160,10 +1292,10 @@ export class WebRTCStar extends EventTarget {
       peer.controlChannel = null;
       peer.connectedEventSent = false; // Allow "peer-connected" to fire again
       peer.pendingCandidates = []; // Reset ICE buffer for new pc
-      
+
       // Clear disconnected tracking
       peer.disconnectedSince = null;
-      
+
       // Stale guards via captured pc
       const currentPc = pc;
 
@@ -1171,18 +1303,18 @@ export class WebRTCStar extends EventTarget {
         if (this.peers.get(peerId)?.connection !== currentPc) return;
         this.setupDataChannel(event.channel, peerId);
       };
-      
+
       pc.addEventListener("icecandidate", (event) => {
         if (this.peers.get(peerId)?.connection !== currentPc) return;
         if (event.candidate) {
-          this.sendSignalingMessage({ 
-            type: "ice-candidate", 
-            targetPeerId: peerId, 
-            candidate: event.candidate 
+          this.sendSignalingMessage({
+            type: "ice-candidate",
+            targetPeerId: peerId,
+            candidate: event.candidate,
           });
         }
       });
-      
+
       pc.addEventListener("connectionstatechange", () => {
         if (this.peers.get(peerId)?.connection !== currentPc) return;
         const state = pc.connectionState;
@@ -1190,9 +1322,9 @@ export class WebRTCStar extends EventTarget {
         if (state === "connected") {
           // Reset retry flags on success
           peer.reconnectAttempted = false;
-          if (peer.reconnectTimer) { 
-            clearTimeout(peer.reconnectTimer); 
-            peer.reconnectTimer = null; 
+          if (peer.reconnectTimer) {
+            clearTimeout(peer.reconnectTimer);
+            peer.reconnectTimer = null;
           }
           this.checkPeerReadiness(peerId);
         } else if (state === "failed") {
@@ -1201,38 +1333,48 @@ export class WebRTCStar extends EventTarget {
         } else if (state === "closed") {
           this.removePeer(peerId);
         } else if (state === "disconnected") {
-          if (this.verbose) console.log(`⚠️ ${peerId} disconnected; waiting for recovery`);
+          if (this.verbose) {
+            console.log(`⚠️ ${peerId} disconnected; waiting for recovery`);
+          }
         }
       });
-      
+
       pc.addEventListener("iceconnectionstatechange", () => {
         if (this.peers.get(peerId)?.connection !== currentPc) return;
         const ice = pc.iceConnectionState;
-        if (ice === "connected" || ice === "completed") this.checkPeerReadiness(peerId);
+        if (ice === "connected" || ice === "completed") {
+          this.checkPeerReadiness(peerId);
+        }
       });
 
       if (wasInitiator) {
         peer.initiator = true;
-        
+
         // Create data channels exactly once
-        const syncChannel = pc.createDataChannel("sync", { ordered: false, maxRetransmits: 0 });
-        const controlChannel = pc.createDataChannel("control", { ordered: true });
+        const syncChannel = pc.createDataChannel("sync", {
+          ordered: false,
+          maxRetransmits: 0,
+        });
+        const controlChannel = pc.createDataChannel("control", {
+          ordered: true,
+        });
         this.setupDataChannel(syncChannel, peerId);
         this.setupDataChannel(controlChannel, peerId);
 
         // Create and send offer
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        this.sendSignalingMessage({ 
-          type: "offer", 
-          targetPeerId: peerId, 
-          offer 
+        this.sendSignalingMessage({
+          type: "offer",
+          targetPeerId: peerId,
+          offer,
         });
-        if (this.verbose) console.log(`📤 Sent reconnection offer to ${peerId}`);
+        if (this.verbose) {
+          console.log(`📤 Sent reconnection offer to ${peerId}`);
+        }
       } else {
         peer.initiator = false; // wait for remote offer
       }
-
     } catch (e) {
       console.error(`❌ Reconnect setup failed for ${peerId}:`, e);
       this.removePeer(peerId);
@@ -1257,6 +1399,10 @@ export class WebRTCStar extends EventTarget {
     // Clear pending candidates buffer
     peer.pendingCandidates = [];
 
+    // Clear pacing counters
+    peer.droppedSyncCount = 0;
+    peer.channelWarningCount = {};
+
     // Close connection
     if (peer.connection.connectionState !== "closed") {
       peer.connection.close();
@@ -1272,15 +1418,22 @@ export class WebRTCStar extends EventTarget {
     );
 
     // If synth loses its last controller, proactively request new list
-    if (this.peerType === 'synth' && peerId.startsWith('ctrl-')) {
-      const remainingCtrlPeers = [...this.peers.keys()].filter(id => id.startsWith('ctrl-'));
+    if (this.peerType === "synth" && peerId.startsWith("ctrl-")) {
+      const remainingCtrlPeers = [...this.peers.keys()].filter((id) =>
+        id.startsWith("ctrl-")
+      );
       if (remainingCtrlPeers.length === 0) {
         if (this.verbose) {
-          console.log("🔌 Last controller disconnected. Proactively requesting a new list.");
+          console.log(
+            "🔌 Last controller disconnected. Proactively requesting a new list.",
+          );
         }
         setTimeout(() => {
-          if (this.signalingSocket && this.signalingSocket.readyState === WebSocket.OPEN) {
-            this.sendSignalingMessage({ type: 'request-ctrls' });
+          if (
+            this.signalingSocket &&
+            this.signalingSocket.readyState === WebSocket.OPEN
+          ) {
+            this.sendSignalingMessage({ type: "request-ctrls" });
           }
         }, 250);
       }
@@ -1306,6 +1459,84 @@ export class WebRTCStar extends EventTarget {
       connectedPeers: this.peers.size,
       peerStats,
     };
+  }
+
+  /**
+   * Get detailed peer diagnostics including ICE type and RTT
+   */
+  async getPeerDiagnostics() {
+    const diagnostics = [];
+
+    for (const [peerId, peer] of this.peers) {
+      const diag = {
+        peerId,
+        peerType: peer.peerType,
+        connectionState: peer.connection.connectionState,
+        iceConnectionState: peer.connection.iceConnectionState,
+        syncChannelState: peer.syncChannel?.readyState || "none",
+        controlChannelState: peer.controlChannel?.readyState || "none",
+        droppedSyncMessages: peer.droppedSyncCount || 0,
+        iceType: "unknown",
+        rtt: null,
+      };
+
+      // Try to get WebRTC stats for ICE type and RTT
+      try {
+        const stats = await peer.connection.getStats();
+
+        // Find the selected candidate pair
+        let selectedPair = null;
+        let transport = null;
+
+        stats.forEach((stat) => {
+          if (stat.type === "transport") {
+            transport = stat;
+          }
+          if (stat.type === "candidate-pair") {
+            // Chrome uses nominated, modern spec uses selectedCandidatePairId
+            if (
+              stat.nominated ||
+              (transport && stat.id === transport.selectedCandidatePairId)
+            ) {
+              if (stat.state === "succeeded" || !selectedPair) {
+                selectedPair = stat;
+              }
+            }
+          }
+        });
+
+        if (selectedPair) {
+          // Get RTT from candidate pair
+          if (selectedPair.currentRoundTripTime !== undefined) {
+            diag.rtt = Math.round(selectedPair.currentRoundTripTime * 1000); // Convert to ms
+          }
+
+          // Find remote candidate to get ICE type
+          stats.forEach((stat) => {
+            if (
+              stat.type === "remote-candidate" &&
+              stat.id === selectedPair.remoteCandidateId
+            ) {
+              // candidateType: host, srflx, prflx, relay
+              diag.iceType = stat.candidateType || "unknown";
+            }
+          });
+        }
+      } catch (error) {
+        if (this.verbose) {
+          console.warn(`⚠️ Could not get stats for ${peerId}:`, error.message);
+        }
+      }
+
+      // Fallback RTT from ping/pong if WebRTC stats unavailable
+      if (diag.rtt === null && peer.lastPingRtt !== undefined) {
+        diag.rtt = Math.round(peer.lastPingRtt);
+      }
+
+      diagnostics.push(diag);
+    }
+
+    return diagnostics;
   }
 
   /**

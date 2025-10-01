@@ -257,6 +257,7 @@ Each synthesis parameter gets:
 ### Architecture
 
 **Distributed Storage Model**:
+
 - **Controller**: Saves program configuration in localStorage (UI state)
 - **Synths**: Each maintains independent 10-slot in-memory scene array
 - **No synchronization**: Each synth client operates autonomously
@@ -265,38 +266,44 @@ Each synthesis parameter gets:
 ### Per-Synth State Capture
 
 **Saved State per Synth**:
+
 ```js
 sceneSnapshots[bank] = {
   snapshot: {
-    amplitude: 0.8,        // Direct parameter values
-    whiteNoise: 0.0,       // RBG stat mode values
+    amplitude: 0.8, // Direct parameter values
+    whiteNoise: 0.0, // RBG stat mode values
     // ... other direct/stat parameters
   },
   sequences: {
     frequency: {
       numeratorBehavior: "static",
-      denominatorBehavior: "static", 
-      indexN: 4,             // Current numerator index
-      indexD: 1,             // Current denominator index
-      orderN: null,          // Shuffle order (if shuffle behavior)
-      orderD: null           // Shuffle order (if shuffle behavior)
-    }
+      denominatorBehavior: "static",
+      indexN: 4, // Current numerator index
+      indexD: 1, // Current denominator index
+      orderN: null, // Shuffle order (if shuffle behavior)
+      orderD: null, // Shuffle order (if shuffle behavior)
+    },
     // ... other HRG parameters
-  }
-}
+  },
+};
 ```
 
 ### Save/Load Process
 
 **Save Operation** (per synth):
-1. **Capture HRG state**: Current indices and shuffle orders for all HRG parameters
-2. **Capture direct values**: Current amplitude, white noise, and RBG stat values
+
+1. **Capture HRG state**: Current indices and shuffle orders for all HRG
+   parameters
+2. **Capture direct values**: Current amplitude, white noise, and RBG stat
+   values
 3. **Store in memory**: Save to `sceneSnapshots[bank]` array
 4. **No coordination**: Each synth saves independently
 
 **Load Operation** (per synth):
+
 1. **Check local memory**: Look for saved state in `sceneSnapshots[bank]`
-2. **Restore HRG state**: If saved sequences exist, restore exact indices and orders
+2. **Restore HRG state**: If saved sequences exist, restore exact indices and
+   orders
 3. **Apply direct values**: Restore saved amplitude, white noise, etc.
 4. **Fresh initialization**: If no saved state, initialize new random state
 5. **Preserve program config**: Don't overwrite program if we have saved state
@@ -306,25 +313,30 @@ sceneSnapshots[bank] = {
 **Purpose**: Generate new ensemble textures during performance
 
 **Process**:
+
 1. **Controller broadcasts**: `RERESOLVE_AT_EOC` message to all synths
 2. **Synth flags**: Each synth sets `reresolveAtNextEOC = true`
-3. **EOC trigger**: At next End-of-Cycle, each synth randomizes static HRG indices
+3. **EOC trigger**: At next End-of-Cycle, each synth randomizes static HRG
+   indices
 4. **Per-synth randomization**: Each synth generates unique new indices
 5. **Immediate effect**: New frequencies take effect at the next cycle
 
 ### Benefits
 
 **Eliminates Complexity**:
+
 - No synth ID management or conflicts
 - No localStorage coordination between tabs
 - No network synchronization required
 
 **Preserves Musical Intent**:
+
 - Each synth maintains its unique musical state
 - Saved scenes restore exact ensemble textures
 - Re-resolve provides controlled randomization
 
 **Performance Optimized**:
+
 - Instant scene transitions (no network delay)
 - Minimal memory footprint
 - No persistent storage complexity
@@ -348,7 +360,8 @@ sceneSnapshots[bank] = {
 - **Calibration Toggle**: Enable/disable calibration mode
 - **Apply Changes Button**: Located in control panel for deferred parameter
   application
-- **Scene Memory Interface**: 10 numbered save/load buttons plus re-resolve button
+- **Scene Memory Interface**: 10 numbered save/load buttons plus re-resolve
+  button
 
 ### Monome Grid Integration
 

@@ -26,7 +26,7 @@ class DevRunner {
 
   private startServer() {
     console.log("📡 Starting server with file watching...");
-    
+
     this.serverProcess = new Deno.Command(Deno.execPath(), {
       args: [
         "run",
@@ -37,7 +37,7 @@ class DevRunner {
         "--allow-run",
         "--unstable-kv",
         "--watch",
-        "src/server/server.ts"
+        "src/server/server.ts",
       ],
       stdout: "inherit",
       stderr: "inherit",
@@ -46,13 +46,13 @@ class DevRunner {
 
   private startBundler() {
     console.log("🔨 Starting TypeScript bundler with file watching...");
-    
+
     this.bundlerProcess = new Deno.Command(Deno.execPath(), {
       args: [
         "run",
         "-A",
         "--watch=public/ctrl/ctrl-main.ts",
-        "scripts/bundle_ctrl.ts"
+        "scripts/bundle_ctrl.ts",
       ],
       stdout: "inherit",
       stderr: "inherit",
@@ -63,19 +63,19 @@ class DevRunner {
     const shutdown = () => {
       if (this.isShuttingDown) return;
       this.isShuttingDown = true;
-      
+
       console.log("\n🛑 Shutting down development environment...");
-      
+
       if (this.serverProcess) {
         console.log("  Stopping server...");
         this.serverProcess.kill("SIGTERM");
       }
-      
+
       if (this.bundlerProcess) {
         console.log("  Stopping bundler...");
         this.bundlerProcess.kill("SIGTERM");
       }
-      
+
       console.log("✅ Development environment stopped");
       Deno.exit(0);
     };
@@ -83,7 +83,7 @@ class DevRunner {
     // Handle Ctrl+C and other termination signals
     Deno.addSignalListener("SIGINT", shutdown);
     Deno.addSignalListener("SIGTERM", shutdown);
-    
+
     // Handle process exit
     globalThis.addEventListener("beforeunload", shutdown);
   }
@@ -91,7 +91,7 @@ class DevRunner {
   private async waitForShutdown() {
     // Keep the main process alive until shutdown
     while (!this.isShuttingDown) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise((resolve) => setTimeout(resolve, 1000));
     }
   }
 }

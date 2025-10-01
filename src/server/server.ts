@@ -106,6 +106,9 @@ interface ConnectionInfo {
   actual_id: string | null;
 }
 
+// Track per-synth KV TTL refresh timers (for multi-region presence)
+const synthKeepAliveTimers = new Map<string, number>();
+
 interface KVCtrlEntry {
   client_id: string;
   timestamp: number;
@@ -190,29 +193,9 @@ console.log(`🎵 Voice.Assembly.FM Simplified Signaling Server starting...`);
 
 // Cleanup stale KV entries on startup
 async function cleanupKVOnStartup() {
-  console.log("🧹 Cleaning up stale KV entries...");
-
-  try {
-    // Clean up old messages
-    const messageEntries = kv.list({ prefix: ["messages"] });
-    let messageCount = 0;
-    for await (const entry of messageEntries) {
-      await kv.delete(entry.key);
-      messageCount++;
-    }
-    console.log(`🧹 Cleaned up ${messageCount} stale message entries`);
-
-    // Clean up old ctrl entries
-    const ctrlEntries = kv.list({ prefix: ["ctrls"] });
-    let ctrlCount = 0;
-    for await (const entry of ctrlEntries) {
-      await kv.delete(entry.key);
-      ctrlCount++;
-    }
-    console.log(`🧹 Cleaned up ${ctrlCount} stale ctrl entries`);
-  } catch (error) {
-    console.error("🧹 Error cleaning up KV entries:", error);
-  }
+  // No-op in multi-edge environments: message keys expire via TTL.
+  // Avoid global cleanup that can race across regions.
+  console.log("🧹 Skipping global KV cleanup (using TTL-based expiry)");
 }
 
 // Helper function to send message directly or queue for cross-edge delivery
@@ -243,26 +226,19 @@ async function handleWebSocketMessage(
 
     console.log(`📨 Message from ${sender_id}: ${message.type}`);
 
-    // Handle synth requesting ctrl list - now returns single active controller
+    // Handle synth requesting ctrl list - trust KV (multi-region)
     if (message.type === "request-ctrls") {
-      const ctrlsList = [];
+      const ctrlsList: string[] = [];
       const activeCtrlEntry = await kv.get(["active_ctrl"]);
-      console.log(`[SERVER-STATE] SYNTH REQUEST from ${sender_id}. Active controller in DB is: ${(activeCtrlEntry?.value as KVCtrlEntry)?.client_id ?? 'null'}`);
+      console.log(
+        `[SERVER-STATE] SYNTH REQUEST from ${sender_id}. Active controller in DB is: ${
+          (activeCtrlEntry?.value as KVCtrlEntry)?.client_id ?? "null"
+        }`,
+      );
 
-      if (activeCtrlEntry && activeCtrlEntry.value) {
+      if (activeCtrlEntry?.value) {
         const activeCtrl = activeCtrlEntry.value as KVCtrlEntry;
-
-        // Check if the active ctrl is still connected locally
-        const isConnected = connections.has(activeCtrl.client_id) &&
-          connections.get(activeCtrl.client_id)?.socket.readyState ===
-            WebSocket.OPEN;
-
-        if (isConnected) {
-          ctrlsList.push(activeCtrl.client_id);
-        } else {
-          // Clean up stale active ctrl entry
-          await kv.delete(["active_ctrl"]);
-        }
+        ctrlsList.push(activeCtrl.client_id);
       }
 
       const response: CtrlsListMessage = {
@@ -278,15 +254,19 @@ async function handleWebSocketMessage(
       return;
     }
 
-    // Handle ctrl requesting synth list
+    // Handle ctrl requesting synth list (KV roster across regions)
     if (message.type === "request-synths") {
-      const synthsList = [];
-      
-      // Find all connected synths
-      for (const [id, conn] of connections.entries()) {
-        if (id.startsWith("synth-") && conn.socket.readyState === WebSocket.OPEN) {
-          synthsList.push(id);
+      const synthsList: string[] = [];
+      // Prefer KV-backed roster so we see synths connected to other regions
+      try {
+        const synthEntries = kv.list({ prefix: ["synths"] });
+        for await (const entry of synthEntries) {
+          const key = entry.key as (string | unknown)[];
+          const synthId = String(key[1]);
+          if (synthId?.startsWith("synth-")) synthsList.push(synthId);
         }
+      } catch (e) {
+        console.error("[SYNTHS-LIST] Failed to read KV synth roster:", e);
       }
 
       const response: SynthsListMessage = {
@@ -342,7 +322,11 @@ async function handleWebSocketMessage(
         );
       }
 
-      await sendOrQueue((message as any).target, message as unknown as Record<string, unknown>, 30 * 1000);
+      await sendOrQueue(
+        (message as any).target,
+        message as unknown as Record<string, unknown>,
+        30 * 1000,
+      );
     }
   } catch (error) {
     console.error(`❌ Error handling message: ${error}`);
@@ -372,7 +356,7 @@ async function startPollingForClient(
     }
 
     // Poll every 100ms (faster than before for better signaling performance)
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 200));
   }
 
   console.log(`🔄 Stopped polling for client: ${client_id}`);
@@ -429,7 +413,11 @@ async function handleRequest(request: Request): Promise<Response> {
           // --- BEGIN NEW, SIMPLIFIED CONTROLLER REGISTRATION LOGIC ---
           const oldCtrlEntry = await kv.get(["active_ctrl"]);
           const oldCtrl = oldCtrlEntry?.value as (KVCtrlEntry | null);
-          console.log(`[SERVER-STATE] REGISTRATION from ${client_id}. Current active_ctrl in DB is: ${oldCtrl?.client_id ?? 'null'}`);
+          console.log(
+            `[SERVER-STATE] REGISTRATION from ${client_id}. Current active_ctrl in DB is: ${
+              oldCtrl?.client_id ?? "null"
+            }`,
+          );
 
           // The new controller registering should ALWAYS become the active one.
           // This is the most robust way to handle the refresh race condition.
@@ -437,11 +425,18 @@ async function handleRequest(request: Request): Promise<Response> {
           if (oldCtrl && oldCtrl.client_id !== client_id) {
             const oldCtrlSocket = connections.get(oldCtrl.client_id)?.socket;
             if (oldCtrlSocket?.readyState === WebSocket.OPEN) {
-              console.log(`[SERVER-STATE] Kicking stale controller ${oldCtrl.client_id} due to new registration from ${client_id}.`);
-              oldCtrlSocket.send(JSON.stringify({ type: "kicked", reason: "A new controller has connected." }));
+              console.log(
+                `[SERVER-STATE] Kicking stale controller ${oldCtrl.client_id} due to new registration from ${client_id}.`,
+              );
+              oldCtrlSocket.send(
+                JSON.stringify({
+                  type: "kicked",
+                  reason: "A new controller has connected.",
+                }),
+              );
             }
           }
-          
+
           // Set shouldBecomeActive to true to trigger the synth notifications below.
           const shouldBecomeActive = true;
           // --- END NEW LOGIC ---
@@ -453,7 +448,9 @@ async function handleRequest(request: Request): Promise<Response> {
               timestamp: Date.now(),
               ws_id: temp_id,
             };
-            console.log(`[SERVER-STATE] Setting active_ctrl in DB to: ${client_id}`);
+            console.log(
+              `[SERVER-STATE] Setting active_ctrl in DB to: ${client_id}`,
+            );
             await kv.set(["active_ctrl"], value);
             console.log(`👑 ${client_id} is now the active controller`);
 
@@ -461,13 +458,19 @@ async function handleRequest(request: Request): Promise<Response> {
             // Immediately send the new controller a list of all current synths.
             const synthsList = [];
             for (const [id, conn] of connections.entries()) {
-              if (id.startsWith("synth-") && conn.socket.readyState === WebSocket.OPEN) {
+              if (
+                id.startsWith("synth-") &&
+                conn.socket.readyState === WebSocket.OPEN
+              ) {
                 synthsList.push(id);
               }
             }
 
             if (synthsList.length > 0) {
-              console.log(`[SERVER-STATE] Proactively sending synth list to new controller ${client_id}:`, synthsList);
+              console.log(
+                `[SERVER-STATE] Proactively sending synth list to new controller ${client_id}:`,
+                synthsList,
+              );
               const notification: SynthsListMessage = {
                 type: "synths-list",
                 synths: synthsList,
@@ -484,6 +487,7 @@ async function handleRequest(request: Request): Promise<Response> {
               timestamp: Date.now(),
             };
 
+            // Local synths
             for (const [conn_id, conn_info] of connections) {
               if (
                 conn_id.startsWith("synth-") &&
@@ -492,22 +496,59 @@ async function handleRequest(request: Request): Promise<Response> {
                 conn_info.socket.send(JSON.stringify(notification));
               }
             }
+            // Cross-edge synths via KV mailbox
+            try {
+              const synthEntries = kv.list({ prefix: ["synths"] });
+              for await (const entry of synthEntries) {
+                const key = entry.key as (string | unknown)[];
+                const synthId = String(key[1]);
+                await sendOrQueue(synthId, notification);
+              }
+            } catch (e) {
+              console.error("[CTRL-JOINED] KV synth broadcast failed:", e);
+            }
           }
         } else if (client_id.startsWith("synth-")) {
+          // Register synth in KV roster with TTL and start keepalive refresh
+          try {
+            await kv.set(["synths", client_id], { ts: Date.now() }, {
+              expireIn: 30_000,
+            });
+            const timerId = setInterval(async () => {
+              try {
+                await kv.set(["synths", client_id], { ts: Date.now() }, {
+                  expireIn: 30_000,
+                });
+              } catch (e) {
+                console.error(
+                  `[SYNTH-KA] Failed to refresh TTL for ${client_id}:`,
+                  e,
+                );
+              }
+            }, 10_000) as unknown as number;
+            synthKeepAliveTimers.set(client_id, timerId);
+          } catch (e) {
+            console.error(
+              `[SYNTH-REGISTER] Failed to register ${client_id} in KV:`,
+              e,
+            );
+          }
+
           // Notify active ctrl about new synth
           const activeCtrlEntry = await kv.get(["active_ctrl"]);
           if (activeCtrlEntry && activeCtrlEntry.value) {
             const activeCtrl = activeCtrlEntry.value as KVCtrlEntry;
+            const notification: SynthJoinedMessage = {
+              type: "synth-joined",
+              synth_id: client_id,
+              timestamp: Date.now(),
+            };
             const ctrlSocket = connections.get(activeCtrl.client_id)?.socket;
-
             if (ctrlSocket && ctrlSocket.readyState === WebSocket.OPEN) {
-              const notification: SynthJoinedMessage = {
-                type: "synth-joined",
-                synth_id: client_id,
-                timestamp: Date.now(),
-              };
               ctrlSocket.send(JSON.stringify(notification));
             }
+            // Also queue via KV in case ctrl is on a different region
+            await sendOrQueue(activeCtrl.client_id, notification);
           }
         }
         // --- END OF TAKEOVER LOGIC ---
@@ -544,7 +585,9 @@ async function handleRequest(request: Request): Promise<Response> {
         if (activeCtrlEntry && activeCtrlEntry.value) {
           const activeCtrl = activeCtrlEntry.value as KVCtrlEntry;
           if (activeCtrl.client_id === client_id) {
-            console.log(`[SERVER-STATE] Disconnected client ${client_id} was the active controller. Deleting active_ctrl from DB.`);
+            console.log(
+              `[SERVER-STATE] Disconnected client ${client_id} was the active controller. Deleting active_ctrl from DB.`,
+            );
             await kv.delete(["active_ctrl"]);
             console.log(`👑 Active controller ${client_id} disconnected`);
 
@@ -555,6 +598,7 @@ async function handleRequest(request: Request): Promise<Response> {
               timestamp: Date.now(),
             };
 
+            // Local synths
             for (const [conn_id, conn_info] of connections) {
               if (
                 conn_id.startsWith("synth-") &&
@@ -563,25 +607,46 @@ async function handleRequest(request: Request): Promise<Response> {
                 conn_info.socket.send(JSON.stringify(notification));
               }
             }
+            // Cross-edge synths via KV mailbox
+            try {
+              const synthEntries = kv.list({ prefix: ["synths"] });
+              for await (const entry of synthEntries) {
+                const key = entry.key as (string | unknown)[];
+                const synthId = String(key[1]);
+                await sendOrQueue(synthId, notification);
+              }
+            } catch (e) {
+              console.error("[CTRL-LEFT] KV synth broadcast failed:", e);
+            }
           }
         }
       }
 
-      // If this was a synth, notify the active ctrl about synth leaving
+      // If this was a synth, clear KV roster and notify the active ctrl about synth leaving
       if (client_id && client_id.startsWith("synth-")) {
+        try {
+          await kv.delete(["synths", client_id]);
+        } catch (_) {
+          // ignore
+        }
+        const timerId = synthKeepAliveTimers.get(client_id);
+        if (timerId) {
+          clearInterval(timerId);
+          synthKeepAliveTimers.delete(client_id);
+        }
         const activeCtrlEntry = await kv.get(["active_ctrl"]);
         if (activeCtrlEntry && activeCtrlEntry.value) {
           const activeCtrl = activeCtrlEntry.value as KVCtrlEntry;
+          const notification: SynthLeftMessage = {
+            type: "synth-left",
+            synth_id: client_id,
+            timestamp: Date.now(),
+          };
           const ctrlSocket = connections.get(activeCtrl.client_id)?.socket;
-
           if (ctrlSocket && ctrlSocket.readyState === WebSocket.OPEN) {
-            const notification: SynthLeftMessage = {
-              type: "synth-left",
-              synth_id: client_id,
-              timestamp: Date.now(),
-            };
             ctrlSocket.send(JSON.stringify(notification));
           }
+          await sendOrQueue(activeCtrl.client_id, notification);
         }
       }
     });
@@ -687,7 +752,10 @@ async function handleRequest(request: Request): Promise<Response> {
   // --- BEGIN MIME TYPE FIX ---
   // Ensure that all .js files are served with the correct MIME type.
   if (url.pathname.endsWith(".js")) {
-    response.headers.set("Content-Type", "application/javascript; charset=utf-8");
+    response.headers.set(
+      "Content-Type",
+      "application/javascript; charset=utf-8",
+    );
   }
   // --- END MIME TYPE FIX ---
 

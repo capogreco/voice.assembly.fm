@@ -79,7 +79,7 @@ refresh.
 4. **Click "Tap to Join the Choir"** on each synth client
 5. **Configure timing in ctrl client**:
    - Set Period (seconds): Controls cycle duration (default 2.0s)
-   - Set Steps: Number of rhythmic divisions per cycle (default 16)  
+   - Set Steps: Number of rhythmic divisions per cycle (default 16)
    - Transport controls: play, pause, stop, jump to EOC
    - Apply at EOC toggle: Changes timing immediately or at End-of-Cycle
 6. **Click "play"** to begin phasor synchronization
@@ -95,11 +95,13 @@ refresh.
 9. **New synths automatically receive current state** - no need to retoggle
    modes
 10. **Scene Memory System**:
-   - **Save**: Click numbered save buttons (0-9) to capture current state
-   - **Load**: Click numbered load buttons to restore saved state  
-   - **Re-resolve**: Click "re-resolve" button to randomize HRG indices across all synths
-   - **Per-synth memory**: Each synth maintains its own 10-slot scene memory
-   - **Ephemeral storage**: Scene memory lost on page refresh (by design)
+
+- **Save**: Click numbered save buttons (0-9) to capture current state
+- **Load**: Click numbered load buttons to restore saved state
+- **Re-resolve**: Click "re-resolve" button to randomize HRG indices across all
+  synths
+- **Per-synth memory**: Each synth maintains its own 10-slot scene memory
+- **Ephemeral storage**: Scene memory lost on page refresh (by design)
 
 ### Architecture Overview
 
@@ -129,8 +131,9 @@ Data Channels                 │  Data Channels
 
 **Timing Synchronization:**
 
-- `phasor-sync`: Master broadcasts current phasor position (0.0-1.0), cycle length in seconds, and steps per cycle
-- `transport`: Transport control commands (play, pause, stop)  
+- `phasor-sync`: Master broadcasts current phasor position (0.0-1.0), cycle
+  length in seconds, and steps per cycle
+- `transport`: Transport control commands (play, pause, stop)
 - `jump-to-eoc`: Instantly jump all synths to End-of-Cycle
 - `ping`/`pong`: RTT measurement and network health monitoring
 
@@ -234,21 +237,27 @@ synchronization.
 different musical states during performance, enabling dynamic transitions
 between pre-configured ensemble textures.
 
-**Architecture**: 
-- **Per-synth storage**: Each synth client maintains its own independent 10-slot memory
+**Architecture**:
+
+- **Per-synth storage**: Each synth client maintains its own independent 10-slot
+  memory
 - **In-memory only**: Scenes are stored in browser memory (lost on page refresh)
-- **State preservation**: Saves HRG indices, sequence orders, and direct parameter values
+- **State preservation**: Saves HRG indices, sequence orders, and direct
+  parameter values
 - **No conflicts**: Each browser tab has its own isolated scene memory
 
 **Save Process**:
-1. **Controller saves program**: Program configuration stored in controller's localStorage
+
+1. **Controller saves program**: Program configuration stored in controller's
+   localStorage
 2. **Synths save state independently**: Each synth captures its current:
    - HRG sequence state (indices and shuffle orders)
    - Direct parameter values (amplitude, white noise, etc.)
    - Generator configurations
 
 **Load Process**:
-1. **Controller loads program**: Updates UI and broadcasts program to synths  
+
+1. **Controller loads program**: Updates UI and broadcasts program to synths
 2. **Synths restore individual state**: Each synth:
    - Checks its own memory slot for saved state
    - Restores saved HRG indices and sequences (preserving unique frequencies)
@@ -256,13 +265,16 @@ between pre-configured ensemble textures.
    - Falls back to fresh initialization if no saved state exists
 
 **Re-resolve Functionality**:
+
 - **Purpose**: Instantly randomize static HRG indices across all synths
 - **Trigger**: "re-resolve" button in controller interface
 - **Effect**: Each synth generates new random indices at next End-of-Cycle
 - **Use case**: Create new ensemble texture variations during performance
 
 **Benefits**:
-- **No ID conflicts**: Eliminates issues with shared localStorage between browser tabs
+
+- **No ID conflicts**: Eliminates issues with shared localStorage between
+  browser tabs
 - **True per-synth uniqueness**: Each synth maintains its own musical state
 - **Simple architecture**: No complex synchronization or conflict resolution
 - **Performance-friendly**: Instant scene transitions with preserved timing

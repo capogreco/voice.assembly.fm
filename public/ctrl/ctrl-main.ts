@@ -46,6 +46,8 @@ class ControlClient {
   audioContext: any;
   es8Enabled: boolean;
   es8Node: any;
+  lastPausedHeartbeat: number;
+  diagnosticsUpdateId: any;
   hasPendingChanges: boolean;
   pendingParameterChanges: Set<keyof IMusicalState>; // Track which parameters have pending changes
   elements: any;
@@ -58,7 +60,13 @@ class ControlClient {
   // Bulk mode properties
   bulkModeEnabled: boolean;
   bulkChanges: Array<
-    { type: string; paramPath?: string; param?: string; value?: any; portamentoTime?: number }
+    {
+      type: string;
+      paramPath?: string;
+      param?: string;
+      value?: any;
+      portamentoTime?: number;
+    }
   >;
 
   private _createDefaultState(): IMusicalState {
@@ -223,12 +231,14 @@ class ControlClient {
 
     // Get portamento time from UI (exponential mapping)
     const portamentoTime = this.elements.portamentoTime
-      ? this._mapPortamentoNormToMs(parseFloat(this.elements.portamentoTime.value))
+      ? this._mapPortamentoNormToMs(
+        parseFloat(this.elements.portamentoTime.value),
+      )
       : 100;
 
     // Use unified broadcast method that respects bulk mode
     this._broadcastParameterChange({
-      type: 'single',
+      type: "single",
       param: action.param,
       portamentoTime: portamentoTime,
     });
@@ -267,7 +277,9 @@ class ControlClient {
   ) {
     const finalPortamentoTime = portamentoTime ??
       (this.elements.portamentoTime
-        ? this._mapPortamentoNormToMs(parseFloat(this.elements.portamentoTime.value))
+        ? this._mapPortamentoNormToMs(
+          parseFloat(this.elements.portamentoTime.value),
+        )
         : 100);
 
     // Check if we should accumulate this change for bulk mode
@@ -395,7 +407,8 @@ class ControlClient {
     this.lastPhasorTime = 0; // For delta time calculation
     this.phasorUpdateId = null; // RequestAnimationFrame ID
     this.lastBroadcastTime = 0; // For phasor broadcast rate limiting
-    this.phasorBroadcastRate = 30; // Hz - how often to broadcast phasor
+    this.phasorBroadcastRate = 10; // Hz - legacy (now EOC-only)
+    this.lastPausedHeartbeat = 0; // Track paused heartbeat timing
 
     // EOC-staged timing changes
     this.pendingPeriodSec = null; // Pending period change
@@ -432,6 +445,7 @@ class ControlClient {
       connectionStatus: document.getElementById("connection-status"),
       connectionValue: document.getElementById("connection-status"), // Same element as connectionStatus
       synthesisStatus: document.getElementById("synthesis-status"),
+      networkDiagnostics: document.getElementById("network-diagnostics"),
       // Removed peers status - now using synth count in connected synths panel
 
       takeoverSection: document.getElementById("takeover-section"),
@@ -594,13 +608,16 @@ class ControlClient {
     if (this.elements.periodInput) {
       this.elements.periodInput.addEventListener("input", (e) => {
         const newPeriod = parseFloat(e.target.value);
-        
+
         // Validate period is within safe bounds
         if (isNaN(newPeriod) || newPeriod < 0.05 || newPeriod > 60) {
-          this.log(`Invalid period: ${e.target.value}s (must be 0.05-60s)`, "error");
+          this.log(
+            `Invalid period: ${e.target.value}s (must be 0.05-60s)`,
+            "error",
+          );
           return;
         }
-        
+
         // Always apply timing changes at EOC
         this.pendingPeriodSec = newPeriod;
         this.log(`Period staged for EOC: ${newPeriod}s (pending)`, "info");
@@ -785,7 +802,9 @@ class ControlClient {
         if (interpolation === "cosine") {
           const param = this.pendingMusicalState[paramName];
           if (param.startValueGenerator) {
-            param.endValueGenerator = JSON.parse(JSON.stringify(param.startValueGenerator));
+            param.endValueGenerator = JSON.parse(
+              JSON.stringify(param.startValueGenerator),
+            );
           }
         }
 
@@ -1265,7 +1284,9 @@ class ControlClient {
     const baseInput = document.getElementById(`${paramName}-base`) as
       | HTMLInputElement
       | null;
-    const interpSelect = document.getElementById(`${paramName}-interpolation`) as
+    const interpSelect = document.getElementById(
+      `${paramName}-interpolation`,
+    ) as
       | HTMLSelectElement
       | null;
 
@@ -1313,7 +1334,7 @@ class ControlClient {
       const applyBase = () => {
         let v = parseFloat(baseInput.value);
         if (!Number.isFinite(v)) return;
-        
+
         // Parameter-specific clamping
         let min: number, max: number;
         if (paramName === "frequency") {
@@ -1327,7 +1348,7 @@ class ControlClient {
           min = 0;
           max = 1000;
         }
-        
+
         v = Math.max(min, Math.min(max, v));
         baseInput.value = String(v);
 
@@ -1339,14 +1360,16 @@ class ControlClient {
             value: v,
           });
           const portamentoTime = this.elements.portamentoTime
-            ? this._mapPortamentoNormToMs(parseFloat(this.elements.portamentoTime.value))
+            ? this._mapPortamentoNormToMs(
+              parseFloat(this.elements.portamentoTime.value),
+            )
             : 100;
           this._sendSubParameterUpdate(
             `${paramName}.baseValue`,
             v,
             portamentoTime,
           );
-          
+
           this.pendingParameterChanges.add(paramName);
           this.updateParameterVisualFeedback(paramName);
         } else {
@@ -1357,14 +1380,16 @@ class ControlClient {
             value: v,
           });
           const portamentoTime = this.elements.portamentoTime
-            ? this._mapPortamentoNormToMs(parseFloat(this.elements.portamentoTime.value))
+            ? this._mapPortamentoNormToMs(
+              parseFloat(this.elements.portamentoTime.value),
+            )
             : 100;
           this.broadcastSubParameterUpdate(
             `${paramName}.baseValue`,
             v,
             portamentoTime,
           );
-          
+
           this.pendingParameterChanges.delete(paramName);
           this.updateParameterVisualFeedback(paramName);
         }
@@ -1653,7 +1678,8 @@ class ControlClient {
 
     // Refresh HRG visibility based on interpolation
     const refreshHrgVisibility = () => {
-      const state = this.pendingMusicalState[paramName] || this.musicalState[paramName];
+      const state = this.pendingMusicalState[paramName] ||
+        this.musicalState[paramName];
       const isCosine = state?.interpolation === "cosine";
 
       // Always show the start HRG for HRG params
@@ -1815,9 +1841,10 @@ class ControlClient {
     const paramState = this.pendingMusicalState[paramName];
 
     // Get all UI components for this parameter
-    const valueInput = (paramName === "frequency" || paramName === "vibratoRate")
-      ? (document.getElementById(`${paramName}-base`) as HTMLInputElement)
-      : (document.getElementById(`${paramName}-value`) as HTMLInputElement);
+    const valueInput =
+      (paramName === "frequency" || paramName === "vibratoRate")
+        ? (document.getElementById(`${paramName}-base`) as HTMLInputElement)
+        : (document.getElementById(`${paramName}-value`) as HTMLInputElement);
     const interpSelect = document.getElementById(
       `${paramName}-interpolation`,
     ) as HTMLSelectElement;
@@ -1836,7 +1863,9 @@ class ControlClient {
     if (valueInput) {
       valueInput.style.display = "inline-block"; // Ensure it's always visible
       if (paramState.startValueGenerator?.type === "normalised") {
-        valueInput.value = this._stringifyNormalised(paramState.startValueGenerator);
+        valueInput.value = this._stringifyNormalised(
+          paramState.startValueGenerator,
+        );
       } else if (paramState.startValueGenerator?.type === "periodic") {
         valueInput.value = (paramState.baseValue ?? "").toString();
       } else if (paramState.baseValue !== null) {
@@ -1892,7 +1921,7 @@ class ControlClient {
         const startDenBeh = document.getElementById(
           `${paramName}-start-denominators-behavior`,
         ) as HTMLSelectElement | null;
-        
+
         // Only update input values if they're not currently being edited
         if (startNums && document.activeElement !== startNums) {
           startNums.value = startGen.numerators ?? "1";
@@ -1939,10 +1968,12 @@ class ControlClient {
         }
       }
 
-      // Re-sync HRG visibility after updating state  
+      // Re-sync HRG visibility after updating state
       const isCosine = paramState.interpolation === "cosine";
       if (hrgArrow) hrgArrow.style.display = isCosine ? "inline-block" : "none";
-      if (hrgEndControls) hrgEndControls.style.display = isCosine ? "inline-block" : "none";
+      if (hrgEndControls) {
+        hrgEndControls.style.display = isCosine ? "inline-block" : "none";
+      }
     }
 
     // Update RBG behavior selector visibility based on current input values
@@ -2168,15 +2199,16 @@ class ControlClient {
   private _getWirePayload(portamentoTime?: number): any {
     // Strict validation: reject any state with forbidden fields
     for (const key in this.pendingMusicalState) {
-      const paramState = this.pendingMusicalState[key as keyof IMusicalState] as any;
-      
+      const paramState = this
+        .pendingMusicalState[key as keyof IMusicalState] as any;
+
       // Debug: Check if paramState is an object
       if (typeof paramState !== "object" || paramState === null) {
         throw new Error(
           `CRITICAL: Parameter '${key}' is not an object, got: ${typeof paramState} (${paramState})`,
         );
       }
-      
+
       if ("scope" in paramState) {
         throw new Error(
           `CRITICAL: Parameter '${key}' has forbidden 'scope' field`,
@@ -2255,10 +2287,12 @@ class ControlClient {
 
   broadcastMusicalParameters(portamentoTime?: number) {
     // Check if we should accumulate this change for bulk mode
-    if (this.addToBulkChanges({
-      type: "full-program-update",
-      portamentoTime: portamentoTime || 100,
-    })) {
+    if (
+      this.addToBulkChanges({
+        type: "full-program-update",
+        portamentoTime: portamentoTime || 100,
+      })
+    ) {
       // Successfully added to bulk queue, don't send immediately
       return;
     }
@@ -2298,7 +2332,7 @@ class ControlClient {
     portamentoTime: number,
   ) {
     this._broadcastParameterChange({
-      type: 'single',
+      type: "single",
       param: paramName,
       portamentoTime: portamentoTime,
     });
@@ -2313,7 +2347,7 @@ class ControlClient {
     portamentoTime: number,
   ) {
     this._broadcastParameterChange({
-      type: 'sub',
+      type: "sub",
       paramPath: paramPath,
       value: value,
       portamentoTime: portamentoTime,
@@ -2388,12 +2422,18 @@ class ControlClient {
 
     if (this.pendingPeriodSec !== null) {
       // Validate pending period is within safe bounds
-      if (isNaN(this.pendingPeriodSec) || this.pendingPeriodSec < 0.05 || this.pendingPeriodSec > 60) {
-        this.log(`Rejected invalid pending period: ${this.pendingPeriodSec}s`, "error");
+      if (
+        isNaN(this.pendingPeriodSec) || this.pendingPeriodSec < 0.05 ||
+        this.pendingPeriodSec > 60
+      ) {
+        this.log(
+          `Rejected invalid pending period: ${this.pendingPeriodSec}s`,
+          "error",
+        );
         this.pendingPeriodSec = null;
         return false;
       }
-      
+
       this.periodSec = this.pendingPeriodSec;
       this.cycleLength = this.periodSec;
       this.log(`Applied period change: ${this.periodSec}s`, "info");
@@ -2451,18 +2491,22 @@ class ControlClient {
     if (this.isPlaying) {
       // Update phasor with safety checks
       if (this.cycleLength <= 0) {
-        console.error(`Invalid cycleLength: ${this.cycleLength}, using fallback`);
+        console.error(
+          `Invalid cycleLength: ${this.cycleLength}, using fallback`,
+        );
         this.cycleLength = 0.05; // Fallback to minimum safe value
       }
-      
+
       const phasorIncrement = deltaTime / this.cycleLength;
-      
+
       // Safety check for infinity or NaN
       if (!isFinite(phasorIncrement)) {
-        console.error(`Invalid phasorIncrement: ${phasorIncrement}, deltaTime: ${deltaTime}, cycleLength: ${this.cycleLength}`);
+        console.error(
+          `Invalid phasorIncrement: ${phasorIncrement}, deltaTime: ${deltaTime}, cycleLength: ${this.cycleLength}`,
+        );
         return; // Skip this frame
       }
-      
+
       const previousPhasor = this.phasor;
       this.phasor += phasorIncrement;
 
@@ -2478,6 +2522,9 @@ class ControlClient {
 
         // Clear pending parameter changes at EOC (staged changes have been applied)
         this.clearAllPendingChanges();
+
+        // Send EOC beacon
+        this.broadcastPhasor(currentTime, "eoc");
       }
     }
 
@@ -2517,25 +2564,41 @@ class ControlClient {
     }
   }
 
-  broadcastPhasor(currentTime) {
+  broadcastPhasor(currentTime, reason = "continuous") {
     if (!this.star) return;
 
-    // Rate limiting - only broadcast at the specified rate
-    const timeSinceLastBroadcast = currentTime - this.lastBroadcastTime;
-    const broadcastInterval = 1.0 / this.phasorBroadcastRate;
+    // EOC-only broadcasting: only send at specific events, not continuously
+    if (reason === "continuous") {
+      // Send paused heartbeat at 1 Hz when not playing
+      if (!this.isPlaying) {
+        const timeSinceLastHeartbeat = currentTime - this.lastPausedHeartbeat;
+        if (timeSinceLastHeartbeat >= 1.0) { // 1 Hz heartbeat
+          const message = MessageBuilder.phasorSync(
+            this.phasor,
+            null, // cpm omitted (legacy)
+            this.stepsPerCycle,
+            this.cycleLength,
+            this.isPlaying, // false when paused
+          );
 
-    if (timeSinceLastBroadcast >= broadcastInterval) {
-      const message = MessageBuilder.phasorSync(
-        this.phasor,
-        null, // cpm omitted (legacy)
-        this.stepsPerCycle,
-        this.cycleLength,
-        this.isPlaying,
-      );
-
-      const sent = this.star.broadcastToType("synth", message, "sync");
-      this.lastBroadcastTime = currentTime;
+          const sent = this.star.broadcastToType("synth", message, "sync");
+          this.lastPausedHeartbeat = currentTime;
+        }
+      }
+      return; // No continuous broadcasts while playing
     }
+
+    // Send beacon for specific events (EOC, bootstrap, transport changes)
+    const message = MessageBuilder.phasorSync(
+      this.phasor,
+      null, // cpm omitted (legacy)
+      this.stepsPerCycle,
+      this.cycleLength,
+      this.isPlaying,
+    );
+
+    const sent = this.star.broadcastToType("synth", message, "sync");
+    this.lastBroadcastTime = currentTime;
   }
 
   // ES-8 Integration Methods
@@ -2674,6 +2737,9 @@ class ControlClient {
           console.log("🔄 Triggering EOC event - playing from reset position");
           const eocMessage = MessageBuilder.jumpToEOC();
           this.star.broadcastToType("synth", eocMessage, "control");
+
+          // Send bootstrap beacon on Play
+          this.broadcastPhasor(performance.now() / 1000.0, "bootstrap");
         }
         break;
       case "pause":
@@ -2703,7 +2769,7 @@ class ControlClient {
     }
 
     // Broadcast current phasor state immediately with new playing state
-    this.broadcastPhasor(performance.now() / 1000.0);
+    this.broadcastPhasor(performance.now() / 1000.0, "transport");
   }
 
   updatePlayPauseButton() {
@@ -2717,12 +2783,14 @@ class ControlClient {
 
     // Get portamento time (exponential mapping)
     const portamentoTime = this.elements.portamentoTime
-      ? this._mapPortamentoNormToMs(parseFloat(this.elements.portamentoTime.value))
+      ? this._mapPortamentoNormToMs(
+        parseFloat(this.elements.portamentoTime.value),
+      )
       : 100;
 
     // Use unified broadcast method that respects bulk mode
     this._broadcastParameterChange({
-      type: 'full',
+      type: "full",
       param: paramName,
       value: value,
       portamentoTime: portamentoTime,
@@ -2887,7 +2955,7 @@ class ControlClient {
     }
 
     // Broadcast current phasor state
-    this.broadcastPhasor(performance.now() / 1000.0);
+    this.broadcastPhasor(performance.now() / 1000.0, "transport");
 
     this.log("Global phasor reset to 0.0", "info");
   }
@@ -2896,7 +2964,10 @@ class ControlClient {
     try {
       // Prevent reconnection if we were kicked
       if (this.wasKicked) {
-        this.log(`Not reconnecting - was kicked: ${this.kickedReason}`, "error");
+        this.log(
+          `Not reconnecting - was kicked: ${this.kickedReason}`,
+          "error",
+        );
         return;
       }
 
@@ -2957,6 +3028,9 @@ class ControlClient {
       this.updatePeerList();
       this._updateUIState();
 
+      // Start network diagnostics updates
+      this.startNetworkDiagnostics();
+
       // Send complete current state to new synths
       if (peerId.startsWith("synth-")) {
         this.sendCompleteStateToSynth(peerId);
@@ -2967,6 +3041,11 @@ class ControlClient {
       this.log(`Peer disconnected: ${event.detail.peerId}`, "info");
       this.updatePeerList();
       this._updateUIState();
+
+      // Update diagnostics or stop if no peers
+      if (this.star.peers.size === 0) {
+        this.stopNetworkDiagnostics();
+      }
     });
 
     this.star.addEventListener("kicked", (event) => {
@@ -3008,7 +3087,10 @@ class ControlClient {
 
     // Handle control channel messages (like param-applied from synth)
     this.star.addEventListener("data-channel-message", (event) => {
-      if (event.detail.channel === "control" && event.detail.data.type === MessageTypes.PARAM_APPLIED) {
+      if (
+        event.detail.channel === "control" &&
+        event.detail.data.type === MessageTypes.PARAM_APPLIED
+      ) {
         const { param } = event.detail.data;
         this.pendingParameterChanges.delete(param as keyof IMusicalState);
         this.updateParameterVisualFeedback(param as keyof IMusicalState);
@@ -3043,7 +3125,7 @@ class ControlClient {
     this.broadcastMusicalParameters();
 
     // Send current phasor state so synths know the current phase position
-    this.broadcastPhasor(performance.now() / 1000.0);
+    this.broadcastPhasor(performance.now() / 1000.0, "transport");
   }
 
   // Deprecated - use toggleSynthesis instead
@@ -3127,18 +3209,18 @@ class ControlClient {
 
   handleKicked(reason: string) {
     console.error(`❌ Kicked from network: ${reason}`);
-    
+
     // Set kicked state to prevent reconnection
     this.wasKicked = true;
     this.kickedReason = reason;
-    
+
     // Update UI to show kicked status
     this.updateConnectionStatus("kicked");
     this._updateUIState();
-    
+
     // Show user notification
     alert("You have been disconnected: Another control client has taken over.");
-    
+
     // Clean up star connection but don't attempt reconnection
     if (this.star) {
       this.star.cleanup();
@@ -3250,6 +3332,78 @@ class ControlClient {
     }
   }
 
+  startNetworkDiagnostics() {
+    if (this.diagnosticsUpdateId) {
+      return; // Already running
+    }
+
+    this.diagnosticsUpdateId = setInterval(async () => {
+      await this.updateNetworkDiagnostics();
+    }, 3000); // Update every 3 seconds
+
+    // Update immediately
+    this.updateNetworkDiagnostics();
+  }
+
+  stopNetworkDiagnostics() {
+    if (this.diagnosticsUpdateId) {
+      clearInterval(this.diagnosticsUpdateId);
+      this.diagnosticsUpdateId = null;
+    }
+
+    // Clear diagnostics display
+    if (this.elements.networkDiagnostics) {
+      this.elements.networkDiagnostics.innerHTML =
+        '<div style="color: #666;">no peers</div>';
+    }
+  }
+
+  async updateNetworkDiagnostics() {
+    if (!this.star || !this.elements.networkDiagnostics) {
+      return;
+    }
+
+    try {
+      const diagnostics = await this.star.getPeerDiagnostics();
+
+      if (diagnostics.length === 0) {
+        this.elements.networkDiagnostics.innerHTML =
+          '<div style="color: #666;">no peers</div>';
+        return;
+      }
+
+      const diagnosticsHTML = diagnostics.map((diag) => {
+        const connectionColor = diag.connectionState === "connected"
+          ? "#8f8"
+          : "#f88";
+        const iceColor = diag.iceType === "host"
+          ? "#8f8"
+          : diag.iceType === "srflx"
+          ? "#ff8"
+          : diag.iceType === "relay"
+          ? "#f88"
+          : "#888";
+
+        const rttDisplay = diag.rtt !== null ? `${diag.rtt}ms` : "?";
+        const droppedWarning = diag.droppedSyncMessages > 0
+          ? ` ⚠${diag.droppedSyncMessages}`
+          : "";
+
+        return `<div style="margin-bottom: 1px;">
+          <span style="color: ${connectionColor};">${
+          diag.peerId.split("-")[0]
+        }</span>
+          <span style="color: ${iceColor}; margin-left: 4px;">${diag.iceType}</span>
+          <span style="color: #ccc; margin-left: 4px;">${rttDisplay}</span>${droppedWarning}
+        </div>`;
+      }).join("");
+
+      this.elements.networkDiagnostics.innerHTML = diagnosticsHTML;
+    } catch (error) {
+      console.warn("Failed to update network diagnostics:", error);
+    }
+  }
+
   setupSceneMemoryUI() {
     // Set up click handlers for scene buttons
     const sceneButtons = document.querySelectorAll(".scene-btn");
@@ -3332,9 +3486,20 @@ class ControlClient {
       const loadedProgram = JSON.parse(savedProgramString);
 
       // Filter out metadata fields like savedAt when loading scene
-      const validParams = ['frequency', 'vowelX', 'vowelY', 'zingAmount', 'zingMorph', 'symmetry', 'amplitude', 'whiteNoise', 'vibratoWidth', 'vibratoRate'];
+      const validParams = [
+        "frequency",
+        "vowelX",
+        "vowelY",
+        "zingAmount",
+        "zingMorph",
+        "symmetry",
+        "amplitude",
+        "whiteNoise",
+        "vibratoWidth",
+        "vibratoRate",
+      ];
       const filteredProgram: Partial<IMusicalState> = {};
-      validParams.forEach(param => {
+      validParams.forEach((param) => {
         if (loadedProgram[param] !== undefined) {
           filteredProgram[param] = loadedProgram[param];
         }
@@ -3351,7 +3516,10 @@ class ControlClient {
 
       // 4. Broadcast LOAD_SCENE only (contains full program config)
       if (this.star) {
-        const message = MessageBuilder.loadScene(memoryLocation, filteredProgram);
+        const message = MessageBuilder.loadScene(
+          memoryLocation,
+          filteredProgram,
+        );
         this.star.broadcastToType("synth", message, "control");
       }
 
@@ -3503,7 +3671,7 @@ class ControlClient {
         case "sub-param-update":
           // Send sub-parameter update
           this._sendImmediateParameterChange({
-            type: 'sub',
+            type: "sub",
             paramPath: change.paramPath!,
             value: change.value,
             portamentoTime: change.portamentoTime!,
@@ -3513,16 +3681,16 @@ class ControlClient {
         case "single-param-update":
           // Send single parameter update
           this._sendImmediateParameterChange({
-            type: 'single',
+            type: "single",
             param: change.param as keyof IMusicalState,
             portamentoTime: change.portamentoTime!,
           });
           break;
 
         case "unified-param-update":
-          // Send unified parameter update  
+          // Send unified parameter update
           this._sendImmediateParameterChange({
-            type: 'full',
+            type: "full",
             param: change.param as keyof IMusicalState,
             value: change.value,
             portamentoTime: change.portamentoTime!,
@@ -3581,7 +3749,7 @@ class ControlClient {
    * Unified method for broadcasting parameter changes that respects bulk mode
    */
   private _broadcastParameterChange(change: {
-    type: 'full' | 'single' | 'sub';
+    type: "full" | "single" | "sub";
     param?: keyof IMusicalState;
     paramPath?: string;
     value?: any;
@@ -3591,39 +3759,45 @@ class ControlClient {
     if (!this.star) return;
 
     // For sub-parameter updates, try to add to bulk mode first
-    if (change.type === 'sub' && change.paramPath) {
-      if (this.addToBulkChanges({
-        type: "sub-param-update",
-        paramPath: change.paramPath,
-        value: change.value,
-        portamentoTime: change.portamentoTime,
-      })) {
+    if (change.type === "sub" && change.paramPath) {
+      if (
+        this.addToBulkChanges({
+          type: "sub-param-update",
+          paramPath: change.paramPath,
+          value: change.value,
+          portamentoTime: change.portamentoTime,
+        })
+      ) {
         // Successfully added to bulk queue, don't send immediately
         return;
       }
     }
 
     // For single parameter updates, create bulk change format
-    if (change.type === 'single' && change.param) {
-      if (this.addToBulkChanges({
-        type: "single-param-update",
-        param: change.param,
-        portamentoTime: change.portamentoTime,
-      })) {
+    if (change.type === "single" && change.param) {
+      if (
+        this.addToBulkChanges({
+          type: "single-param-update",
+          param: change.param,
+          portamentoTime: change.portamentoTime,
+        })
+      ) {
         // Successfully added to bulk queue, don't send immediately
         return;
       }
     }
 
     // For full parameter updates
-    if (change.type === 'full' && change.param && change.value !== undefined) {
-      if (this.addToBulkChanges({
-        type: "unified-param-update",
-        param: change.param,
-        value: change.value,
-        portamentoTime: change.portamentoTime,
-      })) {
-        // Successfully added to bulk queue, don't send immediately  
+    if (change.type === "full" && change.param && change.value !== undefined) {
+      if (
+        this.addToBulkChanges({
+          type: "unified-param-update",
+          param: change.param,
+          value: change.value,
+          portamentoTime: change.portamentoTime,
+        })
+      ) {
+        // Successfully added to bulk queue, don't send immediately
         return;
       }
     }
@@ -3636,7 +3810,7 @@ class ControlClient {
    * Send parameter change immediately (bypassing bulk mode)
    */
   private _sendImmediateParameterChange(change: {
-    type: 'full' | 'single' | 'sub';
+    type: "full" | "single" | "sub";
     param?: keyof IMusicalState;
     paramPath?: string;
     value?: any;
@@ -3646,7 +3820,7 @@ class ControlClient {
     if (!this.star) return;
 
     switch (change.type) {
-      case 'sub':
+      case "sub":
         if (change.paramPath && change.value !== undefined) {
           const message = MessageBuilder.subParamUpdate(
             change.paramPath,
@@ -3656,22 +3830,29 @@ class ControlClient {
           this.star.broadcastToType("synth", message, "control");
           this.log(
             `📡 Sub-param: ${change.paramPath} = ${change.value} (${change.portamentoTime}ms)`,
-            "info"
+            "info",
           );
         }
         break;
 
-      case 'single':
+      case "single":
         if (change.param) {
           // Use existing broadcastSingleParameterUpdate logic
-          this._sendSingleParameterImmediate(change.param, change.portamentoTime);
+          this._sendSingleParameterImmediate(
+            change.param,
+            change.portamentoTime,
+          );
         }
         break;
 
-      case 'full':
+      case "full":
         if (change.param && change.value !== undefined) {
           // Use existing handleUnifiedParameterUpdate logic
-          this._sendUnifiedParameterImmediate(change.param, change.value, change.portamentoTime);
+          this._sendUnifiedParameterImmediate(
+            change.param,
+            change.value,
+            change.portamentoTime,
+          );
         }
         break;
     }
@@ -3680,7 +3861,10 @@ class ControlClient {
   /**
    * Send single parameter update immediately (extracted from broadcastSingleParameterUpdate)
    */
-  private _sendSingleParameterImmediate(paramName: keyof IMusicalState, portamentoTime: number) {
+  private _sendSingleParameterImmediate(
+    paramName: keyof IMusicalState,
+    portamentoTime: number,
+  ) {
     const paramState = this.pendingMusicalState[paramName];
 
     // Strict validation: reject forbidden scope field
@@ -3725,7 +3909,11 @@ class ControlClient {
   /**
    * Send unified parameter update immediately (extracted from handleUnifiedParameterUpdate)
    */
-  private _sendUnifiedParameterImmediate(paramName: keyof IMusicalState, value: string, portamentoTime: number) {
+  private _sendUnifiedParameterImmediate(
+    paramName: keyof IMusicalState,
+    value: string,
+    portamentoTime: number,
+  ) {
     // Update the baseValue in our state
     this._updatePendingState({
       type: "SET_BASE_VALUE",

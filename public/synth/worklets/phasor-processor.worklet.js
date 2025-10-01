@@ -118,7 +118,9 @@ class PhasorProcessor extends AudioWorkletProcessor {
     const enableRhythm = parameters.enableRhythm[0] > 0.5;
 
     // Calculate phase increment per sample (0 when not running)
-    const phaseIncrement = this.isRunning ? 1.0 / (cycleLength * sampleRate) : 0.0;
+    const phaseIncrement = this.isRunning
+      ? 1.0 / (cycleLength * sampleRate)
+      : 0.0;
 
     for (let i = 0; i < bufferSize; i++) {
       // Output current phase BEFORE incrementing for this sample
@@ -134,8 +136,12 @@ class PhasorProcessor extends AudioWorkletProcessor {
         if (this.phase >= 1.0) {
           const oldPhase = this.phase;
           this.phase -= 1.0;
-          
-          console.log(`🔄 PHASOR RESET: ${oldPhase.toFixed(6)} → ${this.phase.toFixed(6)} at sample ${i}/${bufferSize}`);
+
+          console.log(
+            `🔄 PHASOR RESET: ${oldPhase.toFixed(6)} → ${
+              this.phase.toFixed(6)
+            } at sample ${i}/${bufferSize}`,
+          );
 
           // Send cycle reset message immediately
           this.port.postMessage({
