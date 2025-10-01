@@ -2411,17 +2411,30 @@ class SynthClient {
             }
             this.programConfig[message.param].endValueGenerator = endGen;
           } else {
-            // Create end generator based on start generator if missing
+            // Create end generator based on start generator type if missing
             console.log(
               `📋 Creating missing end generator for ${message.param} cosine interpolation`,
             );
-            this.programConfig[message.param].endValueGenerator = {
-              type: "normalised",
-              range: message.endValue,
-              sequenceBehavior:
-                existingConfig.startValueGenerator?.sequenceBehavior ||
-                "static",
-            };
+            
+            if (existingConfig.startValueGenerator?.type === "periodic") {
+              // Create periodic neutral end selector
+              this.programConfig[message.param].endValueGenerator = {
+                type: "periodic",
+                numerators: "1",
+                denominators: "1",
+                numeratorBehavior: "static",
+                denominatorBehavior: "static",
+              };
+            } else {
+              // Create normalised end generator
+              this.programConfig[message.param].endValueGenerator = {
+                type: "normalised",
+                range: message.endValue,
+                sequenceBehavior:
+                  existingConfig.startValueGenerator?.sequenceBehavior ||
+                  "static",
+              };
+            }
           }
         }
       }

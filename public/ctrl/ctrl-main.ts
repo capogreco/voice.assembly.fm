@@ -153,6 +153,143 @@ class ControlClient {
     };
   }
 
+  /**
+   * Preset configurations for destructive state replacement
+   */
+  private _createPresetConfigs() {
+    // Helper for maximally stochastic normalized step parameters
+    const normalizedRandomStep = (): ParameterState => ({
+      interpolation: "step",
+      startValueGenerator: {
+        type: "normalised",
+        range: { min: 0, max: 1 },
+        sequenceBehavior: "random",
+      },
+      endValueGenerator: {
+        type: "normalised",
+        range: { min: 0, max: 1 },
+        sequenceBehavior: "random",
+      },
+    });
+
+    // Helper for maximally stochastic normalized cosine parameters
+    const normalizedRandomCosine = (): ParameterState => ({
+      interpolation: "cosine",
+      startValueGenerator: {
+        type: "normalised",
+        range: { min: 0, max: 1 },
+        sequenceBehavior: "random",
+      },
+      endValueGenerator: {
+        type: "normalised",
+        range: { min: 0, max: 1 },
+        sequenceBehavior: "random",
+      },
+    });
+
+    // Helper for maximally stochastic periodic step parameters
+    const periodicRandomStep = (baseValue: number): ParameterState => ({
+      interpolation: "step",
+      baseValue,
+      startValueGenerator: {
+        type: "periodic",
+        numerators: "1-12",
+        denominators: "1-12",
+        numeratorBehavior: "random",
+        denominatorBehavior: "random",
+      },
+      endValueGenerator: {
+        type: "periodic",
+        numerators: "1-12",
+        denominators: "1-12",
+        numeratorBehavior: "random",
+        denominatorBehavior: "random",
+      },
+    });
+
+    // Helper for maximally stochastic periodic cosine parameters
+    const periodicRandomCosine = (baseValue: number): ParameterState => ({
+      interpolation: "cosine",
+      baseValue,
+      startValueGenerator: {
+        type: "periodic",
+        numerators: "1-12",
+        denominators: "1-12",
+        numeratorBehavior: "random",
+        denominatorBehavior: "random",
+      },
+      endValueGenerator: {
+        type: "periodic",
+        numerators: "1-12",
+        denominators: "1-12",
+        numeratorBehavior: "random",
+        denominatorBehavior: "random",
+      },
+    });
+
+    // Helper for simple constant parameters
+    const constantStep = (value: number): ParameterState => ({
+      interpolation: "step",
+      startValueGenerator: {
+        type: "normalised",
+        range: value,
+        sequenceBehavior: "static",
+      },
+      endValueGenerator: {
+        type: "normalised",
+        range: value,
+        sequenceBehavior: "static",
+      },
+    });
+
+    return {
+      default: this._createDefaultState(),
+      
+      "full-step": {
+        // Periodic parameters - maximum stochasticity with random HRG ranges
+        frequency: periodicRandomStep(220),
+        vibratoRate: periodicRandomStep(5),
+        
+        // Normalized parameters - maximum stochasticity across full [0,1] range
+        vowelX: normalizedRandomStep(),
+        vowelY: normalizedRandomStep(),
+        zingAmount: normalizedRandomStep(),
+        zingMorph: normalizedRandomStep(),
+        symmetry: normalizedRandomStep(),
+        vibratoWidth: normalizedRandomStep(),
+        
+        // Fixed levels for consistent loudness
+        amplitude: constantStep(0.5),
+        whiteNoise: constantStep(0),
+      },
+      
+      "full-cos": {
+        // Periodic parameters - maximum stochasticity with random HRG ranges and cosine motion
+        frequency: periodicRandomCosine(220),
+        vibratoRate: periodicRandomCosine(5),
+        
+        // Normalized parameters - maximum stochasticity with cosine glides across full [0,1]
+        vowelX: normalizedRandomCosine(),
+        vowelY: normalizedRandomCosine(),
+        zingAmount: normalizedRandomCosine(),
+        zingMorph: normalizedRandomCosine(),
+        symmetry: normalizedRandomCosine(),
+        vibratoWidth: normalizedRandomCosine(),
+        
+        // Fixed levels for consistent loudness
+        amplitude: constantStep(0.5),
+        whiteNoise: constantStep(0),
+      },
+      
+      calibration: {
+        // Only override amp=0 and noise=0.3, leave others unchanged from current state
+        ...this.pendingMusicalState, // Preserve current state
+        amplitude: constantStep(0), // Silent
+        whiteNoise: constantStep(0.3), // Audible for level matching
+      },
+    };
+  }
+
   private _updatePendingState(action: ControlAction) {
     console.log("Action dispatched:", action);
 
@@ -387,6 +524,42 @@ class ControlClient {
     }
   }
 
+  /**
+   * Apply a preset configuration (destructive replacement)
+   */
+  private _applyPreset(presetName: string) {
+    const presets = this._createPresetConfigs();
+    const preset = presets[presetName as keyof typeof presets];
+    
+    if (!preset) {
+      console.error(`Unknown preset: ${presetName}`);
+      return;
+    }
+
+    console.log(`📋 Applying preset: ${presetName}`);
+
+    // Destructively replace both pending and active state
+    this.pendingMusicalState = JSON.parse(JSON.stringify(preset));
+    this.musicalState = JSON.parse(JSON.stringify(preset));
+
+    // Update all UI elements to reflect new state
+    for (const paramName of Object.keys(preset) as Array<keyof IMusicalState>) {
+      this._updateUIFromState(paramName);
+    }
+
+    // Mark as having pending changes and always broadcast
+    this.markPendingChanges();
+    this.broadcastMusicalParameters();
+    
+    if (this.isPlaying) {
+      // During playback: synth will stage PROGRAM_UPDATE and apply at EOC
+      console.log(`📋 Preset ${presetName} staged for EOC application`);
+    } else {
+      // When paused: synth will apply immediately
+      console.log(`📋 Preset ${presetName} applied immediately`);
+    }
+  }
+
   constructor() {
     console.log("ControlClient constructor starting");
 
@@ -496,6 +669,12 @@ class ControlClient {
 
       // Scene memory
       clearBanksBtn: document.getElementById("clear-banks-btn"),
+      
+      // Preset buttons
+      presetDefault: document.getElementById("preset-default"),
+      presetFullStep: document.getElementById("preset-full-step"),
+      presetFullCos: document.getElementById("preset-full-cos"),
+      presetCalibration: document.getElementById("preset-calibration"),
     };
 
     console.log("reresolveBtn element:", this.elements.reresolveBtn);
@@ -575,6 +754,28 @@ class ControlClient {
       });
     }
 
+
+    // Preset buttons
+    if (this.elements.presetDefault) {
+      this.elements.presetDefault.addEventListener("click", () => {
+        this._applyPreset("default");
+      });
+    }
+    if (this.elements.presetFullStep) {
+      this.elements.presetFullStep.addEventListener("click", () => {
+        this._applyPreset("full-step");
+      });
+    }
+    if (this.elements.presetFullCos) {
+      this.elements.presetFullCos.addEventListener("click", () => {
+        this._applyPreset("full-cos");
+      });
+    }
+    if (this.elements.presetCalibration) {
+      this.elements.presetCalibration.addEventListener("click", () => {
+        this._applyPreset("calibration");
+      });
+    }
 
     // Musical controls
     this.setupMusicalControls();
@@ -819,17 +1020,20 @@ class ControlClient {
 
     if (!textInput) return;
 
-    // Handle unified parameter updates on blur
+    // Handle normalized parameter updates on blur
     textInput.addEventListener("blur", () => {
-      // First, update the program generator from the input value
-      // so that single values become constants (not ranges)
+      // Update the program generator from the input value (single values become constants)
       this._handleValueInput(paramName, textInput.value, "start");
 
-      // Then broadcast the unified update (staged if playing, immediate if paused)
-      this.handleUnifiedParameterUpdate(
-        paramName as keyof IMusicalState,
-        textInput.value,
-      );
+      // For normalized parameters, broadcast via existing staging/immediate paths
+      // (Don't use handleUnifiedParameterUpdate - that's for periodic baseValue)
+      if (this.isPlaying) {
+        // Stage change for EOC during play
+        this.broadcastSingleParameterStaged(paramName);
+      } else {
+        // Apply immediately when paused
+        this.broadcastMusicalParameters();
+      }
     });
 
     // Handle interpolation changes
@@ -1454,14 +1658,12 @@ class ControlClient {
         });
         this.markPendingChanges();
 
-        // Send appropriate update based on playback state
-        if (this.isPlaying) {
-          // During playback: stage change for EOC
-          this.broadcastSingleParameterStaged(paramName);
-        } else {
-          // When paused: apply immediately
-          this.broadcastMusicalParameters();
-        }
+        // Send sub-parameter update for interpolation change
+        this._sendSubParameterUpdate(
+          `${paramName}.interpolation`,
+          interpolation,
+          100, // Default portamento time
+        );
 
         // Refresh HRG visibility immediately when interpolation changes
         refreshHrgVisibility();
@@ -2411,18 +2613,12 @@ class ControlClient {
       synthesisActive: this.synthesisActive,
     };
 
-    // Emit unified format with interpolation + generators
+    // Emit unified format with interpolation + generators (no baseValue injection)
     const startGen = { ...paramState.startValueGenerator };
-    if (startGen.type === "periodic") {
-      startGen.baseValue = paramState.baseValue;
-    }
 
     let endGen = undefined;
     if (paramState.interpolation === "cosine" && paramState.endValueGenerator) {
       endGen = { ...paramState.endValueGenerator };
-      if (endGen.type === "periodic") {
-        endGen.baseValue = paramState.baseValue;
-      }
     }
 
     wirePayload[paramName] = {
@@ -2432,22 +2628,10 @@ class ControlClient {
       baseValue: paramState.baseValue,
     };
 
-    // For staged updates during playback, we need to send UNIFIED_PARAM_UPDATE messages
-    // Get resolved values for this parameter
-    const resolvedValues = this.resolveParameterValues(paramName, paramState);
-
-    const message = MessageBuilder.unifiedParamUpdate(
-      paramName,
-      resolvedValues.start,
-      resolvedValues.end,
-      paramState.interpolation,
-      this.isPlaying,
-      100, // default portamento time
-      this.phasor, // current phase
-    );
-
+    // Send PROGRAM_UPDATE with just this parameter for staging
+    const message = MessageBuilder.programUpdate(wirePayload, this.isPlaying);
     this.star.broadcastToType("synth", message, "control");
-    this.log(`📡 Broadcasted staged ${paramName} interpolation change`, "info");
+    this.log(`📡 Broadcasted staged ${paramName} parameter change`, "info");
   }
 
   // Removed splitParametersByMode - no longer needed with separated state
@@ -2882,24 +3066,6 @@ class ControlClient {
     }
   }
 
-  handleUnifiedParameterUpdate(paramName: keyof IMusicalState, value: string) {
-    console.log(`🎛️ Unified parameter update: ${paramName} = ${value}`);
-
-    // Get portamento time (exponential mapping)
-    const portamentoTime = this.elements.portamentoTime
-      ? this._mapPortamentoNormToMs(
-        parseFloat(this.elements.portamentoTime.value),
-      )
-      : 100;
-
-    // Use unified broadcast method that respects bulk mode
-    this._broadcastParameterChange({
-      type: "full",
-      param: paramName,
-      value: value,
-      portamentoTime: portamentoTime,
-    });
-  }
 
   updateParameterVisualFeedback(paramName: keyof IMusicalState) {
     // Find the parameter label and add/remove asterisk for pending changes
@@ -3790,15 +3956,6 @@ class ControlClient {
           });
           break;
 
-        case "unified-param-update":
-          // Send unified parameter update
-          this._sendImmediateParameterChange({
-            type: "full",
-            param: change.param as keyof IMusicalState,
-            value: change.value,
-            portamentoTime: change.portamentoTime!,
-          });
-          break;
 
         case "full-program-update":
           // Send full program update
@@ -3852,7 +4009,7 @@ class ControlClient {
    * Unified method for broadcasting parameter changes that respects bulk mode
    */
   private _broadcastParameterChange(change: {
-    type: "full" | "single" | "sub";
+    type: "single" | "sub";
     param?: keyof IMusicalState;
     paramPath?: string;
     value?: any;
@@ -3890,20 +4047,6 @@ class ControlClient {
       }
     }
 
-    // For full parameter updates
-    if (change.type === "full" && change.param && change.value !== undefined) {
-      if (
-        this.addToBulkChanges({
-          type: "unified-param-update",
-          param: change.param,
-          value: change.value,
-          portamentoTime: change.portamentoTime,
-        })
-      ) {
-        // Successfully added to bulk queue, don't send immediately
-        return;
-      }
-    }
 
     // Not in bulk mode or bulk mode disabled, send immediately
     this._sendImmediateParameterChange(change);
@@ -3913,7 +4056,7 @@ class ControlClient {
    * Send parameter change immediately (bypassing bulk mode)
    */
   private _sendImmediateParameterChange(change: {
-    type: "full" | "single" | "sub";
+    type: "single" | "sub";
     param?: keyof IMusicalState;
     paramPath?: string;
     value?: any;
@@ -3948,16 +4091,6 @@ class ControlClient {
         }
         break;
 
-      case "full":
-        if (change.param && change.value !== undefined) {
-          // Use existing handleUnifiedParameterUpdate logic
-          this._sendUnifiedParameterImmediate(
-            change.param,
-            change.value,
-            change.portamentoTime,
-          );
-        }
-        break;
     }
   }
 
@@ -4009,56 +4142,6 @@ class ControlClient {
     );
   }
 
-  /**
-   * Send unified parameter update immediately (extracted from handleUnifiedParameterUpdate)
-   */
-  private _sendUnifiedParameterImmediate(
-    paramName: keyof IMusicalState,
-    value: string,
-    portamentoTime: number,
-  ) {
-    // Update the baseValue in our state
-    this._updatePendingState({
-      type: "SET_BASE_VALUE",
-      param: paramName,
-      value: parseFloat(value) || 0,
-    });
-
-    // Resolve HRG values here in controller
-    const paramState = this.pendingMusicalState[paramName];
-    const resolvedValues = this.resolveParameterValues(paramName, paramState);
-
-    // Create unified parameter message using message builder
-    const message = MessageBuilder.unifiedParamUpdate(
-      paramName,
-      resolvedValues.start,
-      resolvedValues.end,
-      paramState.interpolation,
-      this.isPlaying,
-      portamentoTime,
-      this.phasor, // Include current phase for interpolation
-    );
-
-    this.star.broadcastToType("synth", message, "control");
-
-    // Track pending changes when playing for visual feedback
-    if (this.isPlaying) {
-      this.pendingParameterChanges.add(paramName);
-      this.updateParameterVisualFeedback(paramName);
-    } else {
-      // When paused, changes are immediate, so clear any pending status
-      this.pendingParameterChanges.delete(paramName);
-      this.updateParameterVisualFeedback(paramName);
-    }
-
-    const statusIcon = this.isPlaying ? "📋*" : "⚡";
-    this.log(
-      `${statusIcon} ${paramName}: ${resolvedValues.start}${
-        resolvedValues.end !== undefined ? ` → ${resolvedValues.end}` : ""
-      } (${portamentoTime}ms)`,
-      "info",
-    );
-  }
 }
 
 // Initialize the control client

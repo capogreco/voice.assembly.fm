@@ -1588,6 +1588,137 @@ var ControlClient = class {
       }
     };
   }
+  /**
+   * Preset configurations for destructive state replacement
+   */
+  _createPresetConfigs() {
+    const normalizedRandomStep = () => ({
+      interpolation: "step",
+      startValueGenerator: {
+        type: "normalised",
+        range: {
+          min: 0,
+          max: 1
+        },
+        sequenceBehavior: "random"
+      },
+      endValueGenerator: {
+        type: "normalised",
+        range: {
+          min: 0,
+          max: 1
+        },
+        sequenceBehavior: "random"
+      }
+    });
+    const normalizedRandomCosine = () => ({
+      interpolation: "cosine",
+      startValueGenerator: {
+        type: "normalised",
+        range: {
+          min: 0,
+          max: 1
+        },
+        sequenceBehavior: "random"
+      },
+      endValueGenerator: {
+        type: "normalised",
+        range: {
+          min: 0,
+          max: 1
+        },
+        sequenceBehavior: "random"
+      }
+    });
+    const periodicRandomStep = (baseValue) => ({
+      interpolation: "step",
+      baseValue,
+      startValueGenerator: {
+        type: "periodic",
+        numerators: "1-12",
+        denominators: "1-12",
+        numeratorBehavior: "random",
+        denominatorBehavior: "random"
+      },
+      endValueGenerator: {
+        type: "periodic",
+        numerators: "1-12",
+        denominators: "1-12",
+        numeratorBehavior: "random",
+        denominatorBehavior: "random"
+      }
+    });
+    const periodicRandomCosine = (baseValue) => ({
+      interpolation: "cosine",
+      baseValue,
+      startValueGenerator: {
+        type: "periodic",
+        numerators: "1-12",
+        denominators: "1-12",
+        numeratorBehavior: "random",
+        denominatorBehavior: "random"
+      },
+      endValueGenerator: {
+        type: "periodic",
+        numerators: "1-12",
+        denominators: "1-12",
+        numeratorBehavior: "random",
+        denominatorBehavior: "random"
+      }
+    });
+    const constantStep = (value) => ({
+      interpolation: "step",
+      startValueGenerator: {
+        type: "normalised",
+        range: value,
+        sequenceBehavior: "static"
+      },
+      endValueGenerator: {
+        type: "normalised",
+        range: value,
+        sequenceBehavior: "static"
+      }
+    });
+    return {
+      default: this._createDefaultState(),
+      "full-step": {
+        // Periodic parameters - maximum stochasticity with random HRG ranges
+        frequency: periodicRandomStep(220),
+        vibratoRate: periodicRandomStep(5),
+        // Normalized parameters - maximum stochasticity across full [0,1] range
+        vowelX: normalizedRandomStep(),
+        vowelY: normalizedRandomStep(),
+        zingAmount: normalizedRandomStep(),
+        zingMorph: normalizedRandomStep(),
+        symmetry: normalizedRandomStep(),
+        vibratoWidth: normalizedRandomStep(),
+        // Fixed levels for consistent loudness
+        amplitude: constantStep(0.5),
+        whiteNoise: constantStep(0)
+      },
+      "full-cos": {
+        // Periodic parameters - maximum stochasticity with random HRG ranges and cosine motion
+        frequency: periodicRandomCosine(220),
+        vibratoRate: periodicRandomCosine(5),
+        // Normalized parameters - maximum stochasticity with cosine glides across full [0,1]
+        vowelX: normalizedRandomCosine(),
+        vowelY: normalizedRandomCosine(),
+        zingAmount: normalizedRandomCosine(),
+        zingMorph: normalizedRandomCosine(),
+        symmetry: normalizedRandomCosine(),
+        vibratoWidth: normalizedRandomCosine(),
+        // Fixed levels for consistent loudness
+        amplitude: constantStep(0.5),
+        whiteNoise: constantStep(0)
+      },
+      calibration: {
+        // Only override amp=0 and noise=0.3, leave others unchanged from current state
+        ...this.pendingMusicalState,
+        amplitude: constantStep(0),
+        whiteNoise: constantStep(0.3)
+      }
+    };
+  }
   _updatePendingState(action) {
     console.log("Action dispatched:", action);
     const newState = JSON.parse(JSON.stringify(this.pendingMusicalState));
@@ -1745,6 +1876,30 @@ var ControlClient = class {
       this._updateUIFromState(action.param);
     }
   }
+  /**
+   * Apply a preset configuration (destructive replacement)
+   */
+  _applyPreset(presetName) {
+    const presets = this._createPresetConfigs();
+    const preset = presets[presetName];
+    if (!preset) {
+      console.error(`Unknown preset: ${presetName}`);
+      return;
+    }
+    console.log(`\u{1F4CB} Applying preset: ${presetName}`);
+    this.pendingMusicalState = JSON.parse(JSON.stringify(preset));
+    this.musicalState = JSON.parse(JSON.stringify(preset));
+    for (const paramName of Object.keys(preset)) {
+      this._updateUIFromState(paramName);
+    }
+    this.markPendingChanges();
+    this.broadcastMusicalParameters();
+    if (this.isPlaying) {
+      console.log(`\u{1F4CB} Preset ${presetName} staged for EOC application`);
+    } else {
+      console.log(`\u{1F4CB} Preset ${presetName} applied immediately`);
+    }
+  }
   constructor() {
     console.log("ControlClient constructor starting");
     this.peerId = generatePeerId("ctrl");
@@ -1817,7 +1972,12 @@ var ControlClient = class {
       // Period-Steps linkage controls
       linkStepsCheckbox: document.getElementById("link-steps"),
       // Scene memory
-      clearBanksBtn: document.getElementById("clear-banks-btn")
+      clearBanksBtn: document.getElementById("clear-banks-btn"),
+      // Preset buttons
+      presetDefault: document.getElementById("preset-default"),
+      presetFullStep: document.getElementById("preset-full-step"),
+      presetFullCos: document.getElementById("preset-full-cos"),
+      presetCalibration: document.getElementById("preset-calibration")
     };
     console.log("reresolveBtn element:", this.elements.reresolveBtn);
     console.log("portamentoTime element:", this.elements.portamentoTime);
@@ -1863,6 +2023,26 @@ var ControlClient = class {
       this.elements.linkStepsCheckbox.addEventListener("change", (e) => {
         this.linkStepsToPeriod = e.target.checked;
         this.log(`Period-steps linkage: ${this.linkStepsToPeriod ? "ON" : "OFF"}`, "info");
+      });
+    }
+    if (this.elements.presetDefault) {
+      this.elements.presetDefault.addEventListener("click", () => {
+        this._applyPreset("default");
+      });
+    }
+    if (this.elements.presetFullStep) {
+      this.elements.presetFullStep.addEventListener("click", () => {
+        this._applyPreset("full-step");
+      });
+    }
+    if (this.elements.presetFullCos) {
+      this.elements.presetFullCos.addEventListener("click", () => {
+        this._applyPreset("full-cos");
+      });
+    }
+    if (this.elements.presetCalibration) {
+      this.elements.presetCalibration.addEventListener("click", () => {
+        this._applyPreset("calibration");
       });
     }
     this.setupMusicalControls();
@@ -2018,7 +2198,11 @@ var ControlClient = class {
     if (!textInput) return;
     textInput.addEventListener("blur", () => {
       this._handleValueInput(paramName, textInput.value, "start");
-      this.handleUnifiedParameterUpdate(paramName, textInput.value);
+      if (this.isPlaying) {
+        this.broadcastSingleParameterStaged(paramName);
+      } else {
+        this.broadcastMusicalParameters();
+      }
     });
     if (interpSelect) {
       interpSelect.addEventListener("change", () => {
@@ -2459,11 +2643,7 @@ var ControlClient = class {
           interpolation
         });
         this.markPendingChanges();
-        if (this.isPlaying) {
-          this.broadcastSingleParameterStaged(paramName);
-        } else {
-          this.broadcastMusicalParameters();
-        }
+        this._sendSubParameterUpdate(`${paramName}.interpolation`, interpolation, 100);
         refreshHrgVisibility();
       });
     }
@@ -3183,17 +3363,11 @@ var ControlClient = class {
     const startGen = {
       ...paramState.startValueGenerator
     };
-    if (startGen.type === "periodic") {
-      startGen.baseValue = paramState.baseValue;
-    }
     let endGen = void 0;
     if (paramState.interpolation === "cosine" && paramState.endValueGenerator) {
       endGen = {
         ...paramState.endValueGenerator
       };
-      if (endGen.type === "periodic") {
-        endGen.baseValue = paramState.baseValue;
-      }
     }
     wirePayload[paramName] = {
       interpolation: paramState.interpolation,
@@ -3201,10 +3375,9 @@ var ControlClient = class {
       endValueGenerator: endGen,
       baseValue: paramState.baseValue
     };
-    const resolvedValues = this.resolveParameterValues(paramName, paramState);
-    const message = MessageBuilder.unifiedParamUpdate(paramName, resolvedValues.start, resolvedValues.end, paramState.interpolation, this.isPlaying, 100, this.phasor);
+    const message = MessageBuilder.programUpdate(wirePayload, this.isPlaying);
     this.star.broadcastToType("synth", message, "control");
-    this.log(`\u{1F4E1} Broadcasted staged ${paramName} interpolation change`, "info");
+    this.log(`\u{1F4E1} Broadcasted staged ${paramName} parameter change`, "info");
   }
   // Removed splitParametersByMode - no longer needed with separated state
   // Phasor Management Methods
@@ -3490,16 +3663,6 @@ var ControlClient = class {
     if (this.elements.playBtn) {
       this.elements.playBtn.textContent = this.isPlaying ? "pause" : "play";
     }
-  }
-  handleUnifiedParameterUpdate(paramName, value) {
-    console.log(`\u{1F39B}\uFE0F Unified parameter update: ${paramName} = ${value}`);
-    const portamentoTime = this.elements.portamentoTime ? this._mapPortamentoNormToMs(parseFloat(this.elements.portamentoTime.value)) : 100;
-    this._broadcastParameterChange({
-      type: "full",
-      param: paramName,
-      value,
-      portamentoTime
-    });
   }
   updateParameterVisualFeedback(paramName) {
     const paramLabels = document.querySelectorAll(".param-label");
@@ -4102,14 +4265,6 @@ var ControlClient = class {
             portamentoTime: change.portamentoTime
           });
           break;
-        case "unified-param-update":
-          this._sendImmediateParameterChange({
-            type: "full",
-            param: change.param,
-            value: change.value,
-            portamentoTime: change.portamentoTime
-          });
-          break;
         case "full-program-update":
           this._sendFullProgramImmediate(change.portamentoTime);
           break;
@@ -4160,16 +4315,6 @@ var ControlClient = class {
         return;
       }
     }
-    if (change.type === "full" && change.param && change.value !== void 0) {
-      if (this.addToBulkChanges({
-        type: "unified-param-update",
-        param: change.param,
-        value: change.value,
-        portamentoTime: change.portamentoTime
-      })) {
-        return;
-      }
-    }
     this._sendImmediateParameterChange(change);
   }
   /**
@@ -4188,11 +4333,6 @@ var ControlClient = class {
       case "single":
         if (change.param) {
           this._sendSingleParameterImmediate(change.param, change.portamentoTime);
-        }
-        break;
-      case "full":
-        if (change.param && change.value !== void 0) {
-          this._sendUnifiedParameterImmediate(change.param, change.value, change.portamentoTime);
         }
         break;
     }
@@ -4227,29 +4367,6 @@ var ControlClient = class {
     const message = MessageBuilder.createParameterUpdate(MessageTypes.PROGRAM_UPDATE, wirePayload);
     this.star.broadcastToType("synth", message, "control");
     this.log(`\u{1F4E1} Broadcasted ${paramName} update with ${portamentoTime}ms portamento`, "info");
-  }
-  /**
-   * Send unified parameter update immediately (extracted from handleUnifiedParameterUpdate)
-   */
-  _sendUnifiedParameterImmediate(paramName, value, portamentoTime) {
-    this._updatePendingState({
-      type: "SET_BASE_VALUE",
-      param: paramName,
-      value: parseFloat(value) || 0
-    });
-    const paramState = this.pendingMusicalState[paramName];
-    const resolvedValues = this.resolveParameterValues(paramName, paramState);
-    const message = MessageBuilder.unifiedParamUpdate(paramName, resolvedValues.start, resolvedValues.end, paramState.interpolation, this.isPlaying, portamentoTime, this.phasor);
-    this.star.broadcastToType("synth", message, "control");
-    if (this.isPlaying) {
-      this.pendingParameterChanges.add(paramName);
-      this.updateParameterVisualFeedback(paramName);
-    } else {
-      this.pendingParameterChanges.delete(paramName);
-      this.updateParameterVisualFeedback(paramName);
-    }
-    const statusIcon = this.isPlaying ? "\u{1F4CB}*" : "\u26A1";
-    this.log(`${statusIcon} ${paramName}: ${resolvedValues.start}${resolvedValues.end !== void 0 ? ` \u2192 ${resolvedValues.end}` : ""} (${portamentoTime}ms)`, "info");
   }
 };
 console.log("About to create ControlClient");

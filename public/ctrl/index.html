@@ -607,7 +607,12 @@
       <div class="panel narrow">
         <!-- Modes (no title) -->
         <div style="margin-bottom: 15px;">
-          <button class="button" id="calibration-btn" style="width: 100%; font-size: 10px;">calibration mode</button>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-bottom: 6px;">
+            <button class="button" id="preset-default" style="font-size: 10px;">default</button>
+            <button class="button" id="preset-full-step" style="font-size: 10px;">full-step</button>
+            <button class="button" id="preset-full-cos" style="font-size: 10px;">full-cos</button>
+            <button class="button" id="preset-calibration" style="font-size: 10px;">calibration</button>
+          </div>
         </div>
         
         <!-- Scenes section -->

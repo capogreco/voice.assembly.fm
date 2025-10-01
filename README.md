@@ -129,6 +129,21 @@ Data Channels                 │  Data Channels
 
 ### Network Messages
 
+**Parameter Control (Clean Three-Message Model):**
+
+- `SUB_PARAM_UPDATE`: Individual field edits with dot-notation paths
+  - Examples: `"frequency.baseValue"`, `"whiteNoise.startValueGenerator.range"`, `"amplitude.interpolation"`
+  - Playing: synth stages for EOC application
+  - Paused: synth applies immediately with portamento
+- `PROGRAM_UPDATE`: Full program configuration changes
+  - Contains: interpolation modes, generators, baseValues for all parameters
+  - Effect: synth reinitializes stochastic state (fresh HRG indices, RBG values)
+  - Used by: presets, bulk edits, new synth bootstrap
+- `LOAD_SCENE`: Exact scene restoration with stochastic state preservation
+  - Contains: program config + saved HRG indices/orders + RBG cached values
+  - Effect: synth restores identical playback state for exact audible recall
+  - Used by: scene memory system for performance continuity
+
 **Timing Synchronization:**
 
 - `phasor-sync`: Master broadcasts current phasor position (0.0-1.0), cycle
@@ -141,7 +156,7 @@ Data Channels                 │  Data Channels
 
 - `calibration-mode`: Enable/disable white noise XY oscilloscope for volume
   matching
-- State synchronization: New synths automatically receive current system state
+- State synchronization: New synths receive current program via `PROGRAM_UPDATE`
 
 **Connection Management:**
 
