@@ -503,14 +503,29 @@ class ControlClient {
     }
 
     console.log("Applying preset: " + presetName);
+    
+    // Debug: Log the preset configuration for frequency
+    if (presetName === "full-cos" && preset.frequency) {
+      console.log("🐛 full-cos frequency config:", JSON.stringify(preset.frequency, null, 2));
+    }
 
     // Destructively replace both pending and active state
     this.pendingMusicalState = JSON.parse(JSON.stringify(preset));
     this.musicalState = JSON.parse(JSON.stringify(preset));
+    
+    // Debug: Verify the state was set correctly
+    if (presetName === "full-cos" && this.pendingMusicalState.frequency) {
+      console.log("🐛 pendingMusicalState.frequency after preset:", JSON.stringify(this.pendingMusicalState.frequency, null, 2));
+    }
 
     // Update all UI elements to reflect new state
     for (const paramName of Object.keys(preset)) {
       this._updateUIFromState(paramName);
+    }
+    
+    // Debug: Check state again after UI update
+    if (presetName === "full-cos" && this.pendingMusicalState.frequency) {
+      console.log("🐛 pendingMusicalState.frequency after UI update:", JSON.stringify(this.pendingMusicalState.frequency, null, 2));
     }
 
     // Mark pending changes and always broadcast
@@ -1508,29 +1523,29 @@ class ControlClient {
     // Start HRG inputs
     const startNumeratorsInput = document.getElementById(
       paramName + "-start-numerators",
-    ) | null;
+    ) || null;
     const startDenominatorsInput = document.getElementById(
       paramName + "-start-denominators",
-    ) | null;
+    ) || null;
     const startNumBehaviorSelect = document.getElementById(
       paramName + "-start-numerators-behavior",
-    ) | null;
+    ) || null;
     const startDenBehaviorSelect = document.getElementById(
       paramName + "-start-denominators-behavior",
-    ) | null;
+    ) || null;
     // End HRG inputs
     const endNumeratorsInput = document.getElementById(
       paramName + "-end-numerators",
-    ) | null;
+    ) || null;
     const endDenominatorsInput = document.getElementById(
       paramName + "-end-denominators",
-    ) | null;
+    ) || null;
     const endNumBehaviorSelect = document.getElementById(
       paramName + "-end-numerators-behavior",
-    ) | null;
+    ) || null;
     const endDenBehaviorSelect = document.getElementById(
       paramName + "-end-denominators-behavior",
-    ) | null;
+    ) || null;
 
     // Base frequency input (Hz)
     if (baseInput) {
@@ -2121,29 +2136,53 @@ class ControlClient {
       if (startGen && startGen.type === "periodic") {
         const startNums = document.getElementById(
           paramName + "-start-numerators",
-        ) | null;
+        ) || null;
         const startDens = document.getElementById(
           paramName + "-start-denominators",
-        ) | null;
+        ) || null;
         const startNumBeh = document.getElementById(
           paramName + "-start-numerators-behavior",
-        ) | null;
+        ) || null;
         const startDenBeh = document.getElementById(
           paramName + "-start-denominators-behavior",
-        ) | null;
+        ) || null;
+
+        // Debug logging for frequency HRG updates
+        if (paramName === "frequency") {
+          console.log("🐛 Updating frequency HRG UI with startGen:", JSON.stringify(startGen, null, 2));
+          console.log("🐛 Current UI values - startNums:", startNums?.value, "startDens:", startDens?.value, "startNumBeh:", startNumBeh?.value, "startDenBeh:", startDenBeh?.value);
+        }
 
         // Only update input values if they're not currently being edited
         if (startNums && document.activeElement !== startNums) {
-          startNums.value = startGen.numerators ?? "1";
+          const numValue = startGen.numerators ?? "1";
+          startNums.value = numValue;
+          if (paramName === "frequency") {
+            console.log("🐛 Set start numerators to:", numValue);
+          }
+        } else if (startNums && paramName === "frequency") {
+          console.log("🐛 NOT setting start numerators because startNums has focus");
         }
         if (startDens && document.activeElement !== startDens) {
-          startDens.value = startGen.denominators ?? "1";
+          const denValue = startGen.denominators ?? "1";
+          startDens.value = denValue;
+          if (paramName === "frequency") {
+            console.log("🐛 Set start denominators to:", denValue);
+          }
         }
         if (startNumBeh) {
-          startNumBeh.value = startGen.numeratorBehavior ?? "static";
+          const numBehValue = startGen.numeratorBehavior ?? "static";
+          startNumBeh.value = numBehValue;
+          if (paramName === "frequency") {
+            console.log("🐛 Set start numerator behavior to:", numBehValue);
+          }
         }
         if (startDenBeh) {
-          startDenBeh.value = startGen.denominatorBehavior ?? "static";
+          const denBehValue = startGen.denominatorBehavior ?? "static";
+          startDenBeh.value = denBehValue;
+          if (paramName === "frequency") {
+            console.log("🐛 Set start denominator behavior to:", denBehValue);
+          }
         }
       }
 
@@ -2152,28 +2191,50 @@ class ControlClient {
         if (endGen && endGen.type === "periodic") {
           const endNums = document.getElementById(
             paramName + "-end-numerators",
-          ) | null;
+          ) || null;
           const endDens = document.getElementById(
             paramName + "-end-denominators",
-          ) | null;
+          ) || null;
           const endNumBeh = document.getElementById(
             paramName + "-end-numerators-behavior",
-          ) | null;
+          ) || null;
           const endDenBeh = document.getElementById(
             paramName + "-end-denominators-behavior",
-          ) | null;
+          ) || null;
+
+          // Debug logging for frequency HRG end updates
+          if (paramName === "frequency") {
+            console.log("🐛 Updating frequency HRG end UI with endGen:", JSON.stringify(endGen, null, 2));
+          }
+
           // Only update input values if they're not currently being edited
           if (endNums && document.activeElement !== endNums) {
-            endNums.value = endGen.numerators ?? "1";
+            const endNumValue = endGen.numerators ?? "1";
+            endNums.value = endNumValue;
+            if (paramName === "frequency") {
+              console.log("🐛 Set end numerators to:", endNumValue);
+            }
           }
           if (endDens && document.activeElement !== endDens) {
-            endDens.value = endGen.denominators ?? "1";
+            const endDenValue = endGen.denominators ?? "1";
+            endDens.value = endDenValue;
+            if (paramName === "frequency") {
+              console.log("🐛 Set end denominators to:", endDenValue);
+            }
           }
           if (endNumBeh) {
-            endNumBeh.value = endGen.numeratorBehavior ?? "static";
+            const endNumBehValue = endGen.numeratorBehavior ?? "static";
+            endNumBeh.value = endNumBehValue;
+            if (paramName === "frequency") {
+              console.log("🐛 Set end numerator behavior to:", endNumBehValue);
+            }
           }
           if (endDenBeh) {
-            endDenBeh.value = endGen.denominatorBehavior ?? "static";
+            const endDenBehValue = endGen.denominatorBehavior ?? "static";
+            endDenBeh.value = endDenBehValue;
+            if (paramName === "frequency") {
+              console.log("🐛 Set end denominator behavior to:", endDenBehValue);
+            }
           }
         }
       }
@@ -3174,9 +3235,8 @@ class ControlClient {
     this.lastPhasorTime = performance.now() / 1000.0;
     this.updatePhasorDisplay();
 
-    // Reset stops playback
-    this.isPlaying = false;
-    this.updatePlayPauseButton();
+    // Reset does NOT stop playback - it just resets phasor and continues playing
+    // Keep current play state unchanged
 
     // Broadcast reset to synths
     if (this.star) {
@@ -3187,7 +3247,7 @@ class ControlClient {
     // Send beacon for immediate reset
     this.sendStepBeacon(0);
 
-    this.log("Global phasor reset to 0.0", "info");
+    this.log("Global phasor reset to 0.0 (continuing playback)", "info");
   }
 
   async connectToNetwork() {
