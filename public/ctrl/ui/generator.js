@@ -81,14 +81,14 @@ export const PARAMETER_SCHEMAS = {
 
   amplitude: {
     type: PARAMETER_TYPES.NORMALIZED,
-    label: 'amplitude',
+    label: 'amp',
     defaultValue: '0.8',
     placeholder: '0.8 or 0.5-1'
   },
 
   whiteNoise: {
     type: PARAMETER_TYPES.NORMALIZED,
-    label: 'white noise',
+    label: 'noise',
     defaultValue: '0',
     placeholder: '0 or 0-0.3'
   },

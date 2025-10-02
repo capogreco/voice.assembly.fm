@@ -131,6 +131,11 @@
               <label for="bulk-mode-checkbox">bulk mode</label>
             </div>
             <button class="button" id="apply-bulk-btn" style="display: none;">apply bulk</button>
+            <div class="portamento-control" style="display: inline-flex; align-items: center; gap: 6px;">
+              <label for="portamento-time" style="font-size: 10px;">portamento</label>
+              <input id="portamento-time" type="range" min="0" max="1" step="0.001" value="0.5" style="width: 120px;" class="dark-slider">
+              <span id="portamento-value" style="font-size: 10px; min-width: 40px;">100ms</span>
+            </div>
             <button class="button" id="reresolve-btn">re-resolve</button>
             <button class="button manual-mode-btn" id="manual-mode-btn">enable synthesis</button>
           </div>
@@ -731,15 +736,6 @@
               <option value="random">rand</option>
             </select>
           </div>
-          
-        <!-- Portamento Control -->
-        <div style="margin-top: 20px;">
-          <div class="portamento-control">
-            <label for="portamento-time">portamento</label>
-            <input id="portamento-time" type="range" min="0" max="1" step="0.001" value="0.5" style="width: 200px;" class="dark-slider">
-            <span id="portamento-value">100ms</span>
-          </div>
-        </div>
       </div>
 
     </div>

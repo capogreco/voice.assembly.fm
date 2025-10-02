@@ -31,6 +31,18 @@ export function setupCompactParameterControls(ctrl, paramName) {
   textInput.addEventListener("blur", () => {
     // Update the program generator from the input value (single values become constants)
     ctrl._handleValueInput(paramName, textInput.value, "start");
+    
+    if (!ctrl.isPlaying) {
+      // When paused: update active state and broadcast with portamento
+      ctrl.musicalState = JSON.parse(JSON.stringify(ctrl.pendingMusicalState));
+      ctrl.broadcastMusicalParameters();
+    } else {
+      // When playing: stage for application at EOC
+      if (!ctrl.bulkModeEnabled) {
+        ctrl.broadcastSingleParameterStaged(paramName);
+      }
+    }
+    
     ctrl.markPendingChanges();
   });
 
@@ -67,6 +79,18 @@ export function setupCompactParameterControls(ctrl, paramName) {
     // Use 'change' event for final state update (fires when user commits value)
     endValueInput.addEventListener("change", () => {
       ctrl._handleValueInput(paramName, endValueInput.value, "end");
+      
+      if (!ctrl.isPlaying) {
+        // When paused: update active state and broadcast with portamento
+        ctrl.musicalState = JSON.parse(JSON.stringify(ctrl.pendingMusicalState));
+        ctrl.broadcastMusicalParameters();
+      } else {
+        // When playing: stage for application at EOC
+        if (!ctrl.bulkModeEnabled) {
+          ctrl.broadcastSingleParameterStaged(paramName);
+        }
+      }
+      
       ctrl.markPendingChanges();
     });
 
@@ -108,11 +132,28 @@ export function setupCompactParameterControls(ctrl, paramName) {
   // Handle start RBG behavior changes
   if (startRbgBehaviorSelect) {
     startRbgBehaviorSelect.addEventListener("change", () => {
-      // Send sub-parameter update for the behavior change
-      ctrl._sendSubParameterUpdate(
-        paramName + ".startValueGenerator.sequenceBehavior",
-        startRbgBehaviorSelect.value,
-      );
+      // Update pending state
+      const paramState = ctrl.pendingMusicalState[paramName];
+      if (paramState.startValueGenerator) {
+        paramState.startValueGenerator.sequenceBehavior = startRbgBehaviorSelect.value;
+      }
+      
+      if (!ctrl.isPlaying) {
+        // When paused: update active state and send sub-param with portamento
+        ctrl.musicalState = JSON.parse(JSON.stringify(ctrl.pendingMusicalState));
+        ctrl._sendSubParameterUpdate(
+          paramName + ".startValueGenerator.sequenceBehavior",
+          startRbgBehaviorSelect.value
+        );
+      } else {
+        // When playing: send staged sub-param update (respects bulk mode internally)
+        ctrl._sendSubParameterUpdate(
+          paramName + ".startValueGenerator.sequenceBehavior",
+          startRbgBehaviorSelect.value,
+          0  // No portamento for staged updates
+        );
+      }
+      
       ctrl.markPendingChanges();
     });
   }
@@ -120,11 +161,28 @@ export function setupCompactParameterControls(ctrl, paramName) {
   // Handle end RBG behavior changes
   if (endRbgBehaviorSelect) {
     endRbgBehaviorSelect.addEventListener("change", () => {
-      // Send sub-parameter update for the behavior change
-      ctrl._sendSubParameterUpdate(
-        paramName + ".endValueGenerator.sequenceBehavior",
-        endRbgBehaviorSelect.value,
-      );
+      // Update pending state
+      const paramState = ctrl.pendingMusicalState[paramName];
+      if (paramState.endValueGenerator) {
+        paramState.endValueGenerator.sequenceBehavior = endRbgBehaviorSelect.value;
+      }
+      
+      if (!ctrl.isPlaying) {
+        // When paused: update active state and send sub-param with portamento
+        ctrl.musicalState = JSON.parse(JSON.stringify(ctrl.pendingMusicalState));
+        ctrl._sendSubParameterUpdate(
+          paramName + ".endValueGenerator.sequenceBehavior",
+          endRbgBehaviorSelect.value
+        );
+      } else {
+        // When playing: send staged sub-param update (respects bulk mode internally)
+        ctrl._sendSubParameterUpdate(
+          paramName + ".endValueGenerator.sequenceBehavior",
+          endRbgBehaviorSelect.value,
+          0  // No portamento for staged updates
+        );
+      }
+      
       ctrl.markPendingChanges();
     });
   }
