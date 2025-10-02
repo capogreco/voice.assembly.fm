@@ -1,9 +1,9 @@
 {
   "tasks": {
-    "dev": "deno run --allow-net --allow-read --allow-sys --allow-env --allow-run --unstable-kv --watch src/server/server.ts",
-    "start": "deno run --allow-net --allow-read --allow-sys --allow-env --allow-run --unstable-kv src/server/server.ts",
-    "lint": "deno lint src/ public/ctrl/ public/synth/ scripts/",
-    "typecheck": "deno check src/**/*.ts"
+    "dev": "deno run --allow-net --allow-read --allow-sys --allow-env --allow-run --unstable-kv --watch src/server/main.ts",
+    "start": "deno run --allow-net --allow-read --allow-sys --allow-env --allow-run --unstable-kv src/server/main.ts",
+    "lint": "deno lint src/ public/ctrl/ public/synth/",
+    "fmt": "deno fmt src/ public/ctrl/ public/synth/"
   },
   "imports": {
     "std/": "https://deno.land/std@0.220.0/"
