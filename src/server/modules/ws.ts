@@ -404,6 +404,19 @@ async function handleDisconnection(client_id: string): Promise<void> {
     } catch (e) {
       console.error(`[SYNTH-CLEANUP] Failed to delete ${client_id} from KV:`, e);
     }
+    
+    // Notify active controller about synth disconnection
+    const activeCtrlEntry = await kv.get(["active_ctrl"]);
+    if (activeCtrlEntry?.value) {
+      const activeCtrl = activeCtrlEntry.value as KVCtrlEntry;
+      const notification = {
+        type: "synth-left",
+        synth_id: client_id,
+        timestamp: Date.now(),
+      };
+      await sendOrQueue(activeCtrl.client_id, notification);
+      console.log(`📢 Notified controller ${activeCtrl.client_id} about synth-left: ${client_id}`);
+    }
   }
 
   // Clean up controller registration
@@ -415,6 +428,24 @@ async function handleDisconnection(client_id: string): Promise<void> {
         console.log(`[SERVER-STATE] Active controller ${client_id} disconnected`);
         await kv.delete(["active_ctrl"]);
       }
+    }
+    
+    // Notify all synths about controller disconnection
+    try {
+      const synthEntries = kv.list({ prefix: ["synths"] });
+      for await (const entry of synthEntries) {
+        const key = entry.key as (string | unknown)[];
+        const synthId = String(key[1]);
+        const notification = {
+          type: "ctrl-left",
+          ctrl_id: client_id,
+          timestamp: Date.now(),
+        };
+        await sendOrQueue(synthId, notification);
+      }
+      console.log(`📢 Notified all synths about ctrl-left: ${client_id}`);
+    } catch (e) {
+      console.error("[CTRL-LEFT] Failed to notify synths:", e);
     }
   }
 }

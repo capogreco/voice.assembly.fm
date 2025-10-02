@@ -246,6 +246,76 @@ temporal behaviors.
 frequency values, creating rich ensemble textures while maintaining rhythmic
 synchronization.
 
+### Minimal Re-Resolution Architecture
+
+**Overview**: The synthesis engine employs a minimal re-resolution architecture where only the specific components that change are recalculated, preserving computational efficiency and musical relationships.
+
+**Core Principle**: Store generative parameters (base values, numerators, denominators, behaviors) rather than generated values (absolute frequencies), enabling independent component updates.
+
+**HRG Component Storage**:
+```javascript
+lastResolvedHRG[paramName] = {
+  baseValue: 220,           // Fundamental frequency
+  start: {
+    numerator: 3,           // Currently selected numerator
+    denominator: 2,         // Currently selected denominator  
+    frequency: 330          // Computed: 220 * (3/2)
+  },
+  end: {
+    numerator: 5,           // For cosine interpolation
+    denominator: 4,
+    frequency: 275          // Computed: 220 * (5/4)
+  }
+}
+```
+
+**Update Types & Re-Resolution Scope**:
+
+1. **Base Value Updates** (`frequency.baseValue`):
+   - **Scope**: Only base value changes
+   - **Method**: `freq = newBase * (storedNumerator/storedDenominator)`
+   - **Preserves**: All HRG ratios, indices, behaviors, arrays
+   - **Effect**: Musical intervals maintained, pitch level changes
+
+2. **Numerator Updates** (`frequency.startValueGenerator.numerators`):
+   - **Scope**: Only start numerator re-resolution
+   - **Method**: Re-parse numerator array, update index if needed
+   - **Preserves**: Denominator, end generator, base value
+   - **Effect**: Changes harmonic ratios for start value only
+
+3. **Denominator Updates** (`frequency.startValueGenerator.denominators`):
+   - **Scope**: Only start denominator re-resolution  
+   - **Method**: Re-parse denominator array, update index if needed
+   - **Preserves**: Numerator, end generator, base value
+   - **Effect**: Changes harmonic ratios for start value only
+
+4. **Behavior Updates** (`frequency.startValueGenerator.numeratorBehavior`):
+   - **Scope**: Only behavior pattern changes
+   - **Method**: Update selection algorithm (static/ascending/etc.)
+   - **Preserves**: Current values, other behaviors, arrays
+   - **Effect**: Changes how values evolve over time
+
+5. **Interpolation Updates** (`frequency.interpolation`):
+   - **Scope**: End value resolution if changing to/from cosine
+   - **Method**: Add/remove end generator as needed
+   - **Preserves**: Start generator, base value, behaviors
+   - **Effect**: Changes parameter movement shape within cycles
+
+**Benefits**:
+
+- **Computational Efficiency**: Only affected components recalculate
+- **Musical Preservation**: Harmonic relationships stay intact across base changes  
+- **Independent Control**: Each HRG component (base, num, den, behavior) updates separately
+- **Network Efficiency**: Sub-parameter messages much smaller than full programs
+- **Real-time Performance**: Minimal latency for live parameter adjustments
+
+**Message Flow**:
+- **Controller**: Sends `SUB_PARAM_UPDATE` with dot-notation path (e.g., `"frequency.baseValue"`)
+- **Synth**: Routes to appropriate minimal update method based on parameter path
+- **Result**: Only the specified component updates, preserving all other state
+
+This architecture enables the ctrl client to make granular changes (like adjusting frequency base from 220Hz to 440Hz) without disrupting the complex HRG patterns that create the ensemble's harmonic texture.
+
 ### Scene Memory System
 
 **Overview**: The scene memory system allows performers to save and recall

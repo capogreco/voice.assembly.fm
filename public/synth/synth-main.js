@@ -308,6 +308,9 @@ class SynthClient {
 
       // Track current parameter values for portamento (strict - no defaults)
       this.lastResolvedValues = {};
+      
+      // Track HRG components for minimal re-computation 
+      this.lastResolvedHRG = {};
 
       // Create mixer for voice output
       this.mixer = this.audioContext.createGain();
@@ -614,10 +617,8 @@ class SynthClient {
           portamentoMs: 0, // Immediate, no portamento
         };
 
-        // Update tracking
-        this.lastResolvedValues[paramName] = cfg.interpolation === "step"
-          ? resolved.startValue
-          : resolved.endValue;
+        // Update tracking with new format
+        this._updateValueTracking(paramName, resolved.startValue, resolved.endValue, cfg.interpolation);
       }
 
       // Send batch envelope update to voice worklet
@@ -664,10 +665,8 @@ class SynthClient {
         portamentoMs: portamentoTime,
       };
 
-      // Update tracking
-      this.lastResolvedValues[paramName] = cfg.interpolation === "step"
-        ? resolved.startValue
-        : resolved.endValue;
+      // Update tracking with new format
+      this._updateValueTracking(paramName, resolved.startValue, resolved.endValue, cfg.interpolation);
     }
 
     // Send batch envelope update to voice worklet
@@ -940,35 +939,51 @@ class SynthClient {
       }
     }
 
-    // Special handling for baseValue changes
-    if (paramPath.endsWith(".baseValue")) {
-      if (this.isPlaying) {
-        console.log(
-          `📋 Staging baseValue update for EOC: ${paramPath} = ${value}`,
-        );
-        // Store the change to be applied at next EOC
-        // The config is already updated above, EOC will re-resolve with new base and current HRG indices
-      } else {
-        console.log(
-          `⚡ Applying baseValue update immediately: ${paramPath} = ${value}`,
-        );
-        // Resolve just this parameter with new base, preserve HRG state, send SET_ENV with portamento
-        this.applySingleParamWithPortamento(paramName, portamentoTime);
-      }
-      return;
-    }
-
-    // Apply immediately if paused, stage for EOC if playing
+    // MINIMAL RE-RESOLUTION ROUTING - Only update what actually changed
+    
     if (this.isPlaying) {
       console.log(
         `📋 Staging sub-parameter update for EOC: ${paramPath} = ${value}`,
       );
       // Store the change to be applied at next EOC
       // The config is already updated above, so EOC will pick up the new values
-    } else {
-      console.log(
-        `⚡ Applying sub-parameter update immediately: ${paramPath} = ${value}`,
-      );
+      return;
+    }
+
+    // For paused mode: Route to minimal re-resolution methods
+    console.log(`⚡ Applying minimal sub-parameter update: ${paramPath} = ${value}`);
+
+    if (paramPath.endsWith(".baseValue")) {
+      // Base value change: scale existing values, preserve HRG ratios
+      this.applyBaseValueUpdate(paramName, value, portamentoTime);
+    } 
+    else if (paramPath.includes(".startValueGenerator.") && 
+             (paramPath.includes(".numerators") || paramPath.includes(".denominators") || 
+              paramPath.includes("numeratorBehavior") || paramPath.includes("denominatorBehavior"))) {
+      // Start generator change: only re-resolve start value
+      this.applyStartValueUpdate(paramName, portamentoTime);
+    }
+    else if (paramPath.includes(".endValueGenerator.") && 
+             (paramPath.includes(".numerators") || paramPath.includes(".denominators") || 
+              paramPath.includes("numeratorBehavior") || paramPath.includes("denominatorBehavior"))) {
+      // End generator change: only re-resolve end value
+      this.applyEndValueUpdate(paramName, portamentoTime);
+    }
+    else if (paramPath.endsWith(".interpolation")) {
+      // Interpolation change: handle start/end resolution appropriately
+      this.applyInterpolationChange(paramName, value, portamentoTime);
+    }
+    else if (paramPath.includes(".sequenceBehavior")) {
+      // RBG behavior change: re-resolve affected generator only
+      if (paramPath.includes(".startValueGenerator.")) {
+        this.applyStartValueUpdate(paramName, portamentoTime);
+      } else if (paramPath.includes(".endValueGenerator.")) {
+        this.applyEndValueUpdate(paramName, portamentoTime);
+      }
+    }
+    else {
+      // Fallback for unknown sub-parameter changes
+      console.warn(`⚠️ Unknown sub-parameter change: ${paramPath}, falling back to full resolution`);
       this.applySingleParamWithPortamento(paramName, portamentoTime);
     }
   }
@@ -3088,10 +3103,204 @@ class SynthClient {
       portamentoMs: portamentoMs,
     });
 
-    // Update tracking for current values
-    this.lastResolvedValues[paramName] = cfg.interpolation === "step"
-      ? resolvedParam.startValue
-      : resolvedParam.endValue;
+    // Update tracking with new format
+    this._updateValueTracking(paramName, resolvedParam.startValue, resolvedParam.endValue, cfg.interpolation);
+  }
+
+  // GRANULAR UPDATE METHODS - Minimal Re-Resolution Architecture
+  
+  // Apply only start value update (preserves end value)
+  applyStartValueUpdate(paramName, portamentoMs) {
+    const cfg = this.programConfig[paramName];
+    if (!cfg) {
+      throw new Error(`CRITICAL: Missing config for ${paramName}`);
+    }
+
+    // Resolve only the start value
+    const newStartValue = this._resolveParameterValue(
+      cfg.startValueGenerator,
+      paramName,
+      "start"
+    );
+
+    // Preserve existing end value
+    const preservedEndValue = this._getPreservedEndValue(paramName, cfg);
+
+    console.log(
+      `⚡ START-ONLY update for ${paramName}: start=${newStartValue}, preserving end=${preservedEndValue}`
+    );
+
+    // Send targeted SET_ENV message
+    this.voiceNode.port.postMessage({
+      type: "SET_ENV",
+      v: 1,
+      param: paramName,
+      startValue: newStartValue,
+      endValue: preservedEndValue,
+      interpolation: cfg.interpolation,
+      portamentoMs: portamentoMs,
+    });
+
+    // Update tracking
+    this._updateValueTracking(paramName, newStartValue, preservedEndValue, cfg.interpolation);
+  }
+
+  // Apply only end value update (preserves start value)
+  applyEndValueUpdate(paramName, portamentoMs) {
+    const cfg = this.programConfig[paramName];
+    if (!cfg) {
+      throw new Error(`CRITICAL: Missing config for ${paramName}`);
+    }
+
+    // Preserve existing start value
+    const preservedStartValue = this._getPreservedStartValue(paramName);
+
+    // Resolve only the end value (if cosine interpolation)
+    const newEndValue = cfg.interpolation === "step" 
+      ? preservedStartValue  // Step mode: end = start
+      : this._resolveParameterValue(cfg.endValueGenerator, paramName, "end");
+
+    console.log(
+      `⚡ END-ONLY update for ${paramName}: preserving start=${preservedStartValue}, end=${newEndValue}`
+    );
+
+    // Send targeted SET_ENV message
+    this.voiceNode.port.postMessage({
+      type: "SET_ENV",
+      v: 1,
+      param: paramName,
+      startValue: preservedStartValue,
+      endValue: newEndValue,
+      interpolation: cfg.interpolation,
+      portamentoMs: portamentoMs,
+    });
+
+    // Update tracking
+    this._updateValueTracking(paramName, preservedStartValue, newEndValue, cfg.interpolation);
+  }
+
+  // Apply base value change without re-resolving HRG (preserves ratios)
+  applyBaseValueUpdate(paramName, newBaseValue, portamentoMs) {
+    const cfg = this.programConfig[paramName];
+    if (!cfg) {
+      throw new Error(`CRITICAL: Missing config for ${paramName}`);
+    }
+
+    // Get stored HRG components (not absolute values!)
+    const hrgState = this.lastResolvedHRG[paramName];
+    if (!hrgState) {
+      console.warn(`⚠️ No HRG state for ${paramName}, falling back to full resolution`);
+      return this.applySingleParamWithPortamento(paramName, portamentoMs);
+    }
+
+    // Recalculate frequencies using NEW base but SAME ratios
+    const newStartValue = newBaseValue * (hrgState.start.numerator / hrgState.start.denominator);
+    const newEndValue = cfg.interpolation === "cosine" && hrgState.end
+      ? newBaseValue * (hrgState.end.numerator / hrgState.end.denominator)
+      : newStartValue;  // For step interpolation, end = start
+
+    console.log(
+      `⚡ BASE-ONLY update for ${paramName}: base=${newBaseValue}, ` +
+      `start=${newStartValue.toFixed(3)} (${hrgState.start.numerator}/${hrgState.start.denominator}), ` +
+      `end=${newEndValue.toFixed(3)} ${hrgState.end ? `(${hrgState.end.numerator}/${hrgState.end.denominator})` : '(step)'}`
+    );
+
+    // Send to worklet
+    this.voiceNode.port.postMessage({
+      type: "SET_ENV",
+      v: 1,
+      param: paramName,
+      startValue: newStartValue,
+      endValue: newEndValue,
+      interpolation: cfg.interpolation,
+      portamentoMs: portamentoMs,
+    });
+
+    // Update stored state with new base and computed frequencies
+    hrgState.baseValue = newBaseValue;
+    hrgState.start.frequency = newStartValue;
+    if (hrgState.end) {
+      hrgState.end.frequency = newEndValue;
+    }
+
+    // Also update the config and legacy tracking for consistency
+    cfg.baseValue = newBaseValue;
+    this._updateValueTracking(paramName, newStartValue, newEndValue, cfg.interpolation);
+  }
+
+  // Apply interpolation change (may need to resolve end value)
+  applyInterpolationChange(paramName, newInterpolation, portamentoMs) {
+    const cfg = this.programConfig[paramName];
+    if (!cfg) {
+      throw new Error(`CRITICAL: Missing config for ${paramName}`);
+    }
+
+    // Preserve start value
+    const preservedStartValue = this._getPreservedStartValue(paramName);
+    let endValue;
+
+    if (newInterpolation === "step") {
+      // Step mode: end = start
+      endValue = preservedStartValue;
+    } else {
+      // Cosine mode: may need to resolve end value if not already available
+      endValue = this._getPreservedEndValue(paramName, cfg) || 
+                 this._resolveParameterValue(cfg.endValueGenerator, paramName, "end");
+    }
+
+    console.log(
+      `⚡ INTERPOLATION change for ${paramName}: ${cfg.interpolation}→${newInterpolation}, start=${preservedStartValue}, end=${endValue}`
+    );
+
+    // Send SET_ENV with new interpolation
+    this.voiceNode.port.postMessage({
+      type: "SET_ENV",
+      v: 1,
+      param: paramName,
+      startValue: preservedStartValue,
+      endValue: endValue,
+      interpolation: newInterpolation,
+      portamentoMs: portamentoMs,
+    });
+
+    // Update tracking
+    this._updateValueTracking(paramName, preservedStartValue, endValue, newInterpolation);
+  }
+
+  // Helper: Get preserved start value from tracking
+  _getPreservedStartValue(paramName) {
+    const tracking = this.lastResolvedValues[paramName];
+    if (typeof tracking === 'object' && tracking.start !== undefined) {
+      return tracking.start;
+    } else if (typeof tracking === 'number') {
+      return tracking; // Legacy format
+    } else {
+      throw new Error(`CRITICAL: No preserved start value available for ${paramName}`);
+    }
+  }
+
+  // Helper: Get preserved end value from tracking
+  _getPreservedEndValue(paramName, cfg) {
+    const tracking = this.lastResolvedValues[paramName];
+    if (typeof tracking === 'object' && tracking.end !== undefined) {
+      return tracking.end;
+    } else if (typeof tracking === 'number') {
+      return tracking; // Legacy format - use for end too
+    } else if (cfg.interpolation === "step") {
+      // For step mode, end = start
+      return this._getPreservedStartValue(paramName);
+    } else {
+      throw new Error(`CRITICAL: No preserved end value available for ${paramName}`);
+    }
+  }
+
+  // Helper: Update value tracking with new format
+  _updateValueTracking(paramName, startValue, endValue, interpolation) {
+    this.lastResolvedValues[paramName] = {
+      start: startValue,
+      end: endValue,
+      current: interpolation === "step" ? startValue : endValue
+    };
   }
 
   // Apply base frequency change with ratio-preserving ramp
@@ -3124,7 +3333,8 @@ class SynthClient {
       startParam.linearRampToValueAtTime(target, targetTime);
     }
 
-    this.lastResolvedValues[paramName] = target;
+    // Update tracking - for direct assignments, start and end are the same
+    this._updateValueTracking(paramName, target, target, "step");
   }
 
   // Pure parameter resolver at specific phase (no state mutation)
@@ -3284,7 +3494,23 @@ class SynthClient {
     }
 
     const base = Number(cfg.baseValue);
-    return base * (numerator / (denominator || 1));
+    const frequency = base * (numerator / (denominator || 1));
+    
+    // Store HRG components for minimal re-computation (even for peek)
+    if (!this.lastResolvedHRG[paramName]) {
+      this.lastResolvedHRG[paramName] = { baseValue: base };
+    }
+    if (!this.lastResolvedHRG[paramName][position]) {
+      this.lastResolvedHRG[paramName][position] = {};
+    }
+    this.lastResolvedHRG[paramName][position] = {
+      numerator,
+      denominator: denominator || 1,
+      frequency
+    };
+    this.lastResolvedHRG[paramName].baseValue = base;
+    
+    return frequency;
   }
 
   // Resolve HRG value and advance sequence
@@ -3361,7 +3587,23 @@ class SynthClient {
     }
 
     const base = Number(cfg.baseValue);
-    return base * (numerator / (denominator || 1));
+    const frequency = base * (numerator / (denominator || 1));
+    
+    // Store HRG components for minimal re-computation
+    if (!this.lastResolvedHRG[param]) {
+      this.lastResolvedHRG[param] = { baseValue: base };
+    }
+    if (!this.lastResolvedHRG[param][position]) {
+      this.lastResolvedHRG[param][position] = {};
+    }
+    this.lastResolvedHRG[param][position] = {
+      numerator,
+      denominator: denominator || 1,
+      frequency
+    };
+    this.lastResolvedHRG[param].baseValue = base;
+    
+    return frequency;
   }
 
   // Resolve RBG value with behavior support

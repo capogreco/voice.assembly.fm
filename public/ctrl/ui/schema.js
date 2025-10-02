@@ -243,6 +243,12 @@ export function setupHrgParameterControls(ctrl, paramName) {
     const applyBase = () => {
       const baseValue = parseFloat(baseInput.value);
 
+      // Check if value actually changed
+      const currentBaseValue = ctrl.pendingMusicalState[paramName]?.baseValue;
+      if (baseValue === currentBaseValue) {
+        return; // No change, skip everything
+      }
+
       if (!Number.isFinite(baseValue)) {
         ctrl.log("Invalid " + paramName + " base value", "error");
         return;
@@ -265,27 +271,31 @@ export function setupHrgParameterControls(ctrl, paramName) {
         );
       }
 
+      // Update internal state for UI consistency
       ctrl._updatePendingState({
         type: "SET_BASE_VALUE",
         param: paramName,
         value: baseValue,
       });
 
+      // Send ONLY the base value change as a sub-parameter update
       if (!ctrl.isPlaying) {
-        // When paused: update active state and broadcast with portamento
+        // When paused: update active state and send sub-param with portamento
         ctrl.musicalState = JSON.parse(JSON.stringify(ctrl.pendingMusicalState));
-        ctrl.broadcastMusicalParameters();
+        ctrl._sendSubParameterUpdate(
+          paramName + ".baseValue",
+          baseValue
+        );
       } else {
-        // When playing: stage for application at EOC
-        if (ctrl.bulkModeEnabled) {
-          // Bulk mode: just mark pending, don't broadcast yet
-          ctrl.markPendingChanges();
-        } else {
-          // Direct mode: broadcast staged change
-          ctrl.broadcastSingleParameterStaged(paramName);
-        }
+        // When playing: send staged sub-param update (respects bulk mode internally)
+        ctrl._sendSubParameterUpdate(
+          paramName + ".baseValue",
+          baseValue,
+          0  // No portamento for staged updates
+        );
       }
 
+      ctrl.markPendingChanges();
       ctrl.updateParameterVisualFeedback(paramName);
     };
 
