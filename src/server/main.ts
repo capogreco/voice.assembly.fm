@@ -24,34 +24,48 @@ await cleanupKVOnStartup();
  * Handle HTTP requests
  */
 async function handleRequest(request: Request): Promise<Response> {
-  const url = new URL(request.url);
-
-  console.log(
-    `[${new Date().toISOString()}] [${request.method}] ${url.pathname}`,
-  );
-
-  // Handle CORS preflight
-  if (request.method === "OPTIONS") {
-    return createCorsResponse();
-  }
-
-  // WebSocket upgrade (only on /ws path)
-  if (
-    request.headers.get("upgrade") === "websocket" && url.pathname === "/ws"
-  ) {
-    return handleWebSocketUpgrade(request);
-  }
-
-  // Handle ICE servers request for TURN credentials
-  if (url.pathname === "/ice-servers") {
-    return await handleIceServersRequest(request);
-  }
-
-  // Handle static files
   try {
-    return await handleStaticFiles(request);
+    const url = new URL(request.url);
+
+    console.log(
+      `[${new Date().toISOString()}] [${request.method}] ${url.pathname}`,
+    );
+
+    // Handle CORS preflight
+    if (request.method === "OPTIONS") {
+      console.log("Returning CORS response");
+      return createCorsResponse();
+    }
+
+    // WebSocket upgrade (only on /ws path)
+    if (
+      request.headers.get("upgrade") === "websocket" && url.pathname === "/ws"
+    ) {
+      console.log("Handling WebSocket upgrade");
+      return handleWebSocketUpgrade(request);
+    }
+
+    // Handle ICE servers request for TURN credentials
+    if (url.pathname === "/ice-servers") {
+      console.log("Handling ICE servers request");
+      return await handleIceServersRequest(request);
+    }
+
+    // Handle static files
+    console.log("Calling handleStaticFiles for:", url.pathname);
+    const response = await handleStaticFiles(request);
+    console.log("handleStaticFiles returned:", !!response, response?.status);
+    
+    if (!response) {
+      console.error("❌ handleStaticFiles returned null/undefined for:", url.pathname);
+      return createErrorResponse(404, "Not found");
+    }
+    
+    console.log("Returning response with status:", response.status);
+    return response;
+
   } catch (error) {
-    console.error("❌ Error serving static files:", error);
+    console.error("❌ Error in handleRequest:", error);
     return createErrorResponse(500, "Internal server error");
   }
 }
@@ -59,19 +73,28 @@ async function handleRequest(request: Request): Promise<Response> {
 // Start the server
 console.log(`🚀 Starting server on port ${port}...`);
 
-Deno.serve({
+const server = Deno.serve({
   port: port,
-  handler: handleRequest,
-}, () => {
-  console.log(`✅ Server running on:`);
-  console.log(`   Local:    http://localhost:${port}`);
-  
-  const localIPs = getLocalIPs();
-  for (const ip of localIPs) {
-    console.log(`   Network:  http://${ip}:${port}`);
+}, async (request: Request): Promise<Response> => {
+  console.log("Handler called for:", request.url);
+  try {
+    const result = await handleRequest(request);
+    console.log("Handler returning:", !!result, result?.status);
+    return result;
+  } catch (error) {
+    console.error("Handler error:", error);
+    return createErrorResponse(500, "Handler error");
   }
-  
-  console.log(`\n🎵 Voice.Assembly.FM is ready!`);
-  console.log(`   Control:  http://localhost:${port}/ctrl`);
-  console.log(`   Synth:    http://localhost:${port}/synth`);
 });
+
+console.log(`✅ Server running on:`);
+console.log(`   Local:    http://localhost:${port}`);
+
+const localIPs = getLocalIPs();
+for (const ip of localIPs) {
+  console.log(`   Network:  http://${ip}:${port}`);
+}
+
+console.log(`\n🎵 Voice.Assembly.FM is ready!`);
+console.log(`   Control:  http://localhost:${port}/ctrl`);
+console.log(`   Synth:    http://localhost:${port}/synth`);

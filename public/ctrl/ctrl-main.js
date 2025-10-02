@@ -1301,7 +1301,10 @@ class ControlClient {
     };
 
     // Send PROGRAM_UPDATE with just this parameter for staging
-    const message = MessageBuilder.programUpdate(wirePayload, this.isPlaying);
+    const message = MessageBuilder.createParameterUpdate(
+      MessageTypes.PROGRAM_UPDATE,
+      wirePayload
+    );
     this.star.broadcastToType("synth", message, "control");
     this.log("📡 Broadcasted staged " + paramName + " parameter change", "info");
   }

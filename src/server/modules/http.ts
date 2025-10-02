@@ -29,7 +29,7 @@ export async function handleStaticFiles(request: Request): Promise<Response> {
   }
 
   // Handle ctrl client
-  if (pathname === "/ctrl" || pathname === "/ctrl/") {
+  if (pathname === "/ctrl" || pathname.startsWith("/ctrl/")) {
     return serveDir(request, {
       fsRoot: path.join(ROOT_DIR, "public", "ctrl"),
       urlRoot: "ctrl",
@@ -39,7 +39,7 @@ export async function handleStaticFiles(request: Request): Promise<Response> {
   }
 
   // Handle synth client
-  if (pathname === "/synth" || pathname === "/synth/") {
+  if (pathname === "/synth" || pathname.startsWith("/synth/")) {
     return serveDir(request, {
       fsRoot: path.join(ROOT_DIR, "public", "synth"),
       urlRoot: "synth",

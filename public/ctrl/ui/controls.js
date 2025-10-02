@@ -6,6 +6,7 @@
  */
 
 import { setupCompactParameterControls, setupHrgParameterControls } from "./schema.js";
+import { initializeSchemaBasedUI } from "./generator.js";
 
 /**
  * Setup event handlers for the main UI controls
@@ -256,8 +257,11 @@ export function setupMusicalControls(ctrl) {
  * @param {Object} ctrl - The ControlClient instance
  */
 export function setupEnvelopeControls(ctrl) {
-  // All parameters now use the new compact format
+  // Initialize schema-based UI generation (if enabled)
+  // This will either generate controls dynamically or enhance existing ones
+  initializeSchemaBasedUI();
 
+  // All parameters now use the new compact format
   // Setup compact parameter controls (new format)
   setupHrgParameterControls(ctrl, "frequency");
   setupHrgParameterControls(ctrl, "vibratoRate");
