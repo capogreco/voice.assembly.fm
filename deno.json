@@ -1,11 +1,9 @@
 {
   "tasks": {
-    "build": "deno run -A scripts/bundle_ctrl.ts",
     "dev": "deno run --allow-net --allow-read --allow-sys --allow-env --allow-run --unstable-kv --watch src/server/server.ts",
-    "dev:full": "deno run -A scripts/dev_full.ts",
     "start": "deno run --allow-net --allow-read --allow-sys --allow-env --allow-run --unstable-kv src/server/server.ts",
-    "watch:ctrl": "deno run -A --watch=public/ctrl/ctrl-main.ts scripts/bundle_ctrl.ts",
-    "lint": "deno lint src/ public/ctrl/ public/synth/ scripts/"
+    "lint": "deno lint src/ public/ctrl/ public/synth/ scripts/",
+    "typecheck": "deno check src/**/*.ts"
   },
   "imports": {
     "std/": "https://deno.land/std@0.220.0/"

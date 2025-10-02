@@ -1,42 +1,76 @@
-// @ts-check
-
 /**
  * Voice.Assembly.FM Control Client Main Application
- * Converted from TypeScript to JavaScript + JSDoc
  */
 
-// JSDoc type imports (no runtime cost)
-/** @typedef {import('../../src/common/parameter-types.js').IMusicalState} IMusicalState */
-/** @typedef {import('../../src/common/parameter-types.js').ParameterState} ParameterState */
-/** @typedef {import('../../src/common/parameter-types.js').GeneratorConfig} GeneratorConfig */
-
-// Runtime imports
 import { generatePeerId, WebRTCStar } from "../../src/common/webrtc-star.js";
 import {
   MessageBuilder,
   MessageTypes,
 } from "../../src/common/message-protocol.js";
+import {
+  GeneratorConfig,
+  IMusicalState,
+  ParameterState,
+} from "../../src/common/parameter-types.ts";
 
-/**
- * Control action types for state management
- * @typedef {Object} ControlAction
- * @property {"SET_BASE_VALUE" | "SET_INTERPOLATION" | "SET_GENERATOR_CONFIG"} type
- * @property {string} [param] - Parameter name
- * @property {number} [value] - Parameter value
- * @property {"step" | "cosine"} [interpolation] - Interpolation type
- * @property {"start" | "end"} [position] - Generator position
- * @property {GeneratorConfig} [config] - Generator configuration
- */
+// Define action types for state management
+type ControlAction =
+  | { type: "SET_BASE_VALUE"; param: keyof IMusicalState; value: number }
+  | {
+    type: "SET_INTERPOLATION";
+    param: keyof IMusicalState;
+    interpolation: "step" | "cosine";
+  }
+  | {
+    type: "SET_GENERATOR_CONFIG";
+    param: keyof IMusicalState;
+    position: "start" | "end";
+    config: GeneratorConfig;
+  };
 
 class ControlClient {
+  // Typed state management
+  musicalState: IMusicalState;
+  pendingMusicalState: IMusicalState;
+  star: any; // WebRTC star connection
+  peerId: string;
+  phasor: number;
+  periodSec: number;
+  stepsPerCycle: number;
+  cycleLength: number;
+  lastPhasorTime: number;
+  phasorUpdateId: any;
+  lastBroadcastTime: number;
+  phasorBroadcastRate: number;
+  audioContext: any;
+  es8Enabled: boolean;
+  es8Node: any;
+  lastPausedHeartbeat: number;
+  diagnosticsUpdateId: any;
+  hasPendingChanges: boolean;
+  pendingParameterChanges: Set<keyof IMusicalState>; // Track which parameters have pending changes
+  elements: any;
+  synthesisActive: boolean;
 
-  /**
-   * Create default musical state
-   * @returns {IMusicalState}
-   */
-  _createDefaultState() {
+  // Kicked state tracking
+  wasKicked: boolean;
+  kickedReason: string | null;
+
+  // Bulk mode properties
+  bulkModeEnabled: boolean;
+  bulkChanges: Array<
+    {
+      type: string;
+      paramPath?: string;
+      param?: string;
+      value?: any;
+      portamentoTime?: number;
+    }
+  >;
+
+  private _createDefaultState(): IMusicalState {
     // Helper for frequency (uses HRG with both start and end generators)
-    const defaultFrequencyState = () => ({
+    const defaultFrequencyState = (): ParameterState => ({
       interpolation: "step",
       baseValue: 220,
       startValueGenerator: {
@@ -56,7 +90,7 @@ class ControlClient {
     });
 
     // Helper for normalized parameters (0-1 range)
-    const defaultNormalizedState = () => ({
+    const defaultNormalizedState = (): ParameterState => ({
       interpolation: "cosine",
       startValueGenerator: {
         type: "normalised",
@@ -71,7 +105,7 @@ class ControlClient {
     });
 
     // Helper for simple constant parameters
-    const defaultConstantState = (value) => ({
+    const defaultConstantState = (value: number): ParameterState => ({
       interpolation: "step",
       baseValue: value,
       startValueGenerator: {
@@ -122,9 +156,9 @@ class ControlClient {
   /**
    * Preset configurations for destructive state replacement
    */
-  _createPresetConfigs() {
+  private _createPresetConfigs() {
     // Helper for maximally stochastic normalized step parameters
-    const normalizedRandomStep = () => ({
+    const normalizedRandomStep = (): ParameterState => ({
       interpolation: "step",
       startValueGenerator: {
         type: "normalised",
@@ -139,7 +173,7 @@ class ControlClient {
     });
 
     // Helper for maximally stochastic normalized cosine parameters
-    const normalizedRandomCosine = () => ({
+    const normalizedRandomCosine = (): ParameterState => ({
       interpolation: "cosine",
       startValueGenerator: {
         type: "normalised",
@@ -154,7 +188,7 @@ class ControlClient {
     });
 
     // Helper for maximally stochastic periodic step parameters
-    const periodicRandomStep = (baseValue) => ({
+    const periodicRandomStep = (baseValue: number): ParameterState => ({
       interpolation: "step",
       baseValue,
       startValueGenerator: {
@@ -174,7 +208,7 @@ class ControlClient {
     });
 
     // Helper for maximally stochastic periodic cosine parameters
-    const periodicRandomCosine = (baseValue) => ({
+    const periodicRandomCosine = (baseValue: number): ParameterState => ({
       interpolation: "cosine",
       baseValue,
       startValueGenerator: {
@@ -194,7 +228,7 @@ class ControlClient {
     });
 
     // Helper for simple constant parameters
-    const constantStep = (value) => ({
+    const constantStep = (value: number): ParameterState => ({
       interpolation: "step",
       startValueGenerator: {
         type: "normalised",
@@ -256,7 +290,7 @@ class ControlClient {
     };
   }
 
-  _updatePendingState(action) {
+  private _updatePendingState(action: ControlAction) {
     console.log("Action dispatched:", action);
 
     // Create a deep copy of current pending state
@@ -285,7 +319,7 @@ class ControlClient {
             baseValue: param.baseValue,
             startValueGenerator: param.startValueGenerator,
             endValueGenerator: param.endValueGenerator || {
-              ...param.startValueGenerator, // Copy start generator
+              ...param.startValueGenerator, // Copy start generator as default
             },
           };
         }
@@ -335,7 +369,7 @@ class ControlClient {
    * Apply HRG changes when paused
    * Updates active state directly and broadcasts only the changed parameter with portamento
    */
-  _applyHRGChangeWithPortamento(action) {
+  private _applyHRGChangeWithPortamento(action: any) {
     // Update active state with the HRG change (no pending state when paused)
     this._updateActiveState(action);
 
@@ -355,11 +389,11 @@ class ControlClient {
   }
 
   /**
-   * Check if value is a range (contains hyphen)
-   * @param {string} value
-   * @returns {boolean}
+   * Check if an input value represents a range (contains hyphen between numbers)
+   * @param value The input value to check
+   * @returns true if the value represents a range
    */
-  _isRangeValue(value) {
+  private _isRangeValue(value: string): boolean {
     const trimmed = value.trim();
     if (!trimmed.includes("-")) return false;
 
@@ -376,14 +410,14 @@ class ControlClient {
 
   /**
    * Send sub-parameter update message with staging logic
-   * @param {string} paramPath - Dot notation path (e.g., "frequency.startValueGenerator.numerators")
-   * @param {any} value - New value to set
-   * @param {number} [portamentoTime] - Optional portamento duration (defaults to UI value)
+   * @param paramPath Dot notation path (e.g., "frequency.startValueGenerator.numerators")
+   * @param value New value to set
+   * @param portamentoTime Optional portamento duration (defaults to UI value)
    */
-  _sendSubParameterUpdate(
-    paramPath,
-    value,
-    portamentoTime,
+  private _sendSubParameterUpdate(
+    paramPath: string,
+    value: any,
+    portamentoTime?: number,
   ) {
     const finalPortamentoTime = portamentoTime ??
       (this.elements.portamentoTime
@@ -422,11 +456,11 @@ class ControlClient {
    * Update the active musical state directly (bypassing pending state)
    * Used when transport is paused for immediate parameter updates
    */
-  _updateActiveState(action) {
+  private _updateActiveState(action: any) {
     // Clone the current active state
     const newState = JSON.parse(JSON.stringify(this.musicalState));
 
-    // Apply the same logic_updatePendingState but to active state
+    // Apply the same logic as _updatePendingState but to active state
     switch (action.type) {
       case "SET_BASE_VALUE": {
         const param = newState[action.param];
@@ -450,7 +484,7 @@ class ControlClient {
             baseValue: param.baseValue,
             startValueGenerator: param.startValueGenerator,
             endValueGenerator: param.endValueGenerator || {
-              ...param.startValueGenerator, // Copy start generator
+              ...param.startValueGenerator, // Copy start generator as default
             },
           };
         }
@@ -493,65 +527,52 @@ class ControlClient {
   /**
    * Apply a preset configuration (destructive replacement)
    */
-  _applyPreset(presetName) {
+  private _applyPreset(presetName: string) {
     const presets = this._createPresetConfigs();
-    const preset = presets[presetName];
+    const preset = presets[presetName as keyof typeof presets];
     
     if (!preset) {
-      console.error("Unknown preset: " + presetName);
+      console.error(`Unknown preset: ${presetName}`);
       return;
     }
 
-    console.log("Applying preset: " + presetName);
+    console.log(`📋 Applying preset: ${presetName}`);
 
     // Destructively replace both pending and active state
     this.pendingMusicalState = JSON.parse(JSON.stringify(preset));
     this.musicalState = JSON.parse(JSON.stringify(preset));
 
     // Update all UI elements to reflect new state
-    for (const paramName of Object.keys(preset)) {
+    for (const paramName of Object.keys(preset) as Array<keyof IMusicalState>) {
       this._updateUIFromState(paramName);
     }
 
-    // Mark pending changes and always broadcast
+    // Mark as having pending changes and always broadcast
     this.markPendingChanges();
     this.broadcastMusicalParameters();
     
     if (this.isPlaying) {
       // During playback: synth will stage PROGRAM_UPDATE and apply at EOC
-      console.log("📋 Preset " + presetName + " staged for EOC application");
+      console.log(`📋 Preset ${presetName} staged for EOC application`);
     } else {
       // When paused: synth will apply immediately
-      console.log("📋 Preset " + presetName + " applied immediately");
+      console.log(`📋 Preset ${presetName} applied immediately`);
     }
   }
 
   constructor() {
     console.log("ControlClient constructor starting");
 
-    // Initialize properties with JSDoc types
-    
-    /** @type {string} */
     this.peerId = generatePeerId("ctrl");
-    
-    /** @type {any} WebRTC star connection */
     this.star = null;
-    
-    /** @type {IMusicalState} */
-    this.musicalState = this._createDefaultState();
-    
-    /** @type {IMusicalState} */
-    this.pendingMusicalState = this._createDefaultState();
-    
-    /** @type {boolean} */
-    this.synthesisActive = false;
+    // Moved to this.synthesisActive (defined in state management section)
 
     // Phasor state
     this.phasor = 0.0; // Current phasor position (0.0 to 1.0)
     this.isPlaying = false; // Global transport state - starts paused
     this.periodSec = 2.0; // Period in seconds (default 2.0)
     this.stepsPerCycle = 16; // Number of steps per cycle
-    this.cycleLength = 2.0; // Seconds per cycle (same)
+    this.cycleLength = 2.0; // Seconds per cycle (same as periodSec)
     this.lastPhasorTime = 0; // For delta time calculation
     this.phasorUpdateId = null; // RequestAnimationFrame ID
     this.lastBroadcastTime = 0; // For phasor broadcast rate limiting
@@ -585,17 +606,23 @@ class ControlClient {
     this.bulkModeEnabled = false;
     this.bulkChanges = [];
 
-    // Kicked state tracking
-    /** @type {boolean} */
+    // Centralized State Management - replaced old program/directState with typed state
+
+    // Synthesis active state
+    this.synthesisActive = false;
+
+    // Initialize kicked state tracking
     this.wasKicked = false;
-    
-    /** @type {string | null} */
     this.kickedReason = null;
+
+    // Initialize typed state management
+    this.musicalState = this._createDefaultState();
+    this.pendingMusicalState = this._createDefaultState();
 
     // UI Elements
     this.elements = {
       connectionStatus: document.getElementById("connection-status"),
-      connectionValue: document.getElementById("connection-status"), // Same element
+      connectionValue: document.getElementById("connection-status"), // Same element as connectionStatus
       synthesisStatus: document.getElementById("synthesis-status"),
       networkDiagnostics: document.getElementById("network-diagnostics"),
       // Removed peers status - now using synth count in connected synths panel
@@ -660,7 +687,7 @@ class ControlClient {
 
     // Initialize UI to match default parameter state
     Object.keys(this.musicalState).forEach((paramName) => {
-      this._updateUIFromState(paramName);
+      this._updateUIFromState(paramName as keyof IMusicalState);
     });
 
     this.log("Control client initialized", "info");
@@ -701,29 +728,29 @@ class ControlClient {
     // Portamento controls
     if (this.elements.portamentoTime) {
       this.elements.portamentoTime.addEventListener("input", (e) => {
-        const norm = parseFloat((e.target).value);
+        const norm = parseFloat((e.target as HTMLInputElement).value);
         const ms = this._mapPortamentoNormToMs(norm);
         const displayMs = ms < 10 ? ms.toFixed(1) : Math.round(ms);
-        this.elements.portamentoValue.textContent = displayMs + "ms";
+        this.elements.portamentoValue.textContent = `${displayMs}ms`;
       });
     }
 
     // Re-resolve button
     if (this.elements.reresolveBtn) {
-      console.log("Re-resolve button found, adding click handler");
+      console.log("✅ Re-resolve button found, adding click handler");
       this.elements.reresolveBtn.addEventListener("click", () => {
         console.log("⚡ Re-resolve button clicked!");
         this.triggerImmediateReinitialize();
       });
     } else {
-      console.error("Re-resolve button not found in DOM");
+      console.error("❌ Re-resolve button not found in DOM");
     }
 
     // Period-Steps linkage controls
     if (this.elements.linkStepsCheckbox) {
       this.elements.linkStepsCheckbox.addEventListener("change", (e) => {
         this.linkStepsToPeriod = e.target.checked;
-        this.log("Period-steps linkage: " + (this.linkStepsToPeriod ? 'ON' : 'OFF'), "info");
+        this.log(`Period-steps linkage: ${this.linkStepsToPeriod ? 'ON' : 'OFF'}`, "info");
       });
     }
 
@@ -757,16 +784,16 @@ class ControlClient {
   reresolveAtEOC() {
     console.log("🔀 reresolveAtEOC() called");
     if (!this.star) {
-      console.error("No WebRTC star available for re-resolve");
+      console.error("❌ No WebRTC star available for re-resolve");
       return;
     }
     console.log("📡 Creating re-resolve message...");
     const message = MessageBuilder.reresolveAtEOC();
     console.log("📤 Broadcasting re-resolve message:", message);
     const sent = this.star.broadcastToType("synth", message, "control");
-    console.log("Re-resolve message sent to " + sent + " synths");
+    console.log(`✅ Re-resolve message sent to ${sent} synths`);
     this.log(
-      "🔀 Re-resolve requested for " + sent + " synths at next EOC",
+      `🔀 Re-resolve requested for ${sent} synths at next EOC`,
       "info",
     );
   }
@@ -779,7 +806,7 @@ class ControlClient {
     }
     const message = MessageBuilder.immediateReinitialize();
     const sent = this.star.broadcastToType("synth", message, "control");
-    this.log("Sent IMMEDIATE_REINITIALIZE to " + sent + " synth(s)", "info");
+    this.log(`Sent IMMEDIATE_REINITIALIZE to ${sent} synth(s)`, "info");
   }
 
   setupMusicalControls() {
@@ -796,7 +823,7 @@ class ControlClient {
         // Validate period is within safe bounds (now 0.2s minimum)
         if (isNaN(newPeriod) || newPeriod < 0.2 || newPeriod > 60) {
           this.log(
-            "Invalid period: " + e.target.value + "s (must be 0.2-60s)",
+            `Invalid period: ${e.target.value}s (must be 0.2-60s)`,
             "error",
           );
           return;
@@ -818,12 +845,12 @@ class ControlClient {
           this.pendingPeriodSec = newPeriod;
           this.pendingStepsPerCycle = targetSteps;
           
-          this.log("Period staged: " + newPeriod + "s, computed steps)", "info");
+          this.log(`Period staged: ${newPeriod}s, computed steps: ${targetSteps} (pending)`, "info");
         } else {
           // Only stage period change
           this.pendingPeriodSec = newPeriod;
           
-          this.log("Period staged for EOC)", "info");
+          this.log(`Period staged for EOC: ${newPeriod}s (pending)`, "info");
         }
       });
     }
@@ -853,7 +880,7 @@ class ControlClient {
         // Stage steps change
         this.pendingStepsPerCycle = newSteps;
         
-        this.log("Steps staged: " + newSteps + " (step ref)}s) (pending)", "info");
+        this.log(`Steps staged: ${newSteps} (step ref: ${this.stepRefSec.toFixed(3)}s) (pending)`, "info");
       });
     }
 
@@ -886,8 +913,8 @@ class ControlClient {
       this.elements.stepsPerCycleSlider.addEventListener("input", (e) => {
         this.stepsPerCycle = parseFloat(e.target.value);
         this.elements.stepsPerCycleValue.textContent =
-          this.stepsPerCycle + " steps";
-        this.log("Steps per cycle changed to " + this.stepsPerCycle, "info");
+          `${this.stepsPerCycle} steps`;
+        this.log(`Steps per cycle changed to ${this.stepsPerCycle}`, "info");
       });
     }
 
@@ -916,7 +943,7 @@ class ControlClient {
         this.updateBulkButtonState();
 
         console.log(
-          "🔄 Bulk mode " + (this.bulkModeEnabled ? "enabled" : "disabled"),
+          `🔄 Bulk mode ${this.bulkModeEnabled ? "enabled" : "disabled"}`,
         );
       });
     }
@@ -934,10 +961,10 @@ class ControlClient {
     document.addEventListener("keydown", (e) => {
       // Cmd+Enter (Mac) or Ctrl+Enter (PC) triggers Send Program
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-        this.log("Cmd+Enter pressed", "info");
+        this.log("⌨️ Cmd+Enter pressed", "info");
         // Apply Changes button removed - no longer needed in unified system
         this.log(
-          "Cmd+Enter no longer triggers Apply Changes (unified system)",
+          "⌨️ Cmd+Enter no longer triggers Apply Changes (unified system)",
           "info",
         );
       }
@@ -974,7 +1001,7 @@ class ControlClient {
     // Initialize all parameter UIs using unified state/UI sync
     Object.keys(this.musicalState).forEach((paramName) => {
       this.setParameterState(
-        paramName,
+        paramName as keyof IMusicalState,
         this.musicalState[paramName],
       );
     });
@@ -982,14 +1009,14 @@ class ControlClient {
 
   setupCompactParameterControls(paramName) {
     // Get unified parameter control elements
-    const interpSelect = document.getElementById(paramName + "-interpolation");
-    const textInput = document.getElementById(paramName + "-value");
+    const interpSelect = document.getElementById(`${paramName}-interpolation`);
+    const textInput = document.getElementById(`${paramName}-value`);
 
     // Get inline control elements for HRG
-    const startHrg = document.getElementById(paramName + "-start-hrg");
-    const endHrg = document.getElementById(paramName + "-end-hrg");
-    const hrgArrow = document.getElementById(paramName + "-hrg-arrow");
-    const endValueInput = document.getElementById(paramName + "-end-value");
+    const startHrg = document.getElementById(`${paramName}-start-hrg`);
+    const endHrg = document.getElementById(`${paramName}-end-hrg`);
+    const hrgArrow = document.getElementById(`${paramName}-hrg-arrow`);
+    const endValueInput = document.getElementById(`${paramName}-end-value`);
 
     if (!textInput) return;
 
@@ -1012,7 +1039,11 @@ class ControlClient {
     // Handle interpolation changes
     if (interpSelect) {
       interpSelect.addEventListener("change", () => {
-        const interpolation = interpSelect.value;
+        const interpolation = interpSelect.value as
+          | "step"
+          | "linear"
+          | "cosine"
+          | "parabolic";
 
         // Dispatch interpolation change
         this._updatePendingState({
@@ -1054,8 +1085,8 @@ class ControlClient {
 
         // Show/hide end RBG behavior selector based on range detection
         const endBehaviorSelect = document.getElementById(
-          paramName + "-end-rbg-behavior",
-        );
+          `${paramName}-end-rbg-behavior`,
+        ) as HTMLSelectElement;
         if (endBehaviorSelect) {
           endBehaviorSelect.style.display =
             this._isRangeValue(endValueInput.value) ? "inline-block" : "none";
@@ -1067,8 +1098,8 @@ class ControlClient {
     if (textInput) {
       textInput.addEventListener("input", () => {
         const startBehaviorSelect = document.getElementById(
-          paramName + "-start-rbg-behavior",
-        );
+          `${paramName}-start-rbg-behavior`,
+        ) as HTMLSelectElement;
         if (startBehaviorSelect) {
           startBehaviorSelect.style.display =
             this._isRangeValue(textInput.value) ? "inline-block" : "none";
@@ -1078,18 +1109,18 @@ class ControlClient {
 
     // Handle position-specific RBG behavior changes
     const startRbgBehaviorSelect = document.getElementById(
-      paramName + "-start-rbg-behavior",
-    );
+      `${paramName}-start-rbg-behavior`,
+    ) as HTMLSelectElement;
     const endRbgBehaviorSelect = document.getElementById(
-      paramName + "-end-rbg-behavior",
-    );
+      `${paramName}-end-rbg-behavior`,
+    ) as HTMLSelectElement;
 
     // Handle start RBG behavior changes
     if (startRbgBehaviorSelect) {
       startRbgBehaviorSelect.addEventListener("change", () => {
         // Send sub-parameter update for the behavior change
         this._sendSubParameterUpdate(
-          paramName + ".startValueGenerator.sequenceBehavior",
+          `${paramName}.startValueGenerator.sequenceBehavior`,
           startRbgBehaviorSelect.value,
         );
 
@@ -1105,7 +1136,7 @@ class ControlClient {
       endRbgBehaviorSelect.addEventListener("change", () => {
         // Send sub-parameter update for the behavior change
         this._sendSubParameterUpdate(
-          paramName + ".endValueGenerator.sequenceBehavior",
+          `${paramName}.endValueGenerator.sequenceBehavior`,
           endRbgBehaviorSelect.value,
         );
 
@@ -1119,8 +1150,8 @@ class ControlClient {
     // Initialize behavior selector visibility based on current input values
     if (textInput) {
       const startBehaviorSelect = document.getElementById(
-        paramName + "-start-rbg-behavior",
-      );
+        `${paramName}-start-rbg-behavior`,
+      ) as HTMLSelectElement;
       if (startBehaviorSelect) {
         startBehaviorSelect.style.display = this._isRangeValue(textInput.value)
           ? "inline-block"
@@ -1130,8 +1161,8 @@ class ControlClient {
 
     if (endValueInput) {
       const endBehaviorSelect = document.getElementById(
-        paramName + "-end-rbg-behavior",
-      );
+        `${paramName}-end-rbg-behavior`,
+      ) as HTMLSelectElement;
       if (endBehaviorSelect) {
         endBehaviorSelect.style.display =
           this._isRangeValue(endValueInput.value) ? "inline-block" : "none";
@@ -1152,7 +1183,7 @@ class ControlClient {
           // Check if input is empty and apply appropriate default
           if (textInput.value.trim() === "") {
             // Determine the correct default based on the parameter name
-            let defaultValue;
+            let defaultValue: number;
 
             switch (paramName) {
               case "vowelX":
@@ -1178,13 +1209,13 @@ class ControlClient {
             }
 
             console.log(
-              "Input for '" + paramName + "' was empty on blur, defaulting to " + defaultValue,
+              `Input for '${paramName}' was empty on blur, defaulting to ${defaultValue}`,
             );
 
             // Update the state with the determined default value
             this._updatePendingState({
               type: "SET_BASE_VALUE",
-              param: paramName,
+              param: paramName as keyof IMusicalState,
               value: defaultValue,
             });
             // The UI will automatically update to show this new value because
@@ -1494,12 +1525,13 @@ class ControlClient {
     this._updateUIFromState(paramName);
   }
 
-  setupHrgParameterControls(paramName) {
-    const baseInput = document.getElementById(paramName + "-base")
+  setupHrgParameterControls(paramName: keyof IMusicalState) {
+    const baseInput = document.getElementById(`${paramName}-base`) as
+      | HTMLInputElement
       | null;
     const interpSelect = document.getElementById(
-      paramName + "-interpolation",
-    )
+      `${paramName}-interpolation`,
+    ) as
       | HTMLSelectElement
       | null;
 
@@ -1507,30 +1539,30 @@ class ControlClient {
     // Reuse the HRG listeners from setupCompactParameterControls
     // Start HRG inputs
     const startNumeratorsInput = document.getElementById(
-      paramName + "-start-numerators",
-    ) | null;
+      `${paramName}-start-numerators`,
+    ) as HTMLInputElement | null;
     const startDenominatorsInput = document.getElementById(
-      paramName + "-start-denominators",
-    ) | null;
+      `${paramName}-start-denominators`,
+    ) as HTMLInputElement | null;
     const startNumBehaviorSelect = document.getElementById(
-      paramName + "-start-numerators-behavior",
-    ) | null;
+      `${paramName}-start-numerators-behavior`,
+    ) as HTMLSelectElement | null;
     const startDenBehaviorSelect = document.getElementById(
-      paramName + "-start-denominators-behavior",
-    ) | null;
+      `${paramName}-start-denominators-behavior`,
+    ) as HTMLSelectElement | null;
     // End HRG inputs
     const endNumeratorsInput = document.getElementById(
-      paramName + "-end-numerators",
-    ) | null;
+      `${paramName}-end-numerators`,
+    ) as HTMLInputElement | null;
     const endDenominatorsInput = document.getElementById(
-      paramName + "-end-denominators",
-    ) | null;
+      `${paramName}-end-denominators`,
+    ) as HTMLInputElement | null;
     const endNumBehaviorSelect = document.getElementById(
-      paramName + "-end-numerators-behavior",
-    ) | null;
+      `${paramName}-end-numerators-behavior`,
+    ) as HTMLSelectElement | null;
     const endDenBehaviorSelect = document.getElementById(
-      paramName + "-end-denominators-behavior",
-    ) | null;
+      `${paramName}-end-denominators-behavior`,
+    ) as HTMLSelectElement | null;
 
     // Base frequency input (Hz)
     if (baseInput) {
@@ -1549,7 +1581,7 @@ class ControlClient {
         if (!Number.isFinite(v)) return;
 
         // Parameter-specific clamping
-        let min, max;
+        let min: number, max: number;
         if (paramName === "frequency") {
           min = 16;
           max = 16384;
@@ -1578,7 +1610,7 @@ class ControlClient {
             )
             : 100;
           this._sendSubParameterUpdate(
-            paramName + ".baseValue",
+            `${paramName}.baseValue`,
             v,
             portamentoTime,
           );
@@ -1598,7 +1630,7 @@ class ControlClient {
             )
             : 100;
           this.broadcastSubParameterUpdate(
-            paramName + ".baseValue",
+            `${paramName}.baseValue`,
             v,
             portamentoTime,
           );
@@ -1614,7 +1646,11 @@ class ControlClient {
     // Interpolation changes (step/cosine) still apply to frequency envelopes
     if (interpSelect) {
       interpSelect.addEventListener("change", () => {
-        const interpolation = interpSelect.value;
+        const interpolation = interpSelect.value as
+          | "step"
+          | "linear"
+          | "cosine"
+          | "parabolic";
         this._updatePendingState({
           type: "SET_INTERPOLATION",
           param: paramName,
@@ -1624,7 +1660,7 @@ class ControlClient {
 
         // Send sub-parameter update for interpolation change
         this._sendSubParameterUpdate(
-          paramName + ".interpolation",
+          `${paramName}.interpolation`,
           interpolation,
           100, // Default portamento time
         );
@@ -1654,7 +1690,7 @@ class ControlClient {
       startNumeratorsInput.addEventListener("blur", () => {
         // Send sub-parameter update for immediate application or staging
         this._sendSubParameterUpdate(
-          paramName + ".startValueGenerator.numerators",
+          `${paramName}.startValueGenerator.numerators`,
           startNumeratorsInput.value,
         );
 
@@ -1697,7 +1733,7 @@ class ControlClient {
       startDenominatorsInput.addEventListener("blur", () => {
         // Send sub-parameter update for immediate application or staging
         this._sendSubParameterUpdate(
-          paramName + ".startValueGenerator.denominators",
+          `${paramName}.startValueGenerator.denominators`,
           startDenominatorsInput.value,
         );
 
@@ -1725,7 +1761,7 @@ class ControlClient {
       startNumBehaviorSelect.addEventListener("change", () => {
         // Send sub-parameter update for immediate application or staging
         this._sendSubParameterUpdate(
-          paramName + ".startValueGenerator.numeratorBehavior",
+          `${paramName}.startValueGenerator.numeratorBehavior`,
           startNumBehaviorSelect.value,
         );
 
@@ -1890,12 +1926,12 @@ class ControlClient {
       const isCosine = state?.interpolation === "cosine";
 
       // Always show the start HRG for HRG params
-      const startHrg = document.getElementById(paramName + "-start-hrg");
+      const startHrg = document.getElementById(`${paramName}-start-hrg`);
       if (startHrg) startHrg.style.display = "inline-block";
 
       // Arrow and end HRG are cosine-only
-      const arrow = document.getElementById(paramName + "-hrg-arrow");
-      const endHrg = document.getElementById(paramName + "-end-hrg");
+      const arrow = document.getElementById(`${paramName}-hrg-arrow`);
+      const endHrg = document.getElementById(`${paramName}-end-hrg`);
 
       if (arrow) arrow.style.display = isCosine ? "inline-block" : "none";
       if (endHrg) endHrg.style.display = isCosine ? "inline-block" : "none";
@@ -1910,14 +1946,11 @@ class ControlClient {
 
   /**
    * Handle value input changes with smart range detection
-   * @param {string} paramName
-   * @param {string} inputValue  
-   * @param {"start" | "end"} position
    */
-  _handleValueInput(
-    paramName,
-    inputValue,
-    position,
+  private _handleValueInput(
+    paramName: string,
+    inputValue: string,
+    position: "start" | "end",
   ) {
     // Mode select removed - using unified parameter system
     const currentMode = "program";
@@ -1964,10 +1997,10 @@ class ControlClient {
   /**
    * Update program generator based on input value (single value or range)
    */
-  _updateProgramGenerator(
-    paramName,
-    inputValue,
-    position,
+  private _updateProgramGenerator(
+    paramName: string,
+    inputValue: string,
+    position: "start" | "end",
   ) {
     // Do not alter HRG (periodic) generators from the base value input
     if (paramName === "frequency" || paramName === "vibratoRate") return;
@@ -1978,8 +2011,8 @@ class ControlClient {
       if (!isNaN(min) && !isNaN(max)) {
         // Get behavior from position-specific dropdown (default to "static" if not found)
         const behaviorSelect = document.getElementById(
-          paramName + "-" + position + "-rbg-behavior",
-        );
+          `${paramName}-${position}-rbg-behavior`,
+        ) as HTMLSelectElement;
         const behavior = behaviorSelect ? behaviorSelect.value : "static";
 
         this._updatePendingState({
@@ -1989,7 +2022,7 @@ class ControlClient {
           config: {
             type: "normalised",
             range: { min: Math.min(min, max), max: Math.max(min, max) },
-            sequenceBehavior: behavior,
+            sequenceBehavior: behavior as "static" | "random",
           },
         });
       }
@@ -2021,7 +2054,7 @@ class ControlClient {
    * Map normalized portamento value [0,1] to exponential milliseconds
    * 0.5 → 100ms, 1 → 20000ms, 0 → 0.5ms
    */
-  _mapPortamentoNormToMs(norm) {
+  private _mapPortamentoNormToMs(norm: number): number {
     const clamped = Math.min(Math.max(norm, 0), 1);
     return 0.5 * Math.pow(40000, clamped);
   }
@@ -2029,14 +2062,14 @@ class ControlClient {
   /**
    * Serialize normalised generator range to string for UI display
    */
-  _stringifyNormalised(gen) {
+  private _stringifyNormalised(gen: any): string {
     if (!gen) return "";
     const r = gen.range;
     if (typeof r === "number") return String(r);
     if (r && typeof r === "object") {
       const min = Number(r.min), max = Number(r.max);
       if (Number.isFinite(min) && Number.isFinite(max)) {
-        return min === max ? String(min) : min + "-" + max;
+        return min === max ? String(min) : `${min}-${max}`;
       }
     }
     return "";
@@ -2047,23 +2080,23 @@ class ControlClient {
    * This is the reverse of the old DOM-based state management
    * State is now the master, UI is just a reflection of it
    */
-  _updateUIFromState(paramName) {
+  private _updateUIFromState(paramName: keyof IMusicalState) {
     const paramState = this.pendingMusicalState[paramName];
 
     // Get all UI components for this parameter
     const valueInput =
       (paramName === "frequency" || paramName === "vibratoRate")
-        ? (document.getElementById(paramName + "-base"))
-        : (document.getElementById(paramName + "-value"));
+        ? (document.getElementById(`${paramName}-base`) as HTMLInputElement)
+        : (document.getElementById(`${paramName}-value`) as HTMLInputElement);
     const interpSelect = document.getElementById(
-      paramName + "-interpolation",
-    );
-    const hrgStartControls = document.getElementById(paramName + "-start-hrg");
-    const hrgEndControls = document.getElementById(paramName + "-end-hrg");
-    const hrgArrow = document.getElementById(paramName + "-hrg-arrow");
+      `${paramName}-interpolation`,
+    ) as HTMLSelectElement;
+    const hrgStartControls = document.getElementById(`${paramName}-start-hrg`);
+    const hrgEndControls = document.getElementById(`${paramName}-end-hrg`);
+    const hrgArrow = document.getElementById(`${paramName}-hrg-arrow`);
     const endValueInput = document.getElementById(
-      paramName + "-end-value",
-    );
+      `${paramName}-end-value`,
+    ) as HTMLInputElement;
 
     if (!valueInput) return; // Skip if parameter doesn't exist in UI
 
@@ -2117,20 +2150,20 @@ class ControlClient {
 
     // Ensure HRG UI reflects state (frequency and vibratoRate)
     if (paramName === "frequency" || paramName === "vibratoRate") {
-      const startGen = (paramState).startValueGenerator;
+      const startGen = (paramState as any).startValueGenerator;
       if (startGen && startGen.type === "periodic") {
         const startNums = document.getElementById(
-          paramName + "-start-numerators",
-        ) | null;
+          `${paramName}-start-numerators`,
+        ) as HTMLInputElement | null;
         const startDens = document.getElementById(
-          paramName + "-start-denominators",
-        ) | null;
+          `${paramName}-start-denominators`,
+        ) as HTMLInputElement | null;
         const startNumBeh = document.getElementById(
-          paramName + "-start-numerators-behavior",
-        ) | null;
+          `${paramName}-start-numerators-behavior`,
+        ) as HTMLSelectElement | null;
         const startDenBeh = document.getElementById(
-          paramName + "-start-denominators-behavior",
-        ) | null;
+          `${paramName}-start-denominators-behavior`,
+        ) as HTMLSelectElement | null;
 
         // Only update input values if they're not currently being edited
         if (startNums && document.activeElement !== startNums) {
@@ -2148,20 +2181,20 @@ class ControlClient {
       }
 
       if (isEnvelope) {
-        const endGen = (paramState).endValueGenerator;
+        const endGen = (paramState as any).endValueGenerator;
         if (endGen && endGen.type === "periodic") {
           const endNums = document.getElementById(
-            paramName + "-end-numerators",
-          ) | null;
+            `${paramName}-end-numerators`,
+          ) as HTMLInputElement | null;
           const endDens = document.getElementById(
-            paramName + "-end-denominators",
-          ) | null;
+            `${paramName}-end-denominators`,
+          ) as HTMLInputElement | null;
           const endNumBeh = document.getElementById(
-            paramName + "-end-numerators-behavior",
-          ) | null;
+            `${paramName}-end-numerators-behavior`,
+          ) as HTMLSelectElement | null;
           const endDenBeh = document.getElementById(
-            paramName + "-end-denominators-behavior",
-          ) | null;
+            `${paramName}-end-denominators-behavior`,
+          ) as HTMLSelectElement | null;
           // Only update input values if they're not currently being edited
           if (endNums && document.activeElement !== endNums) {
             endNums.value = endGen.numerators ?? "1";
@@ -2190,16 +2223,16 @@ class ControlClient {
     // This needs to happen AFTER input fields are populated with actual values
     if (paramName !== "frequency") { // frequency uses HRG, not RBG
       const valueInput = document.getElementById(
-        paramName + "-value",
-      );
+        `${paramName}-value`,
+      ) as HTMLInputElement;
       const endValueInput = document.getElementById(
-        paramName + "-end-value",
-      );
+        `${paramName}-end-value`,
+      ) as HTMLInputElement;
 
       if (valueInput) {
         const startBehaviorSelect = document.getElementById(
-          paramName + "-start-rbg-behavior",
-        );
+          `${paramName}-start-rbg-behavior`,
+        ) as HTMLSelectElement;
         if (startBehaviorSelect) {
           const isRange = this._isRangeValue(valueInput.value);
           startBehaviorSelect.style.display = isRange ? "inline-block" : "none";
@@ -2208,8 +2241,8 @@ class ControlClient {
 
       if (endValueInput) {
         const endBehaviorSelect = document.getElementById(
-          paramName + "-end-rbg-behavior",
-        );
+          `${paramName}-end-rbg-behavior`,
+        ) as HTMLSelectElement;
         if (endBehaviorSelect) {
           // Hide end behavior selector if interpolation is "step" (no end value) OR if end value is not a range
           const isEnvelope = paramState.interpolation !== "step";
@@ -2221,8 +2254,8 @@ class ControlClient {
   }
 
   // Capture current HRG inputs into pending state before apply
-  _syncHRGStateFromInputs() {
-    const freqState = this.pendingMusicalState.frequency;
+  private _syncHRGStateFromInputs() {
+    const freqState = this.pendingMusicalState.frequency as any;
     if (!freqState || freqState.startValueGenerator?.type !== "periodic") {
       return;
     }
@@ -2230,13 +2263,13 @@ class ControlClient {
     let anyInvalid = false;
 
     // Helper to validate and mark
-    const validateField = (el, label) => {
+    const validateField = (el: HTMLInputElement | null, label: string) => {
       if (!el) return true;
       const { ok } = this._validateSINString(el.value);
       el.classList.toggle("invalid-input", !ok);
       if (!ok) {
         this.log(
-          "Invalid " + label + ": \"" + el.value + "\" (use numbers, commas, and ranges like 1-6)",
+          `Invalid ${label}: "${el.value}" (use numbers, commas, and ranges like 1-6)`,
           "error",
         );
       }
@@ -2245,19 +2278,27 @@ class ControlClient {
 
     // Validate all four fields first
     const v1 = validateField(
-      document.getElementById("frequency-start-numerators"),
+      document.getElementById("frequency-start-numerators") as
+        | HTMLInputElement
+        | null,
       "start numerators",
     );
     const v2 = validateField(
-      document.getElementById("frequency-start-denominators"),
+      document.getElementById("frequency-start-denominators") as
+        | HTMLInputElement
+        | null,
       "start denominators",
     );
     const v3 = validateField(
-      document.getElementById("frequency-end-numerators"),
+      document.getElementById("frequency-end-numerators") as
+        | HTMLInputElement
+        | null,
       "end numerators",
     );
     const v4 = validateField(
-      document.getElementById("frequency-end-denominators"),
+      document.getElementById("frequency-end-denominators") as
+        | HTMLInputElement
+        | null,
       "end denominators",
     );
     anyInvalid = !(v1 && v2 && v3 && v4);
@@ -2269,17 +2310,19 @@ class ControlClient {
     // Start generator
     if (freqState.startValueGenerator?.type === "periodic") {
       const startNums =
-        (document.getElementById("frequency-start-numerators")
+        (document.getElementById("frequency-start-numerators") as
+          | HTMLInputElement
           | null)?.value;
       const startDens =
-        (document.getElementById("frequency-start-denominators")
+        (document.getElementById("frequency-start-denominators") as
+          | HTMLInputElement
           | null)?.value;
       const startNumBeh =
-        (document.getElementById("frequency-start-numerators-behavior")
+        (document.getElementById("frequency-start-numerators-behavior") as
           | HTMLSelectElement
           | null)?.value;
       const startDenBeh =
-        (document.getElementById("frequency-start-denominators-behavior")
+        (document.getElementById("frequency-start-denominators-behavior") as
           | HTMLSelectElement
           | null)?.value;
       freqState.startValueGenerator.numerators = startNums ??
@@ -2297,16 +2340,18 @@ class ControlClient {
       freqState.interpolation !== "step" &&
       freqState.endValueGenerator?.type === "periodic"
     ) {
-      const endNums = (document.getElementById("frequency-end-numerators")
+      const endNums = (document.getElementById("frequency-end-numerators") as
+        | HTMLInputElement
         | null)?.value;
-      const endDens = (document.getElementById("frequency-end-denominators")
+      const endDens = (document.getElementById("frequency-end-denominators") as
+        | HTMLInputElement
         | null)?.value;
       const endNumBeh =
-        (document.getElementById("frequency-end-numerators-behavior")
+        (document.getElementById("frequency-end-numerators-behavior") as
           | HTMLSelectElement
           | null)?.value;
       const endDenBeh =
-        (document.getElementById("frequency-end-denominators-behavior")
+        (document.getElementById("frequency-end-denominators-behavior") as
           | HTMLSelectElement
           | null)?.value;
       freqState.endValueGenerator.numerators = endNums ??
@@ -2336,7 +2381,7 @@ class ControlClient {
   /**
    * Unified method to set parameter state and update UI
    */
-  setParameterState(paramName, newState) {
+  setParameterState(paramName: keyof IMusicalState, newState: ParameterState) {
     // Update both state objects
     this.musicalState[paramName] = newState;
     this.pendingMusicalState[paramName] = { ...newState };
@@ -2359,7 +2404,7 @@ class ControlClient {
   }
 
   // Validate a SIN string like "1-3,5,7-9"
-  _validateSINString(str) {
+  private _validateSINString(str: string): { ok: boolean; error?: string } {
     if (str == null) return { ok: false, error: "empty" };
     const s = String(str).trim();
     if (s.length === 0) return { ok: false, error: "empty" };
@@ -2394,27 +2439,27 @@ class ControlClient {
    * Central method for translating IMusicalState to wire format (unified, scope-free)
    * Used by both broadcastMusicalParameters and sendCompleteStateToSynth
    */
-  _getWirePayload(portamentoTime) {
+  private _getWirePayload(portamentoTime?: number): any {
     // Strict validation: reject any state with forbidden fields
     for (const key in this.pendingMusicalState) {
       const paramState = this
-        .pendingMusicalState[key];
+        .pendingMusicalState[key as keyof IMusicalState] as any;
 
       // Debug: Check if paramState is an object
       if (typeof paramState !== "object" || paramState === null) {
         throw new Error(
-          "CRITICAL: Parameter '" + key + "' is not an object, got: " + typeof paramState + " (" + paramState + ")",
+          `CRITICAL: Parameter '${key}' is not an object, got: ${typeof paramState} (${paramState})`,
         );
       }
 
       if ("scope" in paramState) {
         throw new Error(
-          "CRITICAL: Parameter '" + key + "' has forbidden 'scope' field",
+          `CRITICAL: Parameter '${key}' has forbidden 'scope' field`,
         );
       }
     }
 
-    const wirePayload = {
+    const wirePayload: any = {
       synthesisActive: this.synthesisActive,
       isManualMode: this.isManualControlMode,
     };
@@ -2426,7 +2471,7 @@ class ControlClient {
 
     // Send unified parameter format - interpolation + generators only
     for (const key in this.pendingMusicalState) {
-      const paramKey = key;
+      const paramKey = key as keyof IMusicalState;
       const paramState = this.pendingMusicalState[paramKey];
 
       // Strict validation: require all necessary fields
@@ -2435,13 +2480,13 @@ class ControlClient {
         !["step", "cosine"].includes(paramState.interpolation)
       ) {
         throw new Error(
-          "CRITICAL: Parameter '" + paramKey + "' missing valid interpolation",
+          `CRITICAL: Parameter '${paramKey}' missing valid interpolation`,
         );
       }
 
       if (!paramState.startValueGenerator) {
         throw new Error(
-          "CRITICAL: Parameter '" + paramKey + "' missing startValueGenerator",
+          `CRITICAL: Parameter '${paramKey}' missing startValueGenerator`,
         );
       }
 
@@ -2449,7 +2494,7 @@ class ControlClient {
         paramState.interpolation === "cosine" && !paramState.endValueGenerator
       ) {
         throw new Error(
-          "CRITICAL: Parameter '" + paramKey + "' cosine interpolation missing endValueGenerator",
+          `CRITICAL: Parameter '${paramKey}' cosine interpolation missing endValueGenerator`,
         );
       }
 
@@ -2458,7 +2503,7 @@ class ControlClient {
         paramState.baseValue === undefined
       ) {
         throw new Error(
-          "CRITICAL: Parameter '" + paramKey + "' periodic generator missing baseValue",
+          `CRITICAL: Parameter '${paramKey}' periodic generator missing baseValue`,
         );
       }
 
@@ -2483,7 +2528,7 @@ class ControlClient {
     return wirePayload;
   }
 
-  broadcastMusicalParameters(portamentoTime) {
+  broadcastMusicalParameters(portamentoTime?: number) {
     // Check if we should accumulate this change for bulk mode
     if (
       this.addToBulkChanges({
@@ -2502,7 +2547,7 @@ class ControlClient {
   /**
    * Send full program update immediately (extracted from broadcastMusicalParameters)
    */
-  _sendFullProgramImmediate(portamentoTime) {
+  private _sendFullProgramImmediate(portamentoTime?: number) {
     if (!this.star) return;
 
     const wirePayload = this._getWirePayload(portamentoTime);
@@ -2514,8 +2559,9 @@ class ControlClient {
     );
     this.star.broadcast(message);
     this.log(
-      "📡 Broadcasted musical parameters" +
-        (portamentoTime ? " with " + portamentoTime + "ms portamento" : ""),
+      `📡 Broadcasted musical parameters${
+        portamentoTime ? ` with ${portamentoTime}ms portamento` : ""
+      }`,
       "info",
     );
   }
@@ -2525,8 +2571,8 @@ class ControlClient {
    * More efficient than broadcasting entire state when only one parameter changed
    */
   broadcastSingleParameterUpdate(
-    paramName,
-    portamentoTime,
+    paramName: keyof IMusicalState,
+    portamentoTime: number,
   ) {
     this._broadcastParameterChange({
       type: "single",
@@ -2539,9 +2585,9 @@ class ControlClient {
    * Broadcast a sub-parameter update (e.g., frequency.baseValue)
    */
   broadcastSubParameterUpdate(
-    paramPath,
-    value,
-    portamentoTime,
+    paramPath: string,
+    value: any,
+    portamentoTime: number,
   ) {
     this._broadcastParameterChange({
       type: "sub",
@@ -2552,18 +2598,18 @@ class ControlClient {
   }
 
   // Broadcast a single parameter update for staging at EOC (no portamento field)
-  broadcastSingleParameterStaged(paramName) {
+  private broadcastSingleParameterStaged(paramName: keyof IMusicalState) {
     if (!this.star) return;
 
     // Use pending state to get the latest changes (interpolation changes, etc.)
-    const paramState = this.pendingMusicalState[paramName];
+    const paramState = this.pendingMusicalState[paramName] as any;
     if ("scope" in paramState) {
       throw new Error(
-        "CRITICAL: Parameter '" + paramName + "' has forbidden 'scope' field",
+        `CRITICAL: Parameter '${paramName}' has forbidden 'scope' field`,
       );
     }
 
-    const wirePayload = {
+    const wirePayload: any = {
       synthesisActive: this.synthesisActive,
     };
 
@@ -2585,7 +2631,7 @@ class ControlClient {
     // Send PROGRAM_UPDATE with just this parameter for staging
     const message = MessageBuilder.programUpdate(wirePayload, this.isPlaying);
     this.star.broadcastToType("synth", message, "control");
-    this.log("📡 Broadcasted staged " + paramName + " parameter change", "info");
+    this.log(`📡 Broadcasted staged ${paramName} parameter change`, "info");
   }
 
   // Removed splitParametersByMode - no longer needed with separated state
@@ -2606,7 +2652,7 @@ class ControlClient {
         this.pendingPeriodSec > 60
       ) {
         this.log(
-          "Rejected invalid pending period: " + this.pendingPeriodSec + "s",
+          `Rejected invalid pending period: ${this.pendingPeriodSec}s`,
           "error",
         );
         this.pendingPeriodSec = null;
@@ -2615,7 +2661,7 @@ class ControlClient {
 
       this.periodSec = this.pendingPeriodSec;
       this.cycleLength = this.periodSec;
-      this.log("Applied period change", "info");
+      this.log(`Applied period change: ${this.periodSec}s`, "info");
       this.pendingPeriodSec = null;
       changed = true;
     }
@@ -2623,7 +2669,7 @@ class ControlClient {
     if (this.pendingStepsPerCycle !== null) {
       this.stepsPerCycle = this.pendingStepsPerCycle;
       this.updatePhasorTicks();
-      this.log("Applied steps change", "info");
+      this.log(`Applied steps change: ${this.stepsPerCycle}`, "info");
       this.pendingStepsPerCycle = null;
       changed = true;
     }
@@ -2663,7 +2709,7 @@ class ControlClient {
     for (let i = 0; i < this.stepsPerCycle; i++) {
       const tick = document.createElement("div");
       tick.className = "phasor-tick";
-      tick.style.left = (i / this.stepsPerCycle) * 100 + "%";
+      tick.style.left = `${(i / this.stepsPerCycle) * 100}%`;
       this.elements.phasorTicks.appendChild(tick);
     }
   }
@@ -2677,7 +2723,7 @@ class ControlClient {
       // Update phasor with safety checks
       if (this.cycleLength <= 0) {
         console.error(
-          "Invalid cycleLength: " + this.cycleLength + ", using fallback",
+          `Invalid cycleLength: ${this.cycleLength}, using fallback`,
         );
         this.cycleLength = 0.05; // Fallback to minimum safe value
       }
@@ -2687,7 +2733,7 @@ class ControlClient {
       // Safety check for infinity or NaN
       if (!isFinite(phasorIncrement)) {
         console.error(
-          "Invalid phasorIncrement: " + phasorIncrement + ", deltaTime: " + deltaTime + ", cycleLength: " + this.cycleLength,
+          `Invalid phasorIncrement: ${phasorIncrement}, deltaTime: ${deltaTime}, cycleLength: ${this.cycleLength}`,
         );
         return; // Skip this frame
       }
@@ -2712,7 +2758,7 @@ class ControlClient {
 
       // Handle step boundary crossings (use pre-wrap indices for EOC detection)
       if (eocCrossed || currStepIndexBeforeWrap < prevStepIndex) {
-        // EOC wrapped - treat 0
+        // EOC wrapped - treat as step 0
         this.currentStepIndex = 0;
         
         // Apply timing changes at EOC
@@ -2759,7 +2805,7 @@ class ControlClient {
 
     if (this.elements.phasorBar) {
       const percentage = (this.phasor * 100).toFixed(1);
-      this.elements.phasorBar.style.width = percentage + "%";
+      this.elements.phasorBar.style.width = `${percentage}%`;
     }
   }
 
@@ -2779,7 +2825,7 @@ class ControlClient {
     }
   }
 
-  sendStepBeacon(stepIndex) {
+  sendStepBeacon(stepIndex: number) {
     if (!this.star) return;
     
     const boundaryPhasor = stepIndex / this.stepsPerCycle;
@@ -2864,7 +2910,7 @@ class ControlClient {
     try {
       // Create audio context if it doesn't exist
       if (!this.audioContext) {
-        this.audioContext = new AudioContext();
+        this.audioContext = new AudioContext({ sampleRate: 48000 });
         await this.audioContext.resume();
       }
 
@@ -2876,7 +2922,7 @@ class ControlClient {
         this.log("Configured audio destination for 8 channels", "info");
       } else {
         this.log(
-          "Only " + this.audioContext.destination.maxChannelCount + " channels available",
+          `Only ${this.audioContext.destination.maxChannelCount} channels available`,
           "warning",
         );
       }
@@ -2911,7 +2957,7 @@ class ControlClient {
 
       this.log("ES-8 AudioWorklet initialized", "info");
     } catch (error) {
-      this.log("ES-8 initialization failed", "error");
+      this.log(`ES-8 initialization failed: ${error.message}`, "error");
       this.es8Enabled = false;
     }
   }
@@ -2964,7 +3010,7 @@ class ControlClient {
 
   // Transport control methods
   handleTransport(action) {
-    console.log("Transport action: " + action);
+    console.log(`Transport: ${action}`);
 
     const wasAtZero = this.phasor === 0.0;
 
@@ -3021,16 +3067,16 @@ class ControlClient {
   }
 
 
-  updateParameterVisualFeedback(paramName) {
+  updateParameterVisualFeedback(paramName: keyof IMusicalState) {
     // Find the parameter label and add/remove asterisk for pending changes
     const paramLabels = document.querySelectorAll(".param-label");
     for (const label of paramLabels) {
-      const labelElement = label;
+      const labelElement = label as HTMLElement;
       const labelText = labelElement.textContent || "";
 
       // Check if this label is for the parameter we're updating
       const cleanText = labelText.replace("*", "").trim();
-      const paramDisplayNames = {
+      const paramDisplayNames: Record<keyof IMusicalState, string> = {
         frequency: "freq",
         vowelX: "vowel x",
         vowelY: "vowel y",
@@ -3070,8 +3116,8 @@ class ControlClient {
   }
 
   resolveParameterValues(
-    paramName,
-    paramState,
+    paramName: keyof IMusicalState,
+    paramState: ParameterState,
   ) {
     // For step interpolation, only resolve start value
     if (paramState.interpolation === "step") {
@@ -3090,13 +3136,17 @@ class ControlClient {
       paramState.baseValue,
     );
     const endValue = this.resolveGeneratorValue(
-      paramState.endValueGenerator,
+      paramState.endValueGenerator!,
       paramState.baseValue,
     );
 
     // Debug logging for white noise
     if (paramName === "whiteNoise") {
-      console.log("Resolving whiteNoise: start=" + startValue + ", end=" + endValue + ", endGen=" + JSON.stringify(paramState.endValueGenerator));
+      console.log(
+        `🔍 Resolving whiteNoise: start=${startValue}, end=${endValue}, endGen=${
+          JSON.stringify(paramState.endValueGenerator)
+        }`,
+      );
     }
 
     return {
@@ -3105,7 +3155,7 @@ class ControlClient {
     };
   }
 
-  resolveGeneratorValue(generator, baseValue) {
+  resolveGeneratorValue(generator: GeneratorConfig, baseValue: number): number {
     if (generator.type === "periodic") {
       // Parse HRG numerators and denominators
       const numerators = this.parseHRGString(generator.numerators || "1");
@@ -3135,9 +3185,9 @@ class ControlClient {
     }
   }
 
-  parseHRGString(input) {
+  parseHRGString(input: string): number[] {
     // Parse "1-3,5,7-9" format into [1,2,3,5,7,8,9]
-    const result = [];
+    const result: number[] = [];
     const parts = input.split(",");
 
     for (const part of parts) {
@@ -3155,7 +3205,7 @@ class ControlClient {
     return result;
   }
 
-  selectHRGValue(values, behavior) {
+  selectHRGValue(values: number[], behavior: string): number {
     // For now, just return random selection
     // TODO: Implement proper sequence behaviors (static, ascending, etc.)
     return values[Math.floor(Math.random() * values.length)];
@@ -3194,7 +3244,10 @@ class ControlClient {
     try {
       // Prevent reconnection if we were kicked
       if (this.wasKicked) {
-        this.log("Not reconnecting - was kicked: " + this.kickedReason, "error");
+        this.log(
+          `Not reconnecting - was kicked: ${this.kickedReason}`,
+          "error",
+        );
         return;
       }
 
@@ -3212,9 +3265,10 @@ class ControlClient {
         ? "wss:"
         : "ws:";
       const port = globalThis.location.port
-        ? ":" + globalThis.location.port
+        ? `:${globalThis.location.port}`
         : "";
-      const signalingUrl = protocol + "//" + globalThis.location.hostname + port + "/ws";
+      const signalingUrl =
+        `${protocol}//${globalThis.location.hostname}${port}/ws`;
       await this.star.connect(signalingUrl);
 
       // Initially connected - status will be determined by server response
@@ -3224,7 +3278,7 @@ class ControlClient {
 
       this.log("Connected to network successfully", "success");
     } catch (error) {
-      this.log("Connection failed", "error");
+      this.log(`Connection failed: ${error.message}`, "error");
       this.updateConnectionStatus("disconnected");
       this._updateUIState();
     }
@@ -3250,7 +3304,7 @@ class ControlClient {
 
     this.star.addEventListener("peer-connected", (event) => {
       const { peerId } = event.detail;
-      this.log("Peer connected", "info");
+      this.log(`Peer connected: ${peerId}`, "info");
       this.updatePeerList();
       this._updateUIState();
 
@@ -3264,7 +3318,7 @@ class ControlClient {
     });
 
     this.star.addEventListener("peer-removed", (event) => {
-      this.log("Peer disconnected", "info");
+      this.log(`Peer disconnected: ${event.detail.peerId}`, "info");
       this.updatePeerList();
       this._updateUIState();
 
@@ -3279,7 +3333,7 @@ class ControlClient {
     });
 
     this.star.addEventListener("join-rejected", (event) => {
-      this.log("Cannot join", "error");
+      this.log(`Cannot join: ${event.detail.reason}`, "error");
       this.updateConnectionStatus("error");
       this._updateUIState();
 
@@ -3307,7 +3361,7 @@ class ControlClient {
       if (
         message.type !== MessageTypes.PING && message.type !== MessageTypes.PONG
       ) {
-        this.log("Received " + message.type + " from " + peerId, "debug");
+        this.log(`Received ${message.type} from ${peerId}`, "debug");
       }
     });
 
@@ -3318,9 +3372,9 @@ class ControlClient {
         event.detail.data.type === MessageTypes.PARAM_APPLIED
       ) {
         const { param } = event.detail.data;
-        this.pendingParameterChanges.delete(param);
-        this.updateParameterVisualFeedback(param);
-        this.log("Cleared pending asterisk for " + param, "debug");
+        this.pendingParameterChanges.delete(param as keyof IMusicalState);
+        this.updateParameterVisualFeedback(param as keyof IMusicalState);
+        this.log(`Cleared pending asterisk for ${param}`, "debug");
       }
     });
   }
@@ -3360,7 +3414,7 @@ class ControlClient {
   }
 
   sendCompleteStateToSynth(synthId) {
-    this.log("Sending complete state to new synth", "info");
+    this.log(`Sending complete state to new synth: ${synthId}`, "info");
 
     // Send current musical state using unified payload function
     const wirePayload = this._getWirePayload();
@@ -3371,9 +3425,9 @@ class ControlClient {
     );
     const success = this.star.sendToPeer(synthId, message, "control");
     if (success) {
-      this.log("Sent typed musical state to " + synthId, "debug");
+      this.log(`✅ Sent typed musical state to ${synthId}`, "debug");
     } else {
-      this.log("Failed to send typed musical state to " + synthId, "error");
+      this.log(`❌ Failed to send typed musical state to ${synthId}`, "error");
     }
   }
 
@@ -3422,8 +3476,8 @@ class ControlClient {
     }
   }
 
-  handleKicked(reason) {
-    console.error("Kicked from network");
+  handleKicked(reason: string) {
+    console.error(`❌ Kicked from network: ${reason}`);
 
     // Set kicked state to prevent reconnection
     this.wasKicked = true;
@@ -3434,7 +3488,7 @@ class ControlClient {
     this._updateUIState();
 
     // Show user notification
-    alert("You have been disconnected");
+    alert("You have been disconnected: Another control client has taken over.");
 
     // Clean up star connection but don't attempt reconnection
     if (this.star) {
@@ -3473,7 +3527,7 @@ class ControlClient {
 
   updatePhasorVisualization(phasor) {
     const percentage = (phasor * 100).toFixed(1);
-    this.elements.phasorBar.style.width = percentage + "%";
+    this.elements.phasorBar.style.width = `${percentage}%`;
     this.elements.phasorText.textContent = phasor.toFixed(3);
   }
 
@@ -3497,34 +3551,40 @@ class ControlClient {
       const peerStats = stats.peerStats[peerId];
       const peerType = peerStats.peerType || peerId.split("-")[0]; // Use stored type or extract from peerId
 
-      return '<div class="peer-item">' +
-        '<div class="peer-info">' +
-        '<div class="peer-id">' + peerId + '</div>' +
-        '<div class="peer-type">' + peerType + '</div>' +
-        '</div>' +
-        '<div class="peer-stats">' +
-        '<div>Status: ' + peerStats.connectionState + '</div>' +
-        '</div>' +
-        '</div>';
+      return `
+        <div class="peer-item">
+          <div class="peer-info">
+            <div class="peer-id">${peerId}</div>
+            <div class="peer-type">${peerType}</div>
+          </div>
+          <div class="peer-stats">
+            <div>Status: ${peerStats.connectionState}</div>
+          </div>
+        </div>
+      `;
     }).join("");
 
     this.elements.peerList.innerHTML = listHTML;
   }
 
   clearPeerList() {
-    this.elements.peerList.innerHTML = '<div style="color: #888; font-style: italic; text-align: center; padding: 20px;">No peers connected</div>';
+    this.elements.peerList.innerHTML = `
+      <div style="color: #888; font-style: italic; text-align: center; padding: 20px;">
+        No peers connected
+      </div>
+    `;
   }
 
   log(message, level = "info") {
     const timestamp = new Date().toLocaleTimeString();
     const prefix = {
-      "info": "INFO",
-      "success": "SUCCESS",
-      "error": "ERROR",
-      "debug": "DEBUG",
-    }[level] || "INFO";
+      "info": "ℹ️",
+      "success": "✅",
+      "error": "❌",
+      "debug": "🔍",
+    }[level] || "ℹ️";
 
-    const logEntry = "[" + timestamp + "] " + prefix + " " + message + "\n";
+    const logEntry = `[${timestamp}] ${prefix} ${message}\n`;
 
     if (this.elements.debugLog) {
       this.elements.debugLog.textContent += logEntry;
@@ -3532,7 +3592,7 @@ class ControlClient {
     }
 
     // Also log to console since debug panel was removed
-    console.log("[CTRL] " + message);
+    console.log(`[CTRL] ${message}`);
   }
 
   clearLog() {
@@ -3593,16 +3653,18 @@ class ControlClient {
           ? "#f88"
           : "#888";
 
-        const rttDisplay = diag.rtt !== null ? diag.rtt + "ms" : "?";
+        const rttDisplay = diag.rtt !== null ? `${diag.rtt}ms` : "?";
         const droppedWarning = diag.droppedSyncMessages > 0
-          ? " ⚠" + diag.droppedSyncMessages
+          ? ` ⚠${diag.droppedSyncMessages}`
           : "";
 
-        return '<div style="margin-bottom: 1px;">' +
-          '<span style="color: ' + connectionColor + ';">' + diag.peerId.split("-")[0] + '</span>' +
-          '<span style="color: ' + iceColor + '; margin-left: 4px;">' + diag.iceType + '</span>' +
-          '<span style="color: #ccc; margin-left: 4px;">' + rttDisplay + '</span>' + droppedWarning +
-          '</div>';
+        return `<div style="margin-bottom: 1px;">
+          <span style="color: ${connectionColor};">${
+          diag.peerId.split("-")[0]
+        }</span>
+          <span style="color: ${iceColor}; margin-left: 4px;">${diag.iceType}</span>
+          <span style="color: #ccc; margin-left: 4px;">${rttDisplay}</span>${droppedWarning}
+        </div>`;
       }).join("");
 
       this.elements.networkDiagnostics.innerHTML = diagnosticsHTML;
@@ -3633,7 +3695,7 @@ class ControlClient {
     const sceneButtons = document.querySelectorAll(".scene-btn");
     sceneButtons.forEach((button) => {
       const location = parseInt(button.getAttribute("data-location"));
-      const key = "scene_" + location + "_controller";
+      const key = `scene_${location}_controller`;
       const hasScene = localStorage.getItem(key) !== null;
 
       if (hasScene) {
@@ -3644,8 +3706,8 @@ class ControlClient {
     });
   }
 
-  saveScene(memoryLocation) {
-    console.log("Saving scene to memory location " + memoryLocation + "...");
+  saveScene(memoryLocation: number) {
+    console.log(`💾 Saving scene to memory location ${memoryLocation}...`);
 
     try {
       // 1. Get the current applied program state.
@@ -3656,7 +3718,7 @@ class ControlClient {
 
       // 2. Save it to the controller's local storage.
       localStorage.setItem(
-        "scene_" + memoryLocation + "_controller",
+        `scene_${memoryLocation}_controller`,
         JSON.stringify(programToSave),
       );
 
@@ -3666,26 +3728,26 @@ class ControlClient {
         this.star.broadcastToType("synth", message, "control");
       }
 
-      this.log("Scene " + memoryLocation + " saved.", "success");
+      this.log(`Scene ${memoryLocation} saved.`, "success");
       this.updateSceneMemoryIndicators();
     } catch (error) {
       console.error("Error saving scene:", error);
       this.log(
-        "Failed to save scene " + memoryLocation + ": " + error.message,
+        `Failed to save scene ${memoryLocation}: ${error.message}`,
         "error",
       );
     }
   }
 
-  loadScene(memoryLocation) {
-    console.log("📂 Loading scene from memory location " + memoryLocation + "...");
+  loadScene(memoryLocation: number) {
+    console.log(`📂 Loading scene from memory location ${memoryLocation}...`);
 
     try {
       const savedProgramString = localStorage.getItem(
-        "scene_" + memoryLocation + "_controller",
+        `scene_${memoryLocation}_controller`,
       );
       if (!savedProgramString) {
-        this.log("No scene found at location " + memoryLocation + ".", "error");
+        this.log(`No scene found at location ${memoryLocation}.`, "error");
         return;
       }
 
@@ -3705,7 +3767,7 @@ class ControlClient {
         "vibratoWidth",
         "vibratoRate",
       ];
-      const filteredProgram = {};
+      const filteredProgram: Partial<IMusicalState> = {};
       validParams.forEach((param) => {
         if (loadedProgram[param] !== undefined) {
           filteredProgram[param] = loadedProgram[param];
@@ -3718,7 +3780,7 @@ class ControlClient {
 
       // 3. Update the entire UI to match the loaded state.
       Object.keys(this.musicalState).forEach((paramName) => {
-        this._updateUIFromState(paramName);
+        this._updateUIFromState(paramName as keyof IMusicalState);
       });
 
       // 4. Broadcast LOAD_SCENE only (contains full program config)
@@ -3730,12 +3792,12 @@ class ControlClient {
         this.star.broadcastToType("synth", message, "control");
       }
 
-      this.log("Scene " + memoryLocation + " loaded and broadcast.", "success");
+      this.log(`Scene ${memoryLocation} loaded and broadcast.`, "success");
       this.updateSceneMemoryIndicators();
     } catch (error) {
       console.error("Error loading scene:", error);
       this.log(
-        "Failed to load scene " + memoryLocation + ": " + error.message,
+        `Failed to load scene ${memoryLocation}: ${error.message}`,
         "error",
       );
     }
@@ -3744,7 +3806,7 @@ class ControlClient {
   clearSceneBanks() {
     // 1) Clear controller banks
     for (let i = 0; i <= 9; i++) {
-      localStorage.removeItem("scene_" + i + "_controller");
+      localStorage.removeItem(`scene_${i}_controller`);
     }
     this.updateSceneMemoryIndicators();
     this.log("Cleared all scene banks", "success");
@@ -3756,11 +3818,11 @@ class ControlClient {
     }
   }
 
-  clearBank(memoryLocation) {
+  clearBank(memoryLocation: number) {
     // Clear single bank
-    localStorage.removeItem("scene_" + memoryLocation + "_controller");
+    localStorage.removeItem(`scene_${memoryLocation}_controller`);
     this.updateSceneMemoryIndicators();
-    this.log("Cleared scene bank " + memoryLocation, "success");
+    this.log(`Cleared scene bank ${memoryLocation}`, "success");
 
     // Broadcast to synths
     if (this.star) {
@@ -3856,7 +3918,7 @@ class ControlClient {
       const hasChanges = this.bulkChanges.length > 0;
       this.elements.applyBulkBtn.disabled = !hasChanges;
       this.elements.applyBulkBtn.textContent = hasChanges
-        ? "apply bulk (" + this.bulkChanges.length + ")"
+        ? `apply bulk (${this.bulkChanges.length})`
         : "apply bulk";
     }
   }
@@ -3870,7 +3932,7 @@ class ControlClient {
       return;
     }
 
-    console.log("🔄 Applying " + this.bulkChanges.length + " bulk changes");
+    console.log(`🔄 Applying ${this.bulkChanges.length} bulk changes`);
 
     // Send all accumulated changes
     this.bulkChanges.forEach((change) => {
@@ -3879,9 +3941,9 @@ class ControlClient {
           // Send sub-parameter update
           this._sendImmediateParameterChange({
             type: "sub",
-            paramPath: change.paramPath,
+            paramPath: change.paramPath!,
             value: change.value,
-            portamentoTime: change.portamentoTime,
+            portamentoTime: change.portamentoTime!,
           });
           break;
 
@@ -3889,8 +3951,8 @@ class ControlClient {
           // Send single parameter update
           this._sendImmediateParameterChange({
             type: "single",
-            param: change.param,
-            portamentoTime: change.portamentoTime,
+            param: change.param as keyof IMusicalState,
+            portamentoTime: change.portamentoTime!,
           });
           break;
 
@@ -3901,7 +3963,7 @@ class ControlClient {
           break;
 
         default:
-          console.warn("🔄 Unknown bulk change type");
+          console.warn(`🔄 Unknown bulk change type: ${change.type}`);
       }
     });
 
@@ -3915,7 +3977,14 @@ class ControlClient {
   /**
    * Add a change to the bulk accumulation queue
    */
-  addToBulkChanges(change) {
+  addToBulkChanges(
+    change: {
+      type: string;
+      paramPath?: string;
+      value?: any;
+      portamentoTime?: number;
+    },
+  ) {
     if (!this.bulkModeEnabled) {
       return false; // Not in bulk mode
     }
@@ -3931,7 +4000,7 @@ class ControlClient {
     this.updateBulkButtonState();
 
     console.log(
-      "📋 Added to bulk queue: " + change.paramPath + " = " + change.value + " (" + this.bulkChanges.length + " total)",
+      `📋 Added to bulk queue: ${change.paramPath} = ${change.value} (${this.bulkChanges.length} total)`,
     );
     return true; // Successfully added to bulk queue
   }
@@ -3939,7 +4008,14 @@ class ControlClient {
   /**
    * Unified method for broadcasting parameter changes that respects bulk mode
    */
-  _broadcastParameterChange(change) {
+  private _broadcastParameterChange(change: {
+    type: "single" | "sub";
+    param?: keyof IMusicalState;
+    paramPath?: string;
+    value?: any;
+    portamentoTime: number;
+    payload?: any;
+  }) {
     if (!this.star) return;
 
     // For sub-parameter updates, try to add to bulk mode first
@@ -3979,7 +4055,14 @@ class ControlClient {
   /**
    * Send parameter change immediately (bypassing bulk mode)
    */
-  _sendImmediateParameterChange(change) {
+  private _sendImmediateParameterChange(change: {
+    type: "single" | "sub";
+    param?: keyof IMusicalState;
+    paramPath?: string;
+    value?: any;
+    portamentoTime: number;
+    payload?: any;
+  }) {
     if (!this.star) return;
 
     switch (change.type) {
@@ -3992,7 +4075,7 @@ class ControlClient {
           );
           this.star.broadcastToType("synth", message, "control");
           this.log(
-            "📡 Sub-param: " + change.paramPath + " = " + change.value + " (" + change.portamentoTime + "ms)",
+            `📡 Sub-param: ${change.paramPath} = ${change.value} (${change.portamentoTime}ms)`,
             "info",
           );
         }
@@ -4014,21 +4097,21 @@ class ControlClient {
   /**
    * Send single parameter update immediately (extracted from broadcastSingleParameterUpdate)
    */
-  _sendSingleParameterImmediate(
-    paramName,
-    portamentoTime,
+  private _sendSingleParameterImmediate(
+    paramName: keyof IMusicalState,
+    portamentoTime: number,
   ) {
     const paramState = this.pendingMusicalState[paramName];
 
     // Strict validation: reject forbidden scope field
-    if ("scope" in (paramState)) {
+    if ("scope" in (paramState as any)) {
       throw new Error(
-        "CRITICAL: Parameter '" + paramName + "' has forbidden 'scope' field",
+        `CRITICAL: Parameter '${paramName}' has forbidden 'scope' field`,
       );
     }
 
     // Create minimal payload with only the changed parameter
-    const wirePayload = {
+    const wirePayload: any = {
       synthesisActive: this.synthesisActive,
       portamentoTime: portamentoTime,
     };
@@ -4054,7 +4137,7 @@ class ControlClient {
     );
     this.star.broadcastToType("synth", message, "control");
     this.log(
-      "📡 Broadcasted " + paramName + " update with " + portamentoTime + "ms portamento",
+      `📡 Broadcasted ${paramName} update with ${portamentoTime}ms portamento`,
       "info",
     );
   }
