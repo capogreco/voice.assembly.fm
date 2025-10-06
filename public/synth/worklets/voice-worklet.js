@@ -117,6 +117,17 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
       },
     };
 
+    // ===== RESOLUTION STATE =====
+    
+    // Full parameter configurations from main thread
+    this.programConfig = {};
+    
+    // HRG (Harmonic Ratio Generator) state for each parameter+position
+    this.hrgState = {};
+    
+    // RBG (Range-Based Generator) cached values for static behavior
+    this.rbgState = {};
+
     // Phase tracking for envelope calculations
     this.lastPhase = 0;
 
@@ -192,6 +203,222 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
   }
 
   /**
+   * Resolve all parameters at wrap boundary
+   */
+  resolveAllParametersAtWrap() {
+    const resolvedParams = [];
+    
+    for (const [paramName, config] of Object.entries(this.programConfig)) {
+      if (this.env[paramName]) {
+        this.resolveParameterAtWrap(paramName, config);
+        resolvedParams.push(paramName);
+      }
+    }
+    
+    console.log(`🔄 SWAP: resolved ${resolvedParams.length} params [${resolvedParams.join(', ')}]`);
+  }
+
+  /**
+   * Resolve a single parameter at wrap boundary based on interpolation mode
+   */
+  resolveParameterAtWrap(paramName, config) {
+    const env = this.env[paramName];
+    
+    if (config.interpolation === "step") {
+      // Step mode: resolve single value, set start=end
+      const stepValue = this.resolveGenerator(paramName, "start", config.startValueGenerator, true);
+      if (stepValue !== undefined && Number.isFinite(stepValue)) {
+        env.start = stepValue;
+        env.end = stepValue;
+        env.portamentoMs = 0;
+        this.updatePortamentoCoeff(paramName);
+      }
+    } else if (config.interpolation === "disc") {
+      // Disc mode: resolve both start and end
+      const startValue = this.resolveGenerator(paramName, "start", config.startValueGenerator, true);
+      const endValue = this.resolveGenerator(paramName, "end", config.endValueGenerator, true);
+      
+      if (startValue !== undefined && Number.isFinite(startValue)) {
+        env.start = startValue;
+      }
+      if (endValue !== undefined && Number.isFinite(endValue)) {
+        env.end = endValue;
+      }
+      env.portamentoMs = 0;
+      this.updatePortamentoCoeff(paramName);
+    } else if (config.interpolation === "cont") {
+      // Cont mode: start = current (continuity), resolve only end
+      env.start = env.current;
+      const endValue = this.resolveGenerator(paramName, "end", config.endValueGenerator, true);
+      
+      if (endValue !== undefined && Number.isFinite(endValue)) {
+        env.end = endValue;
+      }
+      env.portamentoMs = 0;
+      this.updatePortamentoCoeff(paramName);
+    }
+  }
+
+  /**
+   * Resolve and apply parameter immediately (for paused state)
+   */
+  resolveAndApplyParameter(paramName, config, portamentoMs) {
+    const env = this.env[paramName];
+    
+    if (config.interpolation === "step") {
+      const stepValue = this.resolveGenerator(paramName, "start", config.startValueGenerator, false);
+      if (stepValue !== undefined && Number.isFinite(stepValue)) {
+        env.start = stepValue;
+        env.end = stepValue;
+        env.current = stepValue;
+        env.portamentoMs = portamentoMs;
+        this.updatePortamentoCoeff(paramName);
+      }
+    } else {
+      // For disc/cont, resolve both values but apply immediately
+      const startValue = this.resolveGenerator(paramName, "start", config.startValueGenerator, false);
+      const endValue = this.resolveGenerator(paramName, "end", config.endValueGenerator, false);
+      
+      if (startValue !== undefined && Number.isFinite(startValue)) {
+        env.start = startValue;
+        env.current = startValue;
+      }
+      if (endValue !== undefined && Number.isFinite(endValue)) {
+        env.end = endValue;
+      }
+      env.portamentoMs = portamentoMs;
+      this.updatePortamentoCoeff(paramName);
+    }
+  }
+
+  /**
+   * Resolve a generator (HRG or RBG) to get a concrete value
+   */
+  resolveGenerator(paramName, position, generator, advance) {
+    if (!generator) return undefined;
+    
+    if (generator.type === "periodic") {
+      return this.resolveHRG(paramName, position, advance);
+    } else if (generator.type === "normalised") {
+      return this.resolveRBG(generator, paramName, position);
+    }
+    
+    return undefined;
+  }
+
+  /**
+   * Resolve HRG (Harmonic Ratio Generator) value
+   */
+  resolveHRG(paramName, position, advance) {
+    const state = this.hrgState[paramName]?.[position];
+    if (!state) return undefined;
+    
+    // Get current indices (before advancing)
+    const numeratorIndex = this.getSequenceIndex(state, "numerator");
+    const denominatorIndex = this.getSequenceIndex(state, "denominator");
+    
+    const numerator = state.numerators[numeratorIndex];
+    const denominator = state.denominators[denominatorIndex];
+    
+    // Calculate frequency based on base frequency
+    const config = this.programConfig[paramName];
+    const baseFreq = config.baseValue || 220;
+    const ratio = numerator / denominator;
+    const frequency = baseFreq * ratio;
+    
+    // Advance indices if requested (only for cont mode start should not advance)
+    if (advance) {
+      this.advanceSequenceIndex(state, "numerator");
+      this.advanceSequenceIndex(state, "denominator");
+    }
+    
+    return frequency;
+  }
+
+  /**
+   * Resolve RBG (Range-Based Generator) value
+   */
+  resolveRBG(generator, paramName, position) {
+    const key = `${paramName}_${position}`;
+    
+    if (generator.sequenceBehavior === "static") {
+      // Return cached value or generate new one
+      if (this.rbgState[key] === undefined) {
+        this.rbgState[key] = this.generateRBGValue(generator);
+      }
+      return this.rbgState[key];
+    } else if (generator.sequenceBehavior === "random") {
+      // Always generate new random value
+      return this.generateRBGValue(generator);
+    }
+    
+    return this.generateRBGValue(generator);
+  }
+
+  /**
+   * Generate RBG value from range specification
+   */
+  generateRBGValue(generator) {
+    const range = generator.range;
+    
+    if (typeof range === "number") {
+      return range;
+    } else if (range && typeof range === "object" && range.min !== undefined && range.max !== undefined) {
+      return range.min + Math.random() * (range.max - range.min);
+    }
+    
+    return 0;
+  }
+
+  /**
+   * Get current sequence index based on behavior
+   */
+  getSequenceIndex(state, type) {
+    const behavior = type === "numerator" ? state.numeratorBehavior : state.denominatorBehavior;
+    const index = type === "numerator" ? state.indexN : state.indexD;
+    const sequence = type === "numerator" ? state.numerators : state.denominators;
+    const order = type === "numerator" ? state.orderN : state.orderD;
+    
+    switch (behavior) {
+      case "static":
+        return 0;
+      case "ascending":
+        return index % sequence.length;
+      case "descending":
+        return (sequence.length - 1 - index) % sequence.length;
+      case "shuffle":
+        return order ? order[index % order.length] : 0;
+      case "random":
+        return Math.floor(Math.random() * sequence.length);
+      default:
+        return 0;
+    }
+  }
+
+  /**
+   * Advance sequence index for behaviors that need it
+   */
+  advanceSequenceIndex(state, type) {
+    const behavior = type === "numerator" ? state.numeratorBehavior : state.denominatorBehavior;
+    
+    if (behavior === "ascending" || behavior === "descending" || behavior === "shuffle") {
+      if (type === "numerator") {
+        state.indexN = (state.indexN + 1) % state.numerators.length;
+        // Reshuffle when we complete a cycle
+        if (behavior === "shuffle" && state.indexN === 0 && state.orderN) {
+          this.shuffleArray(state.orderN);
+        }
+      } else {
+        state.indexD = (state.indexD + 1) % state.denominators.length;
+        // Reshuffle when we complete a cycle
+        if (behavior === "shuffle" && state.indexD === 0 && state.orderD) {
+          this.shuffleArray(state.orderD);
+        }
+      }
+    }
+  }
+
+  /**
    * Handle port messages for envelope control
    */
   handleMessage(event) {
@@ -208,6 +435,14 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
 
       case "PROGRAM":
         this.handleProgram(msg);
+        break;
+
+      case "UPDATE_PARAM_CONFIG":
+        this.handleUpdateParamConfig(msg);
+        break;
+
+      case "APPLY_NOW":
+        this.handleApplyNow(msg);
         break;
 
       case "TRANSPORT":
@@ -269,9 +504,12 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
   }
 
   /**
-   * Handle PROGRAM message - initialize all envelopes
+   * Handle PROGRAM message - store full configuration and initialize state
    */
   handleProgram(msg) {
+    // Store full program configuration
+    this.programConfig = { ...this.programConfig, ...msg.config };
+    
     // Initialize envelope state from program config
     for (const [param, config] of Object.entries(msg.config)) {
       if (this.env[param]) {
@@ -287,7 +525,126 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
 
         // Calculate portamento coefficient
         this.updatePortamentoCoeff(param);
+        
+        // Initialize HRG state for periodic generators
+        this.initializeHRGState(param, config);
       }
+    }
+  }
+
+  /**
+   * Handle UPDATE_PARAM_CONFIG message - incremental parameter updates
+   */
+  handleUpdateParamConfig(msg) {
+    const { path, value } = msg;
+    
+    // Simple path handling - assume path is "paramName.property"
+    const [paramName, property] = path.split('.');
+    
+    if (this.programConfig[paramName]) {
+      this.programConfig[paramName][property] = value;
+      
+      // Reinitialize HRG state if generator configuration changed
+      if (property.includes('Generator') || property.includes('Behavior') || 
+          property.includes('numerators') || property.includes('denominators')) {
+        this.initializeHRGState(paramName, this.programConfig[paramName]);
+      }
+    }
+  }
+
+  /**
+   * Handle APPLY_NOW message - immediate application for paused state
+   */
+  handleApplyNow(msg) {
+    const { portamentoMs } = msg;
+    
+    // Resolve all parameters immediately and apply with portamento
+    for (const [paramName, config] of Object.entries(this.programConfig)) {
+      if (this.env[paramName]) {
+        this.resolveAndApplyParameter(paramName, config, portamentoMs || 0);
+      }
+    }
+  }
+
+  /**
+   * Initialize HRG state for a parameter
+   */
+  initializeHRGState(paramName, config) {
+    if (!this.hrgState[paramName]) {
+      this.hrgState[paramName] = {};
+    }
+    
+    // Initialize start generator state
+    if (config.startValueGenerator?.type === "periodic") {
+      this.initializePeriodicGenerator(paramName, "start", config.startValueGenerator);
+    }
+    
+    // Initialize end generator state
+    if (config.endValueGenerator?.type === "periodic") {
+      this.initializePeriodicGenerator(paramName, "end", config.endValueGenerator);
+    }
+  }
+
+  /**
+   * Initialize periodic generator state
+   */
+  initializePeriodicGenerator(paramName, position, generator) {
+    const numerators = this.parseSequence(generator.numerators || "1");
+    const denominators = this.parseSequence(generator.denominators || "1");
+    
+    this.hrgState[paramName][position] = {
+      numerators,
+      denominators,
+      numeratorBehavior: generator.numeratorBehavior || "static",
+      denominatorBehavior: generator.denominatorBehavior || "static",
+      indexN: 0,
+      indexD: 0,
+      orderN: null,
+      orderD: null
+    };
+    
+    // Initialize shuffle orders if needed
+    this.initializeShuffleOrders(this.hrgState[paramName][position]);
+  }
+
+  /**
+   * Parse sequence string into array of numbers
+   */
+  parseSequence(sequenceStr) {
+    return sequenceStr.split(',').flatMap(part => {
+      if (part.includes('-')) {
+        const [start, end] = part.split('-').map(Number);
+        const result = [];
+        for (let i = start; i <= end; i++) {
+          result.push(i);
+        }
+        return result;
+      }
+      return [Number(part)];
+    });
+  }
+
+  /**
+   * Initialize shuffle orders for behaviors that need them
+   */
+  initializeShuffleOrders(state) {
+    if (state.numeratorBehavior === "shuffle") {
+      state.orderN = [...Array(state.numerators.length).keys()];
+      this.shuffleArray(state.orderN);
+    }
+    if (state.denominatorBehavior === "shuffle") {
+      state.orderD = [...Array(state.denominators.length).keys()];
+      this.shuffleArray(state.orderD);
+    }
+  }
+
+  /**
+   * Fisher-Yates shuffle algorithm
+   */
+  shuffleArray(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [array[i], array[j]] = [array[j], array[i]];
     }
   }
 
@@ -301,11 +658,8 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
       const tau = env.portamentoMs / 1000; // Convert ms to seconds
       env.alpha = 1 - Math.exp(-1 / (this.sampleRate * tau));
     } else {
-      // Instant change - also reset current value to start value to avoid smoothing artifacts
+      // Instant change
       env.alpha = 1;
-      if (Number.isFinite(env.start)) {
-        env.current = env.start;
-      }
     }
   }
 
@@ -638,6 +992,24 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
     for (let sample = 0; sample < blockSize; sample++) {
       const currentPhase = phase[sample];
 
+      // ===== WRAP DETECTION AND RESOLUTION =====
+      
+      let wrapped = false;
+      const phaseWrapThreshold = 0.25;
+      
+      if (sample === 0) {
+        // Check wrap between previous block's last sample and current block's first sample
+        wrapped = currentPhase < this.lastPhase - phaseWrapThreshold;
+      } else {
+        // Check wrap within current block
+        const prevPhase = phase[sample - 1];
+        wrapped = currentPhase < prevPhase - phaseWrapThreshold;
+      }
+      
+      if (wrapped) {
+        this.resolveAllParametersAtWrap();
+      }
+
       // ===== ENVELOPE GENERATION =====
 
       // Update each parameter's envelope value
@@ -647,7 +1019,7 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
         // Calculate target based on interpolation
         if (env.interpolation === "step") {
           target = env.start;
-        } else { // cosine
+        } else { // disc/cont - both use cosine interpolation curve
           const cosPhase = Math.cos(currentPhase * Math.PI);
           target = env.start + (env.end - env.start) * (1 - cosPhase) / 2;
         }
@@ -793,6 +1165,11 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
         f2FullChannel[sample] = blendedF2 * 10.0 * amplitude + noiseY;
       }
       if (f3FullChannel) f3FullChannel[sample] = blendedF3 * 10.0 * amplitude;
+    }
+
+    // Update lastPhase for next block's wrap detection
+    if (blockSize > 0) {
+      this.lastPhase = phase[blockSize - 1];
     }
 
     // Debug envelope values occasionally

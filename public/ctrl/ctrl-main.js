@@ -26,12 +26,19 @@ import { initializeApplication } from "./app/init.js";
  * @property {"SET_BASE_VALUE" | "SET_INTERPOLATION" | "SET_GENERATOR_CONFIG"} type
  * @property {string} [param] - Parameter name
  * @property {number} [value] - Parameter value
- * @property {"step" | "cosine"} [interpolation] - Interpolation type
+ * @property {"step" | "disc" | "cont"} [interpolation] - Interpolation type
  * @property {"start" | "end"} [position] - Generator position
  * @property {GeneratorConfig} [config] - Generator configuration
  */
 
 class ControlClient {
+
+  /**
+   * Helper predicate: check if interpolation mode requires both start and end generators
+   */
+  isCosInterp(interp) {
+    return interp === 'disc' || interp === 'cont';
+  }
 
   /**
    * Create default musical state
@@ -40,7 +47,7 @@ class ControlClient {
   _createDefaultState() {
     // Helper for frequency (uses HRG with both start and end generators)
     const defaultFrequencyState = () => ({
-      interpolation: "step",
+      interpolation: "disc",
       baseValue: 220,
       startValueGenerator: {
         type: "periodic",
@@ -60,7 +67,7 @@ class ControlClient {
 
     // Helper for normalized parameters (0-1 range)
     const defaultNormalizedState = () => ({
-      interpolation: "cosine",
+      interpolation: "cont",
       startValueGenerator: {
         type: "normalised",
         range: { min: 0, max: 1 },
@@ -141,9 +148,9 @@ class ControlClient {
       },
     });
 
-    // Helper for maximally stochastic normalized cosine parameters
+    // Helper for maximally stochastic normalized disc parameters
     const normalizedRandomCosine = () => ({
-      interpolation: "cosine",
+      interpolation: "disc",
       startValueGenerator: {
         type: "normalised",
         range: { min: 0, max: 1 },
@@ -176,9 +183,9 @@ class ControlClient {
       },
     });
 
-    // Helper for maximally stochastic periodic cosine parameters
+    // Helper for maximally stochastic periodic disc parameters
     const periodicRandomCosine = (baseValue) => ({
-      interpolation: "cosine",
+      interpolation: "disc",
       baseValue,
       startValueGenerator: {
         type: "periodic",
@@ -233,11 +240,11 @@ class ControlClient {
       },
       
       "full-cos": {
-        // Periodic parameters - maximum stochasticity with random HRG ranges and cosine motion
+        // Periodic parameters - maximum stochasticity with random HRG ranges and disc motion
         frequency: periodicRandomCosine(220),
         vibratoRate: periodicRandomCosine(5),
         
-        // Normalized parameters - maximum stochasticity with cosine glides across full [0,1]
+        // Normalized parameters - maximum stochasticity with disc glides across full [0,1]
         vowelX: normalizedRandomCosine(),
         vowelY: normalizedRandomCosine(),
         zingAmount: normalizedRandomCosine(),
@@ -548,6 +555,10 @@ class ControlClient {
     initializeApplication(this);
   }
 
+  // Helper predicate for interpolation modes
+  isCosInterp(interp) {
+    return interp === 'disc' || interp === 'cont';
+  }
 
   reresolveAtEOC() {
     console.log("🔀 reresolveAtEOC() called");
@@ -741,20 +752,44 @@ class ControlClient {
 
     // --- START NEW, CORRECTED LOGIC ---
 
-    // 1. The main value input is ALWAYS visible. Display based on mode and parameter type.
+    // 1. Handle value input visibility based on interpolation mode
     if (valueInput) {
-      valueInput.style.display = "inline-block"; // Ensure it's always visible
-      if (paramState.startValueGenerator?.type === "normalised") {
-        valueInput.value = this._stringifyNormalised(
-          paramState.startValueGenerator,
-        );
-      } else if (paramState.startValueGenerator?.type === "periodic") {
-        valueInput.value = (paramState.baseValue ?? "").toString();
-      } else if (paramState.baseValue !== null) {
-        valueInput.value = paramState.baseValue.toString();
+      if (paramState.interpolation === "cont") {
+        // For cont mode, hide start value input (comes from previous end)
+        valueInput.style.display = "none";
+        // Add or update placeholder text
+        let contIndicator = valueInput.parentNode.querySelector('.cont-indicator');
+        if (!contIndicator) {
+          contIndicator = document.createElement('span');
+          contIndicator.className = 'cont-indicator';
+          contIndicator.style.color = '#999';
+          contIndicator.style.fontSize = '10px';
+          contIndicator.style.fontStyle = 'italic';
+          valueInput.parentNode.insertBefore(contIndicator, valueInput.nextSibling);
+        }
+        contIndicator.textContent = '← from prev end';
+        contIndicator.style.display = 'inline';
       } else {
-        valueInput.value = ""; // Handle the blank-and-focus case
-        valueInput.focus();
+        // For step and disc modes, show value input normally
+        valueInput.style.display = "inline-block";
+        // Hide cont indicator if it exists
+        let contIndicator = valueInput.parentNode.querySelector('.cont-indicator');
+        if (contIndicator) {
+          contIndicator.style.display = 'none';
+        }
+        
+        if (paramState.startValueGenerator?.type === "normalised") {
+          valueInput.value = this._stringifyNormalised(
+            paramState.startValueGenerator,
+          );
+        } else if (paramState.startValueGenerator?.type === "periodic") {
+          valueInput.value = (paramState.baseValue ?? "").toString();
+        } else if (paramState.baseValue !== null) {
+          valueInput.value = paramState.baseValue.toString();
+        } else {
+          valueInput.value = ""; // Handle the blank-and-focus case
+          valueInput.focus();
+        }
       }
     }
 
@@ -841,6 +876,32 @@ class ControlClient {
             console.log("🐛 Set start denominator behavior to:", denBehValue);
           }
         }
+
+        // Hide static behavior options for cont mode on HRG controls
+        if (paramState.interpolation === "cont") {
+          [startNumBeh, startDenBeh].forEach(selector => {
+            if (selector) {
+              const staticOption = selector.querySelector('option[value="static"]');
+              if (staticOption) {
+                staticOption.style.display = "none";
+                // If currently set to static, change to ascending as fallback
+                if (selector.value === "static") {
+                  selector.value = "ascending";
+                }
+              }
+            }
+          });
+        } else {
+          // Show static option for non-cont modes
+          [startNumBeh, startDenBeh].forEach(selector => {
+            if (selector) {
+              const staticOption = selector.querySelector('option[value="static"]');
+              if (staticOption) {
+                staticOption.style.display = "";
+              }
+            }
+          });
+        }
       }
 
       if (isEnvelope) {
@@ -893,14 +954,40 @@ class ControlClient {
               console.log("🐛 Set end denominator behavior to:", endDenBehValue);
             }
           }
+
+          // Hide static behavior options for cont mode on end HRG controls
+          if (paramState.interpolation === "cont") {
+            [endNumBeh, endDenBeh].forEach(selector => {
+              if (selector) {
+                const staticOption = selector.querySelector('option[value="static"]');
+                if (staticOption) {
+                  staticOption.style.display = "none";
+                  // If currently set to static, change to ascending as fallback
+                  if (selector.value === "static") {
+                    selector.value = "ascending";
+                  }
+                }
+              }
+            });
+          } else {
+            // Show static option for non-cont modes
+            [endNumBeh, endDenBeh].forEach(selector => {
+              if (selector) {
+                const staticOption = selector.querySelector('option[value="static"]');
+                if (staticOption) {
+                  staticOption.style.display = "";
+                }
+              }
+            });
+          }
         }
       }
 
       // Re-sync HRG visibility after updating state
-      const isCosine = paramState.interpolation === "cosine";
-      if (hrgArrow) hrgArrow.style.display = isCosine ? "inline-block" : "none";
+      const needsEndGen = this.isCosInterp(paramState.interpolation);
+      if (hrgArrow) hrgArrow.style.display = needsEndGen ? "inline-block" : "none";
       if (hrgEndControls) {
-        hrgEndControls.style.display = isCosine ? "inline-block" : "none";
+        hrgEndControls.style.display = needsEndGen ? "inline-block" : "none";
       }
     }
 
@@ -919,8 +1006,13 @@ class ControlClient {
           paramName + "-start-rbg-behavior",
         );
         if (startBehaviorSelect) {
-          const isRange = this._isRangeValue(valueInput.value);
-          startBehaviorSelect.style.display = isRange ? "inline-block" : "none";
+          // For cont mode, hide start behavior selector (start value comes from previous end)
+          if (paramState.interpolation === "cont") {
+            startBehaviorSelect.style.display = "none";
+          } else {
+            const isRange = this._isRangeValue(valueInput.value);
+            startBehaviorSelect.style.display = isRange ? "inline-block" : "none";
+          }
         }
       }
 
@@ -1150,7 +1242,7 @@ class ControlClient {
       // Strict validation: require all necessary fields
       if (
         !paramState.interpolation ||
-        !["step", "cosine"].includes(paramState.interpolation)
+        !["step", "disc", "cont"].includes(paramState.interpolation)
       ) {
         throw new Error(
           "CRITICAL: Parameter '" + paramKey + "' missing valid interpolation",
@@ -1164,10 +1256,10 @@ class ControlClient {
       }
 
       if (
-        paramState.interpolation === "cosine" && !paramState.endValueGenerator
+        this.isCosInterp(paramState.interpolation) && !paramState.endValueGenerator
       ) {
         throw new Error(
-          "CRITICAL: Parameter '" + paramKey + "' cosine interpolation missing endValueGenerator",
+          "CRITICAL: Parameter '" + paramKey + "' disc/cont interpolation missing endValueGenerator",
         );
       }
 
@@ -1185,7 +1277,7 @@ class ControlClient {
 
       let endGen = undefined;
       if (
-        paramState.interpolation === "cosine" && paramState.endValueGenerator
+        this.isCosInterp(paramState.interpolation) && paramState.endValueGenerator
       ) {
         endGen = { ...paramState.endValueGenerator };
       }
@@ -1289,7 +1381,7 @@ class ControlClient {
     const startGen = { ...paramState.startValueGenerator };
 
     let endGen = undefined;
-    if (paramState.interpolation === "cosine" && paramState.endValueGenerator) {
+    if (this.isCosInterp(paramState.interpolation) && paramState.endValueGenerator) {
       endGen = { ...paramState.endValueGenerator };
     }
 
@@ -1805,7 +1897,7 @@ class ControlClient {
       };
     }
 
-    // For cosine interpolation, resolve both start and end
+    // For disc/cont interpolation, resolve both start and end
     const startValue = this.resolveGeneratorValue(
       paramState.startValueGenerator,
       paramState.baseValue,
@@ -2757,7 +2849,7 @@ class ControlClient {
     const startGen = { ...paramState.startValueGenerator };
 
     let endGen = undefined;
-    if (paramState.interpolation === "cosine" && paramState.endValueGenerator) {
+    if (this.isCosInterp(paramState.interpolation) && paramState.endValueGenerator) {
       endGen = { ...paramState.endValueGenerator };
     }
 

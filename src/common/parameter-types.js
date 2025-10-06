@@ -24,10 +24,10 @@
  * Unified parameter state - no more direct/program distinction.
  * Parameters are applied immediately when paused, at EOC when playing.
  * @typedef {Object} ParameterState
- * @property {"step" | "cosine"} interpolation - step: values held constant between events, cosine: values glide between events
+ * @property {"step" | "disc" | "cont"} interpolation - step: values held constant between events, disc: discrete cosine (re-resolve both at EOC), cont: continuous cosine (smooth morphing across cycles)
  * @property {number} [baseValue] - Required when using periodic generators (param-level only, never in generators)
  * @property {GeneratorConfig} startValueGenerator - Start value generator configuration
- * @property {GeneratorConfig} [endValueGenerator] - End value generator (required for cosine interpolation, always present for periodic params)
+ * @property {GeneratorConfig} [endValueGenerator] - End value generator (required for disc/cont interpolation, always present for periodic params)
  */
 
 /**

@@ -12,6 +12,16 @@ import { XYOscilloscope } from "./src/visualization/xy-oscilloscope.js";
 class SynthClient {
   constructor() {
     this.peerId = generatePeerId("synth");
+    
+    // Required parameter set for complete programConfig
+    this.REQUIRED_PARAMS = [
+      'frequency', 'vibratoRate', 'vowelX', 'vowelY', 'zingAmount', 
+      'zingMorph', 'symmetry', 'amplitude', 'whiteNoise', 'vibratoWidth'
+    ];
+    
+    // Track staging readiness
+    this.programConfigComplete = false;
+    
     this.star = null;
     this.audioContext = null;
     this.oscilloscope = null;
@@ -167,6 +177,7 @@ class SynthClient {
     this.rbgState = {}; // RBG random value state per parameter (for static behavior)
     this.reresolveAtNextEOC = false; // Flag to re-randomize static HRG indices
 
+
     // Note: No persistent synth ID - using ephemeral session
 
     // Auto-connect to network on page load
@@ -311,6 +322,7 @@ class SynthClient {
       
       // Track HRG components for minimal re-computation 
       this.lastResolvedHRG = {};
+      
 
       // Create mixer for voice output
       this.mixer = this.audioContext.createGain();
@@ -366,11 +378,6 @@ class SynthClient {
       this.handleProgramUpdate(cached);
     }
 
-    // Apply synth parameters if they were received before audio was ready
-    if (this.lastProgramUpdate) {
-      if (this.verbose) console.log("🎵 Applying stored program update");
-      this.handleProgramUpdate(this.lastProgramUpdate);
-    }
 
     // Ensure phasor/timing config reaches worklets now that they exist
     this.updatePhasorWorklet();
@@ -388,6 +395,15 @@ class SynthClient {
     const signalingUrl =
       `${protocol}//${globalThis.location.hostname}${port}/ws`;
     await this.star.connect(signalingUrl);
+  }
+
+  // Helper predicates for interpolation modes
+  isCosInterp(interp) {
+    return interp === 'disc' || interp === 'cont';
+  }
+
+  isCont(interp) {
+    return interp === 'cont';
   }
 
   setupStarEventHandlers() {
@@ -736,7 +752,7 @@ class SynthClient {
     const hasPortamento = message.portamentoTime !== undefined;
 
     // Store program config in main thread (we are the musical brain now)
-    this.programConfig = {};
+    this.programConfig = this.programConfig || {};
 
     // Handle synthesis active state
     if (message.synthesisActive !== undefined) {
@@ -749,7 +765,8 @@ class SynthClient {
           );
         }
       }
-      this.synthesisActive = !!message.synthesisActive; // ADD THIS
+      this.synthesisActive = !!message.synthesisActive;
+      
     }
 
     for (const paramName in message) {
@@ -809,17 +826,33 @@ class SynthClient {
       }
     }
 
+    // Check completeness after processing all parameters
+    this.checkProgramConfigCompleteness();
+
+    // Only proceed if programConfig is complete
+    if (!this.programConfigComplete) {
+      console.log("⏸️ Deferring HRG initialization until programConfig is complete");
+      return;
+    }
+
     console.log(
       "✅ Program config stored in main thread, HRG states initialized",
     );
 
-    // New paradigm: play vs pause governs application timing
-    // - Playing: stage for EOC (handled in handleCycleReset)
-    // - Paused: apply immediately with global portamento
+    // Forward complete program configuration to worklet
+    if (this.voiceNode && this.programConfigComplete) {
+      this.voiceNode.port.postMessage({
+        type: "PROGRAM",
+        config: this.programConfig
+      });
+      console.log(`📤 Forwarded PROGRAM config with ${Object.keys(this.programConfig).length} params to worklet`);
+    } else if (this.voiceNode) {
+      console.log(`📋 Skipping worklet forward - config incomplete (${Object.keys(this.programConfig).length}/10 params)`);
+    }
+
     if (this.synthesisActive) {
       if (this.isPlaying) {
-        console.log("📋 Staging program update for EOC (playing)");
-        // Nothing to do now; handleCycleReset will push start/end AudioParams
+        console.log("📋 Program update while playing - worklet will resolve at next wrap");
       } else {
         const pt = message.portamentoTime ?? 0;
         console.log(
@@ -831,7 +864,16 @@ class SynthClient {
           this.activateImmediateSynthesis();
         }
 
-        // Apply changed parameters with portamento (for all paused updates, regardless of synthesis state)
+        // Send APPLY_NOW message to worklet for immediate application with portamento
+        if (this.voiceNode) {
+          this.voiceNode.port.postMessage({
+            type: "APPLY_NOW",
+            portamentoMs: pt
+          });
+          console.log(`📤 Sent APPLY_NOW with ${pt}ms portamento to worklet`);
+        }
+
+        // Update local programConfig for completeness tracking
         for (const paramName in message) {
           if (
             [
@@ -845,25 +887,11 @@ class SynthClient {
             continue; // Skip meta fields
           }
 
-          // Standard parameter update: update config first
           this.programConfig[paramName] = message[paramName];
-
-          // Selectively refresh HRG state for changed positions only
-          if (message[paramName].startValueGenerator?.type === "periodic") {
-            this._reinitHRGPosition(paramName, "start");
-          }
-          if (
-            message[paramName].endValueGenerator?.type === "periodic" &&
-            this.programConfig[paramName].interpolation === "cosine"
-          ) {
-            this._reinitHRGPosition(paramName, "end");
-          }
-
-          // Apply single parameter with portamento
-          this.applySingleParamWithPortamento(paramName, pt);
         }
-
-        // Interpolation types are now sent per-parameter via SET_ENV messages
+        
+        // Check completeness after merge
+        this.checkProgramConfigCompleteness();
       }
     }
   }
@@ -881,6 +909,16 @@ class SynthClient {
     const paramName = pathParts[0];
 
     console.log(`🔧 Sub-parameter update: ${paramPath} = ${value}`);
+
+    // Forward parameter config update to worklet
+    if (this.voiceNode) {
+      this.voiceNode.port.postMessage({
+        type: "UPDATE_PARAM_CONFIG",
+        path: paramPath,
+        value: value
+      });
+      console.log(`📤 Forwarded UPDATE_PARAM_CONFIG: ${paramPath} = ${value}`);
+    }
 
     if (!this.programConfig[paramName]) {
       throw new Error(`CRITICAL: Unknown parameter ${paramName}`);
@@ -1096,6 +1134,7 @@ class SynthClient {
             this.nextCycleTime.toFixed(3)
           }s`,
         );
+        
       } else {
         // Step beacon - apply gentle PLL correction
         const expectedStepIndex = Math.round(this.receivedPhasor * this.receivedStepsPerCycle);
@@ -1373,16 +1412,6 @@ class SynthClient {
       ((resetData.blockSize - resetData.sampleIndex) /
         this.audioContext.sampleRate);
 
-    // Validate program config before EOC resolution
-    if (!this.programConfig || Object.keys(this.programConfig).length === 0) {
-      console.error("🚨 EOC RESET WITH EMPTY PROGRAM CONFIG!");
-      console.error(
-        "🚨 This means synth received EOC before controller sent parameters",
-      );
-      // Don't throw here, but log loudly - EOC can happen before controller connects
-      return;
-    }
-
     // Apply staged scene (takes precedence over re-resolve)
     if (this._pendingSceneAtEoc) {
       if (this.voiceNode) {
@@ -1394,78 +1423,14 @@ class SynthClient {
         console.log("🎬 Applied staged scene at EOC boundary");
       }
       this._pendingSceneAtEoc = null;
-      // Skip re-resolve for this cycle
+      return;
     }
-
-    if (this.reresolveAtNextEOC) {
-      console.log("🔀 Re-initializing all stochastic generators at EOC");
-
-      // Re-initialize HRG indices for all parameters
-      for (const paramName in this.programConfig) {
-        const paramConfig = this.programConfig[paramName];
-
-        // Re-init start position if it uses HRG
-        if (paramConfig.startValueGenerator?.type === "periodic") {
-          this._reinitHRGPosition(paramName, "start");
-        }
-
-        // Re-init end position if it uses HRG with cosine interpolation
-        if (
-          paramConfig.endValueGenerator?.type === "periodic" &&
-          paramConfig.interpolation === "cosine"
-        ) {
-          this._reinitHRGPosition(paramName, "end");
-        }
-      }
-
-      // Clear all cached RBG values
-      this.rbgState = {};
-      if (this.verbose) {
-        console.log("🎲 Cleared all RBG cached values for re-resolution");
-      }
-
-      // Clear flag before resolving to avoid double-application
-      this.reresolveAtNextEOC = false;
-    }
-
-    // Apply any staged parameter updates before resolving values
-    if (
-      this.stagedParamUpdates && Object.keys(this.stagedParamUpdates).length > 0
-    ) {
-      console.log(
-        `📋 Applying ${
-          Object.keys(this.stagedParamUpdates).length
-        } staged parameter updates at EOC`,
-      );
-
-      for (const [param, update] of Object.entries(this.stagedParamUpdates)) {
-        console.log(
-          `📋 Applying staged update: ${param} = ${update.startValue}${
-            update.endValue !== undefined ? ` → ${update.endValue}` : ""
-          } (${update.interpolation})`,
-        );
-
-        // The programConfig was already updated in handleUnifiedParamUpdate
-        // Just log for confirmation that changes will take effect
-      }
-
-      // Clear staged updates after applying
-      this.stagedParamUpdates = {};
-    }
-
-    // Regular EOC: always resolve and push ALL parameters to Voice (snap at boundary)
-    const resolved = this._resolveProgram(this.programConfig);
-    const payload = this._toEnvPayload(resolved, 0);
-
-    // ALWAYS send batch envelope update to voice worklet
-    this.voiceNode?.port.postMessage({
-      type: "SET_ALL_ENV",
-      v: 1,
-      params: payload,
-    });
-
-    console.log(`[EOC] Sent envelope updates to voice worklet:`, payload);
+    
+    // EOC logging for debugging
+    console.log(`📊 handleCycleReset: EOC received, worklet handles resolution`);
   }
+
+
 
   sendPhaseCorrection() {
     if (!this.phasorWorklet || !this.pllEnabled || !this.receivedIsPlaying) {
@@ -1860,9 +1825,28 @@ class SynthClient {
       return;
     }
 
-    // Clear all cached RBG values
+    // Clear all cached RBG values, but preserve cont mode end values
+    const contParams = [];
+    for (const paramName in this.programConfig) {
+      if (this.programConfig[paramName].interpolation === "cont") {
+        contParams.push(paramName);
+      }
+    }
+
+    // Preserve cont mode end values when clearing
+    const preservedEndValues = {};
+    for (const param of contParams) {
+      if (this.rbgState[`${param}_end`]) {
+        preservedEndValues[`${param}_end`] = this.rbgState[`${param}_end`];
+      }
+    }
+
     this.rbgState = {};
-    console.log("🎲 Cleared all RBG cached values");
+
+    // Restore cont mode end values
+    Object.assign(this.rbgState, preservedEndValues);
+    
+    console.log(`🎲 Cleared all RBG cached values (preserved ${Object.keys(preservedEndValues).length} cont mode end values)`);
 
     // Re-initialize HRG indices for all parameters
     for (const paramName in this.programConfig) {
@@ -1873,10 +1857,10 @@ class SynthClient {
         this._reinitHRGPosition(paramName, "start");
       }
 
-      // Re-init end position if it uses HRG with cosine interpolation
+      // Re-init end position if it uses HRG with disc/cont interpolation
       if (
         paramConfig.endValueGenerator?.type === "periodic" &&
-        paramConfig.interpolation === "cosine"
+        this.isCosInterp(paramConfig.interpolation)
       ) {
         this._reinitHRGPosition(paramName, "end");
       }
@@ -2119,9 +2103,9 @@ class SynthClient {
           endValue: resolved[param].startValue || resolved[param],
           portamentoMs: portamentoMs, // Always explicit
         };
-      } else if (config.interpolation === "cosine") {
+      } else if (this.isCosInterp(config.interpolation)) {
         payload[param] = {
-          interpolation: "cosine",
+          interpolation: resolved[param].interpolation || config.interpolation, // Use actual interpolation mode
           startValue: resolved[param].startValue,
           endValue: resolved[param].endValue,
           portamentoMs: portamentoMs, // Always explicit
@@ -2391,8 +2375,8 @@ class SynthClient {
             this.programConfig[message.param].startValueGenerator = startGen;
           }
           // Keep end generator present (will be ignored for step interpolation)
-        } else if (message.interpolation === "cosine") {
-          // Cosine interpolation - preserve both generators, create end generator if missing
+        } else if (this.isCosInterp(message.interpolation)) {
+          // Disc/cont interpolation - preserve both generators, create end generator if missing
           if (existingConfig.startValueGenerator) {
             const startGen = { ...existingConfig.startValueGenerator };
             if (
@@ -2483,8 +2467,8 @@ class SynthClient {
           delete this.rbgState[`${message.param}_start`];
         }
 
-        // For cosine interpolation, update both generators
-        if (message.interpolation === "cosine") {
+        // For disc/cont interpolation, update both generators
+        if (this.isCosInterp(message.interpolation)) {
           if (config.endValueGenerator?.type === "normalised") {
             config.endValueGenerator.range = message.endValue;
             delete this.rbgState[`${message.param}_end`];
@@ -2691,9 +2675,9 @@ class SynthClient {
       },
     };
 
-    // Initialize end state if cosine interpolation
+    // Initialize end state if disc/cont interpolation
     if (
-      config.interpolation === "cosine" &&
+      this.isCosInterp(config.interpolation) &&
       config.endValueGenerator?.type === "periodic"
     ) {
       const endGen = config.endValueGenerator;
@@ -2972,9 +2956,9 @@ class SynthClient {
       },
     };
 
-    // Initialize end state if cosine interpolation
+    // Initialize end state if disc/cont interpolation
     if (
-      config.interpolation === "cosine" &&
+      this.isCosInterp(config.interpolation) &&
       config.endValueGenerator?.type === "periodic"
     ) {
       const endGen = config.endValueGenerator;
@@ -3015,6 +2999,26 @@ class SynthClient {
       [array[i], array[j]] = [array[j], array[i]];
     }
     return array;
+  }
+
+  /**
+   * Check if programConfig has all required parameters
+   * Updates this.programConfigComplete flag
+   */
+  checkProgramConfigCompleteness() {
+    const currentParams = Object.keys(this.programConfig);
+    const missingParams = this.REQUIRED_PARAMS.filter(param => !currentParams.includes(param));
+    
+    const wasComplete = this.programConfigComplete;
+    this.programConfigComplete = missingParams.length === 0;
+    
+    if (!this.programConfigComplete) {
+      console.warn(`🚫 programConfig incomplete: ${currentParams.length}/10 params, missing: [${missingParams.join(', ')}]`);
+    } else if (!wasComplete) {
+      console.log(`✅ programConfig now complete: [${currentParams.join(', ')}]`);
+    }
+    
+    return this.programConfigComplete;
   }
 
   // Helper method to resolve parameter values for AudioParams
@@ -3195,7 +3199,7 @@ class SynthClient {
 
     // Recalculate frequencies using NEW base but SAME ratios
     const newStartValue = newBaseValue * (hrgState.start.numerator / hrgState.start.denominator);
-    const newEndValue = cfg.interpolation === "cosine" && hrgState.end
+    const newEndValue = this.isCosInterp(cfg.interpolation) && hrgState.end
       ? newBaseValue * (hrgState.end.numerator / hrgState.end.denominator)
       : newStartValue;  // For step interpolation, end = start
 
@@ -3368,7 +3372,7 @@ class SynthClient {
       throw new Error(
         `CRITICAL: Unknown generator type for ${paramName}: ${gen.type}`,
       );
-    } else if (config.interpolation === "cosine") {
+    } else if (this.isCosInterp(config.interpolation)) {
       const startGen = config.startValueGenerator;
       const endGen = config.endValueGenerator;
       if (!startGen) {
@@ -3378,7 +3382,7 @@ class SynthClient {
       }
       if (!endGen) {
         throw new Error(
-          `CRITICAL: Missing endValueGenerator for cosine ${paramName}`,
+          `CRITICAL: Missing endValueGenerator for disc/cont ${paramName}`,
         );
       }
 
@@ -3668,6 +3672,9 @@ class SynthClient {
     }
   }
 
+
+
+
   _resolveProgram(program) {
     // Resolve a program config to envelope configurations for SET_ALL_ENV
     const resolvedParams = {};
@@ -3699,22 +3706,42 @@ class SynthClient {
             portamentoMs: 0, // Instant for re-resolve
           };
         }
-      } else if (config.interpolation === "cosine") {
-        // Cosine interpolation - resolve start and end values
+      } else if (this.isCosInterp(config.interpolation)) {
+        // Disc/cont interpolation - resolve start and end values
         let startValue, endValue;
 
-        if (config.startValueGenerator?.type === "periodic") {
-          startValue = this._resolveHRG(paramName, "start");
-        } else if (config.startValueGenerator?.type === "normalised") {
-          startValue = this._resolveRBG(
-            config.startValueGenerator,
-            paramName,
-            "start",
-          );
+        // Disc vs Cont semantics for start value
+        if (config.interpolation === "cont" && this.lastResolvedHRG[paramName]?.end) {
+          // CONT mode: use previous end as current start (smooth morphing)
+          if (config.startValueGenerator?.type === "periodic") {
+            startValue = this.lastResolvedHRG[paramName].end.frequency;
+            console.log(`🔄 CONT: ${paramName} start = previous end = ${startValue}`);
+          } else if (config.startValueGenerator?.type === "normalised") {
+            // For RBG, we need to check if we have cached end value
+            const cachedEndValue = this.rbgState[`${paramName}_end`];
+            if (cachedEndValue !== undefined) {
+              startValue = cachedEndValue;
+              console.log(`🔄 CONT: ${paramName} start = previous RBG end = ${startValue}`);
+            } else {
+              // Fallback to fresh resolution
+              startValue = this._resolveRBG(config.startValueGenerator, paramName, "start");
+            }
+          }
         } else {
-          throw new Error(
-            `CRITICAL: Unknown start generator type for ${paramName}: ${config.startValueGenerator?.type}`,
-          );
+          // DISC mode or first cycle: fresh resolution for start
+          if (config.startValueGenerator?.type === "periodic") {
+            startValue = this._resolveHRG(paramName, "start");
+          } else if (config.startValueGenerator?.type === "normalised") {
+            startValue = this._resolveRBG(
+              config.startValueGenerator,
+              paramName,
+              "start",
+            );
+          } else {
+            throw new Error(
+              `CRITICAL: Unknown start generator type for ${paramName}: ${config.startValueGenerator?.type}`,
+            );
+          }
         }
 
         if (config.endValueGenerator?.type === "periodic") {
@@ -3733,11 +3760,27 @@ class SynthClient {
 
         if (Number.isFinite(startValue) && Number.isFinite(endValue)) {
           resolvedParams[paramName] = {
-            interpolation: "cosine",
+            interpolation: config.interpolation, // Send actual interpolation mode (disc or cont)
             startValue: startValue,
             endValue: endValue,
             portamentoMs: 0, // Instant for re-resolve
           };
+
+          // Store end values for cont mode persistence
+          if (config.interpolation === "cont") {
+            if (config.endValueGenerator?.type === "normalised") {
+              // Store RBG end value for next cycle
+              this.rbgState[`${paramName}_end`] = endValue;
+              console.log(`💾 CONT: Stored ${paramName} RBG end value = ${endValue}`);
+            } else if (config.endValueGenerator?.type === "periodic") {
+              // Store HRG end value for next cycle
+              if (!this.lastResolvedHRG[paramName]) {
+                this.lastResolvedHRG[paramName] = {};
+              }
+              this.lastResolvedHRG[paramName].end = { frequency: endValue };
+              console.log(`💾 CONT: Stored ${paramName} HRG end value = ${endValue}`);
+            }
+          }
         }
       }
     }

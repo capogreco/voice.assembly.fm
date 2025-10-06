@@ -37,7 +37,7 @@ function defaultFrequencyState() {
  */
 function defaultNormalizedState() {
   return {
-    interpolation: "cosine",
+    interpolation: "cont",
     startValueGenerator: {
       type: "normalised",
       range: { min: 0, max: 1 },
@@ -73,14 +73,26 @@ function defaultConstantState(value) {
  */
 export function createDefaultState() {
   return {
-    frequency: defaultFrequencyState(),
+    frequency: (() => {
+    const freq = defaultFrequencyState();
+    freq.interpolation = "disc";
+    return freq;
+  })(),
     vowelX: defaultNormalizedState(),
     vowelY: defaultNormalizedState(),
     zingAmount: defaultNormalizedState(),
     zingMorph: defaultNormalizedState(),
     symmetry: defaultNormalizedState(),
-    amplitude: defaultConstantState(0.8),
-    whiteNoise: defaultConstantState(0),
+    amplitude: (() => {
+      const amp = defaultConstantState(0.8);
+      amp.interpolation = "step";
+      return amp;
+    })(),
+    whiteNoise: (() => {
+      const noise = defaultConstantState(0);
+      noise.interpolation = "step";
+      return noise;
+    })(),
     vibratoWidth: {
       interpolation: "step",
       startValueGenerator: {
@@ -110,7 +122,7 @@ export function createPresetConfigs() {
     
     "gentle-sweep": {
       frequency: {
-        interpolation: "cosine",
+        interpolation: "disc",
         baseValue: 440,
         startValueGenerator: {
           type: "periodic",
@@ -128,7 +140,7 @@ export function createPresetConfigs() {
         },
       },
       vowelX: {
-        interpolation: "cosine",
+        interpolation: "disc",
         startValueGenerator: {
           type: "normalised",
           range: { min: 0.2, max: 0.8 },
@@ -141,7 +153,7 @@ export function createPresetConfigs() {
         },
       },
       vowelY: {
-        interpolation: "cosine",
+        interpolation: "disc",
         startValueGenerator: {
           type: "normalised",
           range: { min: 0.3, max: 0.7 },

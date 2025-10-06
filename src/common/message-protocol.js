@@ -268,10 +268,10 @@ export function validateMessage(message) {
           // Validate unified parameter structure
           if (
             !value.interpolation ||
-            !["step", "cosine"].includes(value.interpolation)
+            !["step", "disc", "cont"].includes(value.interpolation)
           ) {
             throw new Error(
-              `Parameter '${key}' must have interpolation: 'step' or 'cosine'`,
+              `Parameter '${key}' must have interpolation: 'step', 'disc', or 'cont'`,
             );
           }
 

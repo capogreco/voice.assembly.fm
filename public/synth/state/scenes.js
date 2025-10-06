@@ -223,9 +223,9 @@ export function toEnvPayload(resolved, context, portamentoMs = 0) {
         endValue: resolved[param].startValue || resolved[param],
         portamentoMs: portamentoMs, // Always explicit
       };
-    } else if (config.interpolation === "cosine") {
+    } else if (config.interpolation === "disc" || config.interpolation === "cont") {
       payload[param] = {
-        interpolation: "cosine",
+        interpolation: resolved[param].interpolation || config.interpolation, // Use actual interpolation mode
         startValue: resolved[param].startValue,
         endValue: resolved[param].endValue,
         portamentoMs: portamentoMs, // Always explicit

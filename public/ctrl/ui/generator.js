@@ -130,7 +130,8 @@ function createRbgBehaviorOptions() {
 function createInterpolationOptions() {
   return `
     <option value="step">step</option>
-    <option value="cosine">cos</option>
+    <option value="disc">disc</option>
+    <option value="cont">cont</option>
   `;
 }
 

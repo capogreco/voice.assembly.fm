@@ -193,7 +193,7 @@ export function sendCompleteStateToNewSynth(star, peerId, musicalState, synthesi
     const startGen = { ...paramState.startValueGenerator };
     let endGen = undefined;
     
-    if (paramState.interpolation === "cosine" && paramState.endValueGenerator) {
+    if ((paramState.interpolation === "disc" || paramState.interpolation === "cont") && paramState.endValueGenerator) {
       endGen = { ...paramState.endValueGenerator };
     }
 

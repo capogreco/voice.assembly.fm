@@ -43,7 +43,7 @@ export function createWirePayload(musicalState, synthesisActive, portamentoTime 
     const startGen = { ...paramState.startValueGenerator };
     let endGen = undefined;
     
-    if (paramState.interpolation === "cosine" && paramState.endValueGenerator) {
+    if ((paramState.interpolation === "disc" || paramState.interpolation === "cont") && paramState.endValueGenerator) {
       endGen = { ...paramState.endValueGenerator };
     }
 
@@ -112,7 +112,7 @@ export function broadcastSingleParameter(star, paramName, musicalState, synthesi
   const startGen = { ...paramState.startValueGenerator };
   let endGen = undefined;
   
-  if (paramState.interpolation === "cosine" && paramState.endValueGenerator) {
+  if ((paramState.interpolation === "disc" || paramState.interpolation === "cont") && paramState.endValueGenerator) {
     endGen = { ...paramState.endValueGenerator };
   }
 

@@ -14,7 +14,7 @@
  * @property {"SET_BASE_VALUE" | "SET_INTERPOLATION" | "SET_GENERATOR_CONFIG"} type
  * @property {string} [param] - Parameter name
  * @property {number} [value] - Parameter value
- * @property {"step" | "cosine"} [interpolation] - Interpolation type
+ * @property {"step" | "disc" | "cont"} [interpolation] - Interpolation type
  * @property {"start" | "end"} [position] - Generator position
  * @property {Object} [config] - Generator configuration
  */
@@ -48,7 +48,7 @@ export function updatePendingState(pendingState, action) {
           startValueGenerator: param.startValueGenerator,
         };
       } else {
-        // Cosine interpolation - needs start and end generators
+        // Disc/cont interpolation - needs start and end generators
         newState[action.param] = {
           interpolation: action.interpolation,
           baseValue: param.baseValue,
@@ -114,7 +114,7 @@ export function updateActiveState(activeState, action) {
           startValueGenerator: param.startValueGenerator,
         };
       } else {
-        // Cosine interpolation - needs start and end generators
+        // Disc/cont interpolation - needs start and end generators
         newState[action.param] = {
           interpolation: action.interpolation,
           baseValue: param.baseValue,
