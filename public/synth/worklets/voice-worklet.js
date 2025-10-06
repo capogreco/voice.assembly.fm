@@ -441,6 +441,10 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
         this.handleUpdateParamConfig(msg);
         break;
 
+      case "COMMIT_STAGED":
+        this.handleCommitStaged(msg);
+        break;
+
       case "APPLY_NOW":
         this.handleApplyNow(msg);
         break;
@@ -538,17 +542,90 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
   handleUpdateParamConfig(msg) {
     const { path, value } = msg;
     
-    // Simple path handling - assume path is "paramName.property"
-    const [paramName, property] = path.split('.');
+    // Use proper nested path handling
+    if (!this.setByPath(this.programConfig, path, value)) {
+      console.warn(`Failed to update path ${path} in worklet`);
+      return;
+    }
     
-    if (this.programConfig[paramName]) {
-      this.programConfig[paramName][property] = value;
-      
-      // Reinitialize HRG state if generator configuration changed
-      if (property.includes('Generator') || property.includes('Behavior') || 
-          property.includes('numerators') || property.includes('denominators')) {
-        this.initializeHRGState(paramName, this.programConfig[paramName]);
+    const pathParts = path.split('.');
+    const paramName = pathParts[0];
+    
+    // Reinitialize HRG state if generator configuration changed
+    if (path.includes('Generator') || path.includes('Behavior') || 
+        path.includes('numerators') || path.includes('denominators')) {
+      this.initializeHRGState(paramName, this.programConfig[paramName]);
+    }
+  }
+
+  /**
+   * Handle COMMIT_STAGED message - update config WITHOUT resetting envelope states
+   * This preserves continuity during EOC commits
+   */
+  handleCommitStaged(msg) {
+    const { config } = msg;
+    
+    if (!config) {
+      console.warn('Voice worklet: COMMIT_STAGED received without config');
+      return;
+    }
+    
+    console.log(`🚀 Worklet committing staged config without envelope reset`);
+    
+    // Update programConfig without touching envelope states
+    this.programConfig = { ...this.programConfig, ...config };
+    
+    // Reinitialize only HRG state for parameters with generator changes
+    for (const [paramName, paramConfig] of Object.entries(config)) {
+      if (this.hasHRGChanges(paramConfig)) {
+        this.initializeHRGState(paramName, paramConfig);
+        console.log(`🔄 Reinitialized HRG state for ${paramName}`);
       }
+    }
+    
+    // Note: Envelope states (env.start, env.end, env.current, env.portamentoMs) 
+    // are deliberately NOT touched to preserve continuity
+  }
+  
+  /**
+   * Check if a parameter config has HRG-related changes that need state reset
+   */
+  hasHRGChanges(paramConfig) {
+    return paramConfig && (
+      paramConfig.startValueGenerator?.type === 'periodic' ||
+      paramConfig.endValueGenerator?.type === 'periodic'
+    );
+  }
+
+  /**
+   * Set a nested property using dot notation path
+   * @param {Object} obj - The object to set value in
+   * @param {string} path - Dot notation path (e.g., "frequency.startValueGenerator.numerators")
+   * @param {*} value - The value to set
+   * @returns {boolean} True if successfully set, false if path is invalid
+   */
+  setByPath(obj, path, value) {
+    const pathParts = path.split(".");
+    const finalKey = pathParts[pathParts.length - 1];
+    let target = obj;
+
+    // Navigate to the parent object
+    for (let i = 0; i < pathParts.length - 1; i++) {
+      const part = pathParts[i];
+      if (target === null || target === undefined || !target.hasOwnProperty(part)) {
+        console.warn(`Invalid path ${path} - missing ${part}`);
+        return false;
+      }
+      target = target[part];
+    }
+
+    // Set the final value
+    if (target !== null && target !== undefined) {
+      target[finalKey] = value;
+      return true;
+    } else {
+      console.warn(`Invalid path ${path} - target is null/undefined`);
+      return false;
     }
   }
 

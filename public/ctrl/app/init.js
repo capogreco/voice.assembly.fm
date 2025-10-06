@@ -136,7 +136,8 @@ export function wireUpDOMElements(ctrl) {
     // Preset buttons
     presetDefault: document.getElementById("preset-default"),
     presetFullStep: document.getElementById("preset-full-step"),
-    presetFullCos: document.getElementById("preset-full-cos"),
+    presetFullDisc: document.getElementById("preset-full-disc"),
+    presetFullCont: document.getElementById("preset-full-cont"),
     presetCalibration: document.getElementById("preset-calibration"),
   };
 

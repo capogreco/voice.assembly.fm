@@ -80,9 +80,14 @@ export function setupEventHandlers(ctrl) {
       ctrl._applyPreset("full-step");
     });
   }
-  if (ctrl.elements.presetFullCos) {
-    ctrl.elements.presetFullCos.addEventListener("click", () => {
-      ctrl._applyPreset("full-cos");
+  if (ctrl.elements.presetFullDisc) {
+    ctrl.elements.presetFullDisc.addEventListener("click", () => {
+      ctrl._applyPreset("full-disc");
+    });
+  }
+  if (ctrl.elements.presetFullCont) {
+    ctrl.elements.presetFullCont.addEventListener("click", () => {
+      ctrl._applyPreset("full-cont");
     });
   }
   if (ctrl.elements.presetCalibration) {

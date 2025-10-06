@@ -13,40 +13,42 @@
  */
 function defaultFrequencyState() {
   return {
-    interpolation: "step",
+    interpolation: "disc", // Use disc for more interesting frequency changes
     baseValue: 220,
     startValueGenerator: {
       type: "periodic",
-      numerators: "1",
-      denominators: "1",
-      numeratorBehavior: "static",
-      denominatorBehavior: "static",
+      numerators: "1-3",
+      denominators: "1-2",
+      numeratorBehavior: "random",
+      denominatorBehavior: "random",
     },
     endValueGenerator: {
       type: "periodic",
-      numerators: "1",
-      denominators: "1",
-      numeratorBehavior: "static",
-      denominatorBehavior: "static",
+      numerators: "1-3",
+      denominators: "1-2",
+      numeratorBehavior: "random",
+      denominatorBehavior: "random",
     },
   };
 }
 
 /**
  * Helper for normalized parameters (0-1 range)
+ * Uses random behavior to create animated defaults
  */
 function defaultNormalizedState() {
   return {
     interpolation: "cont",
+    baseValue: 1.0, // Base value for proper UI display
     startValueGenerator: {
       type: "normalised",
       range: { min: 0, max: 1 },
-      sequenceBehavior: "static",
+      sequenceBehavior: "random",
     },
     endValueGenerator: {
       type: "normalised",
       range: { min: 0, max: 1 },
-      sequenceBehavior: "static",
+      sequenceBehavior: "random",
     },
   };
 }
@@ -62,7 +64,7 @@ function defaultConstantState(value) {
     startValueGenerator: {
       type: "normalised",
       range: value,
-      sequenceBehavior: "static",
+      sequenceBehavior: "static", // Keep constants static
     },
   };
 }
@@ -73,16 +75,32 @@ function defaultConstantState(value) {
  */
 export function createDefaultState() {
   return {
-    frequency: (() => {
-    const freq = defaultFrequencyState();
-    freq.interpolation = "disc";
-    return freq;
-  })(),
-    vowelX: defaultNormalizedState(),
-    vowelY: defaultNormalizedState(),
-    zingAmount: defaultNormalizedState(),
-    zingMorph: defaultNormalizedState(),
-    symmetry: defaultNormalizedState(),
+    frequency: defaultFrequencyState(), // Use default disc interpolation from helper
+    vowelX: (() => {
+      const state = defaultNormalizedState();
+      state.baseValue = 0.5; // Center vowel space
+      return state;
+    })(),
+    vowelY: (() => {
+      const state = defaultNormalizedState();
+      state.baseValue = 0.5; // Center vowel space
+      return state;
+    })(),
+    zingAmount: (() => {
+      const state = defaultNormalizedState();
+      state.baseValue = 0.3; // Light zing by default
+      return state;
+    })(),
+    zingMorph: (() => {
+      const state = defaultNormalizedState();
+      state.baseValue = 0.5; // Balanced morph
+      return state;
+    })(),
+    symmetry: (() => {
+      const state = defaultNormalizedState();
+      state.baseValue = 0.5; // Balanced symmetry
+      return state;
+    })(),
     amplitude: (() => {
       const amp = defaultConstantState(0.8);
       amp.interpolation = "step";
@@ -94,19 +112,31 @@ export function createDefaultState() {
       return noise;
     })(),
     vibratoWidth: {
-      interpolation: "step",
+      interpolation: "cont",
+      baseValue: 1.0, // Base value for proper UI display
       startValueGenerator: {
         type: "normalised",
-        range: 0,
-        sequenceBehavior: "static",
+        range: { min: 0, max: 0.1 },
+        sequenceBehavior: "random",
+      },
+      endValueGenerator: {
+        type: "normalised",
+        range: { min: 0, max: 0.1 },
+        sequenceBehavior: "random",
       },
     },
     vibratoRate: {
-      interpolation: "step",
+      interpolation: "cont",
+      baseValue: 5.0, // Base value for proper UI display
       startValueGenerator: {
         type: "normalised",
-        range: 5,
-        sequenceBehavior: "static",
+        range: { min: 3, max: 8 },
+        sequenceBehavior: "random",
+      },
+      endValueGenerator: {
+        type: "normalised",
+        range: { min: 3, max: 8 },
+        sequenceBehavior: "random",
       },
     },
   };

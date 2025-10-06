@@ -173,6 +173,7 @@ class SynthClient {
 
     // Musical brain state (main thread owns resolution)
     this.programConfig = {}; // Current program configuration from controller
+    this.stagedConfig = {}; // Staged changes during playback (applied at EOC)
     this.hrgState = {}; // HRG sequence state per parameter
     this.rbgState = {}; // RBG random value state per parameter (for static behavior)
     this.reresolveAtNextEOC = false; // Flag to re-randomize static HRG indices
@@ -375,7 +376,20 @@ class SynthClient {
       const cached = this.lastProgramUpdate;
       // Clear before applying in case apply triggers another cache
       this.lastProgramUpdate = null;
-      this.handleProgramUpdate(cached);
+      
+      // CRITICAL: If transport is playing, treat cached program as staged
+      if (this.receivedIsPlaying) {
+        console.log("📋 Cached PROGRAM_UPDATE treated as staged - transport is playing");
+        // Initialize staged config from programConfig
+        this.stagedConfig = JSON.parse(JSON.stringify(this.programConfig || {}));
+        // Update staging config with cached program parameters
+        if (cached.parameters) {
+          Object.assign(this.stagedConfig, cached.parameters);
+        }
+        // Don't apply to worklet yet - wait for EOC
+      } else {
+        this.handleProgramUpdate(cached);
+      }
     }
 
 
@@ -839,19 +853,25 @@ class SynthClient {
       "✅ Program config stored in main thread, HRG states initialized",
     );
 
-    // Forward complete program configuration to worklet
+    // Forward complete program configuration to worklet (only when paused)
     if (this.voiceNode && this.programConfigComplete) {
-      this.voiceNode.port.postMessage({
-        type: "PROGRAM",
-        config: this.programConfig
-      });
-      console.log(`📤 Forwarded PROGRAM config with ${Object.keys(this.programConfig).length} params to worklet`);
+      if (this.receivedIsPlaying) {
+        console.log(`📋 Blocking PROGRAM forward to worklet while playing - will stage for EOC`);
+        // Store as staged config for commit at EOC
+        this.stagedConfig = JSON.parse(JSON.stringify(this.programConfig));
+      } else {
+        this.voiceNode.port.postMessage({
+          type: "PROGRAM",
+          config: this.programConfig
+        });
+        console.log(`📤 Forwarded PROGRAM config with ${Object.keys(this.programConfig).length} params to worklet`);
+      }
     } else if (this.voiceNode) {
       console.log(`📋 Skipping worklet forward - config incomplete (${Object.keys(this.programConfig).length}/10 params)`);
     }
 
     if (this.synthesisActive) {
-      if (this.isPlaying) {
+      if (this.receivedIsPlaying) {
         console.log("📋 Program update while playing - worklet will resolve at next wrap");
       } else {
         const pt = message.portamentoTime ?? 0;
@@ -910,25 +930,53 @@ class SynthClient {
 
     console.log(`🔧 Sub-parameter update: ${paramPath} = ${value}`);
 
-    // Forward parameter config update to worklet
-    if (this.voiceNode) {
-      this.voiceNode.port.postMessage({
-        type: "UPDATE_PARAM_CONFIG",
-        path: paramPath,
-        value: value
-      });
-      console.log(`📤 Forwarded UPDATE_PARAM_CONFIG: ${paramPath} = ${value}`);
-    }
-
     if (!this.programConfig[paramName]) {
       throw new Error(`CRITICAL: Unknown parameter ${paramName}`);
     }
 
-    // Update the specific sub-parameter in config using utility function
+    // Initialize staged config if needed
+    if (Object.keys(this.stagedConfig).length === 0 && this.receivedIsPlaying) {
+      this.stagedConfig = JSON.parse(JSON.stringify(this.programConfig));
+    }
+
+    // PROPER STAGING - Update appropriate config based on playing state
+    
+    if (this.receivedIsPlaying) {
+      // When playing: Update staged config only, don't touch programConfig
+      if (!this._setByPath(this.stagedConfig, paramPath, value)) {
+        throw new Error(`CRITICAL: Failed to update staged path ${paramPath}`);
+      }
+      
+      console.log(
+        `📋 Staging sub-parameter update for EOC: ${paramPath} = ${value}`,
+      );
+      return; // Don't apply immediately, wait for EOC
+    }
+
+    // When paused: Update programConfig and apply immediately
     if (!this._setByPath(this.programConfig, paramPath, value)) {
       throw new Error(`CRITICAL: Failed to update path ${paramPath}`);
     }
+    
+    // Apply HRG/RBG state updates for paused mode
+    this._updateParameterState(paramName, paramPath, value);
+    
+    console.log(`⚡ Applying sub-parameter update: ${paramPath} = ${value}`);
+    
+    this.applySingleParamWithPortamento(paramName, portamentoTime);
 
+    // Forward to worklet when paused (not when playing)
+    this.voiceWorkletNode.port.postMessage({
+      type: "UPDATE_PARAM_CONFIG",
+      path: paramPath,
+      value: value,
+    });
+  }
+
+  /**
+   * Update HRG/RBG state when parameter config changes (paused mode only)
+   */
+  _updateParameterState(paramName, paramPath, value) {
     // Selective HRG updates to maintain independence between numerators and denominators
     if (paramPath.includes(".numerators")) {
       if (paramPath.includes(".startValueGenerator.")) {
@@ -975,54 +1023,6 @@ class SynthClient {
           `🎲 Cleared RBG state for ${stateKey} due to behavior change to ${value}`,
         );
       }
-    }
-
-    // MINIMAL RE-RESOLUTION ROUTING - Only update what actually changed
-    
-    if (this.isPlaying) {
-      console.log(
-        `📋 Staging sub-parameter update for EOC: ${paramPath} = ${value}`,
-      );
-      // Store the change to be applied at next EOC
-      // The config is already updated above, so EOC will pick up the new values
-      return;
-    }
-
-    // For paused mode: Route to minimal re-resolution methods
-    console.log(`⚡ Applying minimal sub-parameter update: ${paramPath} = ${value}`);
-
-    if (paramPath.endsWith(".baseValue")) {
-      // Base value change: scale existing values, preserve HRG ratios
-      this.applyBaseValueUpdate(paramName, value, portamentoTime);
-    } 
-    else if (paramPath.includes(".startValueGenerator.") && 
-             (paramPath.includes(".numerators") || paramPath.includes(".denominators") || 
-              paramPath.includes("numeratorBehavior") || paramPath.includes("denominatorBehavior"))) {
-      // Start generator change: only re-resolve start value
-      this.applyStartValueUpdate(paramName, portamentoTime);
-    }
-    else if (paramPath.includes(".endValueGenerator.") && 
-             (paramPath.includes(".numerators") || paramPath.includes(".denominators") || 
-              paramPath.includes("numeratorBehavior") || paramPath.includes("denominatorBehavior"))) {
-      // End generator change: only re-resolve end value
-      this.applyEndValueUpdate(paramName, portamentoTime);
-    }
-    else if (paramPath.endsWith(".interpolation")) {
-      // Interpolation change: handle start/end resolution appropriately
-      this.applyInterpolationChange(paramName, value, portamentoTime);
-    }
-    else if (paramPath.includes(".sequenceBehavior")) {
-      // RBG behavior change: re-resolve affected generator only
-      if (paramPath.includes(".startValueGenerator.")) {
-        this.applyStartValueUpdate(paramName, portamentoTime);
-      } else if (paramPath.includes(".endValueGenerator.")) {
-        this.applyEndValueUpdate(paramName, portamentoTime);
-      }
-    }
-    else {
-      // Fallback for unknown sub-parameter changes
-      console.warn(`⚠️ Unknown sub-parameter change: ${paramPath}, falling back to full resolution`);
-      this.applySingleParamWithPortamento(paramName, portamentoTime);
     }
   }
 
@@ -1412,7 +1412,7 @@ class SynthClient {
       ((resetData.blockSize - resetData.sampleIndex) /
         this.audioContext.sampleRate);
 
-    // Apply staged scene (takes precedence over re-resolve)
+    // Apply staged scene (takes precedence over staged config)
     if (this._pendingSceneAtEoc) {
       if (this.voiceNode) {
         this.voiceNode.port.postMessage({
@@ -1423,6 +1423,29 @@ class SynthClient {
         console.log("🎬 Applied staged scene at EOC boundary");
       }
       this._pendingSceneAtEoc = null;
+      return;
+    }
+    
+    // Apply staged config changes at EOC
+    if (Object.keys(this.stagedConfig).length > 0) {
+      console.log(`🚀 Committing staged config changes at EOC (${Object.keys(this.stagedConfig).length} parameters)`);
+      
+      // Merge staged config into active config
+      this.programConfig = JSON.parse(JSON.stringify(this.stagedConfig));
+      
+      // Forward updated config to worklet using COMMIT_STAGED to preserve envelope continuity
+      if (this.voiceNode) {
+        this.voiceNode.port.postMessage({
+          type: "COMMIT_STAGED",
+          config: this.programConfig
+        });
+        console.log(`📤 Forwarded committed config to worklet (preserving envelope state)`);
+      }
+      
+      // Clear staged config
+      this.stagedConfig = {};
+      
+      console.log(`✅ Staged config committed and applied at EOC`);
       return;
     }
     
@@ -3863,7 +3886,17 @@ class SynthClient {
 
     // Set the final value
     if (target !== null && target !== undefined) {
-      target[finalKey] = value;
+      // Special handling for range values that may be sent as JSON strings
+      if (finalKey === "range" && typeof value === "string") {
+        try {
+          target[finalKey] = JSON.parse(value);
+        } catch (e) {
+          console.warn(`⚠️ Failed to parse range JSON: ${value}`);
+          target[finalKey] = value; // Fall back to original value
+        }
+      } else {
+        target[finalKey] = value;
+      }
       return true;
     }
 

@@ -32,14 +32,21 @@ export function setupCompactParameterControls(ctrl, paramName) {
     // Update the program generator from the input value (single values become constants)
     ctrl._handleValueInput(paramName, textInput.value, "start");
     
-    if (!ctrl.isPlaying) {
-      // When paused: update active state and broadcast with portamento
-      ctrl.musicalState = JSON.parse(JSON.stringify(ctrl.pendingMusicalState));
-      ctrl.broadcastMusicalParameters();
-    } else {
-      // When playing: stage for application at EOC
-      if (!ctrl.bulkModeEnabled) {
-        ctrl.broadcastSingleParameterStaged(paramName);
+    // Send SUB_PARAM_UPDATE for the start value generator change
+    const paramState = ctrl.pendingMusicalState[paramName];
+    if (paramState.startValueGenerator?.type === "normalised") {
+      if (typeof paramState.startValueGenerator.range === "number") {
+        // Single value - send the range value
+        ctrl._sendSubParameterUpdate(
+          paramName + ".startValueGenerator.range",
+          paramState.startValueGenerator.range
+        );
+      } else {
+        // Range value - send the range object as JSON string for now
+        ctrl._sendSubParameterUpdate(
+          paramName + ".startValueGenerator.range", 
+          JSON.stringify(paramState.startValueGenerator.range)
+        );
       }
     }
     
@@ -57,19 +64,11 @@ export function setupCompactParameterControls(ctrl, paramName) {
         interpolation: interpolation,
       });
 
-      if (!ctrl.isPlaying) {
-        // When paused: update active state and broadcast with portamento
-        ctrl.musicalState = JSON.parse(JSON.stringify(ctrl.pendingMusicalState));
-        ctrl.broadcastMusicalParameters();
-      } else {
-        // When playing: stage for application at EOC
-        if (ctrl.bulkModeEnabled) {
-          // UI will be updated automatically by _updatePendingState → _updateUIFromState
-          ctrl._updateUIFromState(paramName);
-        } else {
-          ctrl.broadcastSingleParameterStaged(paramName);
-        }
-      }
+      // Send SUB_PARAM_UPDATE for interpolation change
+      ctrl._sendSubParameterUpdate(
+        paramName + ".interpolation",
+        interpolation
+      );
 
       ctrl.markPendingChanges();
     });
@@ -80,14 +79,21 @@ export function setupCompactParameterControls(ctrl, paramName) {
     endValueInput.addEventListener("change", () => {
       ctrl._handleValueInput(paramName, endValueInput.value, "end");
       
-      if (!ctrl.isPlaying) {
-        // When paused: update active state and broadcast with portamento
-        ctrl.musicalState = JSON.parse(JSON.stringify(ctrl.pendingMusicalState));
-        ctrl.broadcastMusicalParameters();
-      } else {
-        // When playing: stage for application at EOC
-        if (!ctrl.bulkModeEnabled) {
-          ctrl.broadcastSingleParameterStaged(paramName);
+      // Send SUB_PARAM_UPDATE for the end value generator change
+      const paramState = ctrl.pendingMusicalState[paramName];
+      if (paramState.endValueGenerator?.type === "normalised") {
+        if (typeof paramState.endValueGenerator.range === "number") {
+          // Single value - send the range value
+          ctrl._sendSubParameterUpdate(
+            paramName + ".endValueGenerator.range",
+            paramState.endValueGenerator.range
+          );
+        } else {
+          // Range value - send the range object as JSON string for now
+          ctrl._sendSubParameterUpdate(
+            paramName + ".endValueGenerator.range", 
+            JSON.stringify(paramState.endValueGenerator.range)
+          );
         }
       }
       
@@ -138,21 +144,11 @@ export function setupCompactParameterControls(ctrl, paramName) {
         paramState.startValueGenerator.sequenceBehavior = startRbgBehaviorSelect.value;
       }
       
-      if (!ctrl.isPlaying) {
-        // When paused: update active state and send sub-param with portamento
-        ctrl.musicalState = JSON.parse(JSON.stringify(ctrl.pendingMusicalState));
-        ctrl._sendSubParameterUpdate(
-          paramName + ".startValueGenerator.sequenceBehavior",
-          startRbgBehaviorSelect.value
-        );
-      } else {
-        // When playing: send staged sub-param update (respects bulk mode internally)
-        ctrl._sendSubParameterUpdate(
-          paramName + ".startValueGenerator.sequenceBehavior",
-          startRbgBehaviorSelect.value,
-          0  // No portamento for staged updates
-        );
-      }
+      // Send SUB_PARAM_UPDATE - synth will handle staging vs immediate application
+      ctrl._sendSubParameterUpdate(
+        paramName + ".startValueGenerator.sequenceBehavior",
+        startRbgBehaviorSelect.value
+      );
       
       ctrl.markPendingChanges();
     });
@@ -167,21 +163,11 @@ export function setupCompactParameterControls(ctrl, paramName) {
         paramState.endValueGenerator.sequenceBehavior = endRbgBehaviorSelect.value;
       }
       
-      if (!ctrl.isPlaying) {
-        // When paused: update active state and send sub-param with portamento
-        ctrl.musicalState = JSON.parse(JSON.stringify(ctrl.pendingMusicalState));
-        ctrl._sendSubParameterUpdate(
-          paramName + ".endValueGenerator.sequenceBehavior",
-          endRbgBehaviorSelect.value
-        );
-      } else {
-        // When playing: send staged sub-param update (respects bulk mode internally)
-        ctrl._sendSubParameterUpdate(
-          paramName + ".endValueGenerator.sequenceBehavior",
-          endRbgBehaviorSelect.value,
-          0  // No portamento for staged updates
-        );
-      }
+      // Send SUB_PARAM_UPDATE - synth will handle staging vs immediate application
+      ctrl._sendSubParameterUpdate(
+        paramName + ".endValueGenerator.sequenceBehavior",
+        endRbgBehaviorSelect.value
+      );
       
       ctrl.markPendingChanges();
     });
@@ -278,22 +264,11 @@ export function setupHrgParameterControls(ctrl, paramName) {
         value: baseValue,
       });
 
-      // Send ONLY the base value change as a sub-parameter update
-      if (!ctrl.isPlaying) {
-        // When paused: update active state and send sub-param with portamento
-        ctrl.musicalState = JSON.parse(JSON.stringify(ctrl.pendingMusicalState));
-        ctrl._sendSubParameterUpdate(
-          paramName + ".baseValue",
-          baseValue
-        );
-      } else {
-        // When playing: send staged sub-param update (respects bulk mode internally)
-        ctrl._sendSubParameterUpdate(
-          paramName + ".baseValue",
-          baseValue,
-          0  // No portamento for staged updates
-        );
-      }
+      // Send SUB_PARAM_UPDATE for base value change - synth will handle staging vs immediate application
+      ctrl._sendSubParameterUpdate(
+        paramName + ".baseValue",
+        baseValue
+      );
 
       ctrl.markPendingChanges();
       ctrl.updateParameterVisualFeedback(paramName);
@@ -341,12 +316,15 @@ export function setupHrgParameterControls(ctrl, paramName) {
       }
     });
     startNumeratorsInput.addEventListener("blur", () => {
-      // Send sub-parameter update for immediate application or staging
+      // Send SUB_PARAM_UPDATE - synth will handle staging vs immediate application
       ctrl._sendSubParameterUpdate(
         paramName + ".startValueGenerator.numerators",
-        startNumeratorsInput.value,
+        startNumeratorsInput.value
       );
       ctrl.markPendingChanges();
+      
+      // Reset border color to default after sending update
+      startNumeratorsInput.style.borderColor = "";
     });
   }
 
@@ -365,21 +343,24 @@ export function setupHrgParameterControls(ctrl, paramName) {
       }
     });
     startDenominatorsInput.addEventListener("blur", () => {
-      // Send sub-parameter update for immediate application or staging
+      // Send SUB_PARAM_UPDATE - synth will handle staging vs immediate application
       ctrl._sendSubParameterUpdate(
         paramName + ".startValueGenerator.denominators",
-        startDenominatorsInput.value,
+        startDenominatorsInput.value
       );
       ctrl.markPendingChanges();
+      
+      // Reset border color to default after sending update
+      startDenominatorsInput.style.borderColor = "";
     });
   }
 
   if (startNumBehaviorSelect) {
     startNumBehaviorSelect.addEventListener("change", () => {
-      // Send sub-parameter update for immediate application or staging
+      // Send SUB_PARAM_UPDATE - synth will handle staging vs immediate application
       ctrl._sendSubParameterUpdate(
         paramName + ".startValueGenerator.numeratorBehavior",
-        startNumBehaviorSelect.value,
+        startNumBehaviorSelect.value
       );
       ctrl.markPendingChanges();
     });
@@ -416,19 +397,15 @@ export function setupHrgParameterControls(ctrl, paramName) {
       }
     });
     endNumeratorsInput.addEventListener("blur", () => {
-      if (!ctrl.isPlaying) {
-        ctrl._applyHRGChangeWithPortamento({
-          type: "SUB_PARAM_UPDATE",
-          paramPath: paramName + ".endValueGenerator.numerators",
-          value: endNumeratorsInput.value,
-        });
-      } else {
-        ctrl._sendSubParameterUpdate(
-          paramName + ".endValueGenerator.numerators",
-          endNumeratorsInput.value,
-        );
-      }
+      // Send SUB_PARAM_UPDATE - synth will handle staging vs immediate application
+      ctrl._sendSubParameterUpdate(
+        paramName + ".endValueGenerator.numerators",
+        endNumeratorsInput.value
+      );
       ctrl.markPendingChanges();
+      
+      // Reset border color to default after sending update
+      endNumeratorsInput.style.borderColor = "";
     });
   }
 
@@ -445,19 +422,15 @@ export function setupHrgParameterControls(ctrl, paramName) {
       }
     });
     endDenominatorsInput.addEventListener("blur", () => {
-      if (!ctrl.isPlaying) {
-        ctrl._applyHRGChangeWithPortamento({
-          type: "SUB_PARAM_UPDATE", 
-          paramPath: paramName + ".endValueGenerator.denominators",
-          value: endDenominatorsInput.value,
-        });
-      } else {
-        ctrl._sendSubParameterUpdate(
-          paramName + ".endValueGenerator.denominators",
-          endDenominatorsInput.value,
-        );
-      }
+      // Send SUB_PARAM_UPDATE - synth will handle staging vs immediate application
+      ctrl._sendSubParameterUpdate(
+        paramName + ".endValueGenerator.denominators",
+        endDenominatorsInput.value
+      );
       ctrl.markPendingChanges();
+      
+      // Reset border color to default after sending update
+      endDenominatorsInput.style.borderColor = "";
     });
   }
 

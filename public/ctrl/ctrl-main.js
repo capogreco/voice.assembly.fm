@@ -149,8 +149,23 @@ class ControlClient {
     });
 
     // Helper for maximally stochastic normalized disc parameters
-    const normalizedRandomCosine = () => ({
+    const normalizedRandomDisc = () => ({
       interpolation: "disc",
+      startValueGenerator: {
+        type: "normalised",
+        range: { min: 0, max: 1 },
+        sequenceBehavior: "random",
+      },
+      endValueGenerator: {
+        type: "normalised",
+        range: { min: 0, max: 1 },
+        sequenceBehavior: "random",
+      },
+    });
+
+    // Helper for maximally stochastic normalized cont parameters
+    const normalizedRandomCont = () => ({
+      interpolation: "cont",
       startValueGenerator: {
         type: "normalised",
         range: { min: 0, max: 1 },
@@ -184,8 +199,28 @@ class ControlClient {
     });
 
     // Helper for maximally stochastic periodic disc parameters
-    const periodicRandomCosine = (baseValue) => ({
+    const periodicRandomDisc = (baseValue) => ({
       interpolation: "disc",
+      baseValue,
+      startValueGenerator: {
+        type: "periodic",
+        numerators: "1-12",
+        denominators: "1-12",
+        numeratorBehavior: "random",
+        denominatorBehavior: "random",
+      },
+      endValueGenerator: {
+        type: "periodic",
+        numerators: "1-12",
+        denominators: "1-12",
+        numeratorBehavior: "random",
+        denominatorBehavior: "random",
+      },
+    });
+
+    // Helper for maximally stochastic periodic cont parameters
+    const periodicRandomCont = (baseValue) => ({
+      interpolation: "cont",
       baseValue,
       startValueGenerator: {
         type: "periodic",
@@ -239,18 +274,36 @@ class ControlClient {
         whiteNoise: constantStep(0),
       },
       
-      "full-cos": {
+      "full-disc": {
         // Periodic parameters - maximum stochasticity with random HRG ranges and disc motion
-        frequency: periodicRandomCosine(220),
-        vibratoRate: periodicRandomCosine(5),
+        frequency: periodicRandomDisc(220),
+        vibratoRate: periodicRandomDisc(5),
         
         // Normalized parameters - maximum stochasticity with disc glides across full [0,1]
-        vowelX: normalizedRandomCosine(),
-        vowelY: normalizedRandomCosine(),
-        zingAmount: normalizedRandomCosine(),
-        zingMorph: normalizedRandomCosine(),
-        symmetry: normalizedRandomCosine(),
-        vibratoWidth: normalizedRandomCosine(),
+        vowelX: normalizedRandomDisc(),
+        vowelY: normalizedRandomDisc(),
+        zingAmount: normalizedRandomDisc(),
+        zingMorph: normalizedRandomDisc(),
+        symmetry: normalizedRandomDisc(),
+        vibratoWidth: normalizedRandomDisc(),
+        
+        // Fixed levels for consistent loudness
+        amplitude: constantStep(0.5),
+        whiteNoise: constantStep(0),
+      },
+
+      "full-cont": {
+        // Periodic parameters - maximum stochasticity with random HRG ranges and cont motion
+        frequency: periodicRandomCont(220),
+        vibratoRate: periodicRandomCont(5),
+        
+        // Normalized parameters - maximum stochasticity with cont glides across full [0,1]
+        vowelX: normalizedRandomCont(),
+        vowelY: normalizedRandomCont(),
+        zingAmount: normalizedRandomCont(),
+        zingMorph: normalizedRandomCont(),
+        symmetry: normalizedRandomCont(),
+        vibratoWidth: normalizedRandomCont(),
         
         // Fixed levels for consistent loudness
         amplitude: constantStep(0.5),
@@ -515,8 +568,8 @@ class ControlClient {
     console.log("Applying preset: " + presetName);
     
     // Debug: Log the preset configuration for frequency
-    if (presetName === "full-cos" && preset.frequency) {
-      console.log("🐛 full-cos frequency config:", JSON.stringify(preset.frequency, null, 2));
+    if (presetName === "full-disc" && preset.frequency) {
+      console.log("🐛 full-disc frequency config:", JSON.stringify(preset.frequency, null, 2));
     }
 
     // Destructively replace both pending and active state
@@ -524,7 +577,7 @@ class ControlClient {
     this.musicalState = JSON.parse(JSON.stringify(preset));
     
     // Debug: Verify the state was set correctly
-    if (presetName === "full-cos" && this.pendingMusicalState.frequency) {
+    if (presetName === "full-disc" && this.pendingMusicalState.frequency) {
       console.log("🐛 pendingMusicalState.frequency after preset:", JSON.stringify(this.pendingMusicalState.frequency, null, 2));
     }
 
@@ -534,7 +587,7 @@ class ControlClient {
     }
     
     // Debug: Check state again after UI update
-    if (presetName === "full-cos" && this.pendingMusicalState.frequency) {
+    if (presetName === "full-disc" && this.pendingMusicalState.frequency) {
       console.log("🐛 pendingMusicalState.frequency after UI update:", JSON.stringify(this.pendingMusicalState.frequency, null, 2));
     }
 
@@ -751,24 +804,34 @@ class ControlClient {
     if (!valueInput) return; // Skip if parameter doesn't exist in UI
 
     // --- START NEW, CORRECTED LOGIC ---
-
+    // Check if this is a periodic parameter (frequency or vibratoRate)
+    const isPeriodicParameter = paramName === "frequency" || paramName === "vibratoRate";
+    
     // 1. Handle value input visibility based on interpolation mode
     if (valueInput) {
       if (paramState.interpolation === "cont") {
-        // For cont mode, hide start value input (comes from previous end)
-        valueInput.style.display = "none";
-        // Add or update placeholder text
-        let contIndicator = valueInput.parentNode.querySelector('.cont-indicator');
-        if (!contIndicator) {
-          contIndicator = document.createElement('span');
-          contIndicator.className = 'cont-indicator';
-          contIndicator.style.color = '#999';
-          contIndicator.style.fontSize = '10px';
-          contIndicator.style.fontStyle = 'italic';
-          valueInput.parentNode.insertBefore(contIndicator, valueInput.nextSibling);
+        if (isPeriodicParameter) {
+          // For periodic parameters in cont mode, keep base value visible (still needed for HRG)
+          valueInput.style.display = "inline-block";
+          if (paramState.baseValue !== null) {
+            valueInput.value = paramState.baseValue.toString();
+          }
+        } else {
+          // For normalized parameters in cont mode, hide start value input (comes from previous end)
+          valueInput.style.display = "none";
+          // Add or update placeholder text
+          let contIndicator = valueInput.parentNode.querySelector('.cont-indicator');
+          if (!contIndicator) {
+            contIndicator = document.createElement('span');
+            contIndicator.className = 'cont-indicator';
+            contIndicator.style.color = '#999';
+            contIndicator.style.fontSize = '10px';
+            contIndicator.style.fontStyle = 'italic';
+            valueInput.parentNode.insertBefore(contIndicator, valueInput.nextSibling);
+          }
+          contIndicator.textContent = '← from prev end';
+          contIndicator.style.display = 'inline';
         }
-        contIndicator.textContent = '← from prev end';
-        contIndicator.style.display = 'inline';
       } else {
         // For step and disc modes, show value input normally
         valueInput.style.display = "inline-block";
@@ -799,8 +862,15 @@ class ControlClient {
       interpSelect.value = paramState.interpolation;
     }
 
+    // 3. Handle HRG start controls visibility
     if (hrgStartControls) {
-      hrgStartControls.style.display = "inline";
+      if (paramState.interpolation === "cont" && isPeriodicParameter) {
+        // For periodic parameters in cont mode, hide start HRG controls (start comes from previous end)
+        hrgStartControls.style.display = "none";
+      } else {
+        // For all other cases, show start HRG controls
+        hrgStartControls.style.display = "inline";
+      }
     }
 
     // 4. Handle interpolation-dependent controls (end value fields)
@@ -1786,6 +1856,17 @@ class ControlClient {
         this.isPlaying = true;
         this.lastPhasorTime = performance.now() / 1000.0; // Reset time tracking
         this.log("Global phasor started", "info");
+        
+        // Auto-enable synthesis when playing starts
+        if (!this.synthesisActive) {
+          this.synthesisActive = true;
+          console.log("🎵 Auto-enabled synthesis for playback");
+          // Update UI button state  
+          if (this.elements.manualModeBtn) {
+            this.elements.manualModeBtn.textContent = "Disable Synthesis";
+            this.elements.manualModeBtn.classList.add("active");
+          }
+        }
 
         // Fire EOC event if starting from 0.0 (reset position or initial load)
         if (wasAtZero && this.star) {
@@ -1825,6 +1906,11 @@ class ControlClient {
 
     // Broadcast current phasor state immediately with new playing state
     this.broadcastPhasor(performance.now() / 1000.0, "transport");
+    
+    // Broadcast musical parameters to ensure synthesis state is updated
+    if (action === "play") {
+      this.broadcastMusicalParameters();
+    }
   }
 
   updatePlayPauseButton() {
