@@ -145,7 +145,7 @@ export function handleDirectParamUpdate(message, context) {
 export function isReadyToReceiveParameters(context) {
   if (!context.voiceNode) {
     console.warn(
-      "⚠️ Cannot apply musical parameters: voice worklet not ready",
+      "⚠️ Cannot apply control state: voice worklet not ready",
     );
     return false;
   }

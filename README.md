@@ -319,7 +319,7 @@ This architecture enables the ctrl client to make granular changes (like adjusti
 ### Scene Memory System
 
 **Overview**: The scene memory system allows performers to save and recall
-different musical states during performance, enabling dynamic transitions
+different control states during performance, enabling dynamic transitions
 between pre-configured ensemble textures.
 
 **Architecture**:
@@ -360,9 +360,10 @@ between pre-configured ensemble textures.
 
 - **No ID conflicts**: Eliminates issues with shared localStorage between
   browser tabs
-- **True per-synth uniqueness**: Each synth maintains its own musical state
+- **True per-synth uniqueness**: Each synth maintains its own resolved scene state
 - **Simple architecture**: No complex synchronization or conflict resolution
 - **Performance-friendly**: Instant scene transitions with preserved timing
+- **Ear-driven workflow**: The controller never inspects resolved per-synth values. The performer listens to the combined acoustics in the room and nudges the shared program, while each phone handles its own resolution and scene storage.
 
 ### Envelope System
 

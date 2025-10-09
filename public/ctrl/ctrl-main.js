@@ -6,7 +6,7 @@
  */
 
 // JSDoc type imports (no runtime cost)
-/** @typedef {import('../../src/common/parameter-types.js').IMusicalState} IMusicalState */
+/** @typedef {import('../../src/common/parameter-types.js').IControlState} IControlState */
 /** @typedef {import('../../src/common/parameter-types.js').ParameterState} ParameterState */
 /** @typedef {import('../../src/common/parameter-types.js').GeneratorConfig} GeneratorConfig */
 
@@ -41,8 +41,8 @@ class ControlClient {
   }
 
   /**
-   * Create default musical state
-   * @returns {IMusicalState}
+   * Create default control state
+   * @returns {IControlState}
    */
   _createDefaultState() {
     // Helper for frequency (uses HRG with both start and end generators)
@@ -312,18 +312,18 @@ class ControlClient {
       
       calibration: {
         // Only override amp=0 and noise=0.3, leave others unchanged from current state
-        ...this.pendingMusicalState, // Preserve current state
+        ...this.stagedState, // Preserve current state
         amplitude: constantStep(0), // Silent
         whiteNoise: constantStep(0.3), // Audible for level matching
       },
     };
   }
 
-  _updatePendingState(action) {
+  _updateStagedState(action) {
     console.log("Action dispatched:", action);
 
-    // Create a deep copy of current pending state
-    const newState = JSON.parse(JSON.stringify(this.pendingMusicalState));
+    // Create a deep copy of the current staged state
+    const newState = JSON.parse(JSON.stringify(this.stagedState));
 
     switch (action.type) {
       case "SET_BASE_VALUE": {
@@ -379,7 +379,7 @@ class ControlClient {
     }
 
     // Update state before broadcasting to ensure fresh values are read
-    this.pendingMusicalState = newState;
+    this.stagedState = newState;
 
     // Broadcast the parameter change if playing (after state update)
     if (action.type === "SET_GENERATOR_CONFIG" && this.isPlaying) {
@@ -399,8 +399,8 @@ class ControlClient {
    * Updates active state directly and broadcasts only the changed parameter with portamento
    */
   _applyHRGChangeWithPortamento(action) {
-    // Update active state with the HRG change (no pending state when paused)
-    this._updateActiveState(action);
+    // Update the live state with the HRG change (no staged state when paused)
+    this._updateLiveState(action);
 
     // Get portamento time from UI (exponential mapping)
     const portamentoTime = this.elements.portamentoTime
@@ -482,14 +482,14 @@ class ControlClient {
   }
 
   /**
-   * Update the active musical state directly (bypassing pending state)
+   * Update the live state directly (bypassing staged state)
    * Used when transport is paused for immediate parameter updates
    */
-  _updateActiveState(action) {
+  _updateLiveState(action) {
     // Clone the current active state
-    const newState = JSON.parse(JSON.stringify(this.musicalState));
+    const newState = JSON.parse(JSON.stringify(this.liveState));
 
-    // Apply the same logic_updatePendingState but to active state
+    // Apply the same staged-state logic but to the live state snapshot
     switch (action.type) {
       case "SET_BASE_VALUE": {
         const param = newState[action.param];
@@ -543,9 +543,9 @@ class ControlClient {
     }
 
     // Update the active state
-    this.musicalState = newState;
-    // Also update pending state to keep them in sync
-    this.pendingMusicalState = JSON.parse(JSON.stringify(newState));
+    this.liveState = newState;
+    // Also update staged state to keep them in sync
+    this.stagedState = JSON.parse(JSON.stringify(newState));
 
     // Update UI to reflect the state change
     if (action.param) {
@@ -573,12 +573,12 @@ class ControlClient {
     }
 
     // Destructively replace both pending and active state
-    this.pendingMusicalState = JSON.parse(JSON.stringify(preset));
-    this.musicalState = JSON.parse(JSON.stringify(preset));
+    this.stagedState = JSON.parse(JSON.stringify(preset));
+    this.liveState = JSON.parse(JSON.stringify(preset));
     
     // Debug: Verify the state was set correctly
-    if (presetName === "full-disc" && this.pendingMusicalState.frequency) {
-      console.log("🐛 pendingMusicalState.frequency after preset:", JSON.stringify(this.pendingMusicalState.frequency, null, 2));
+    if (presetName === "full-disc" && this.stagedState.frequency) {
+      console.log("🐛 stagedState.frequency after preset:", JSON.stringify(this.stagedState.frequency, null, 2));
     }
 
     // Update all UI elements to reflect new state
@@ -587,13 +587,13 @@ class ControlClient {
     }
     
     // Debug: Check state again after UI update
-    if (presetName === "full-disc" && this.pendingMusicalState.frequency) {
-      console.log("🐛 pendingMusicalState.frequency after UI update:", JSON.stringify(this.pendingMusicalState.frequency, null, 2));
+    if (presetName === "full-disc" && this.stagedState.frequency) {
+      console.log("🐛 stagedState.frequency after UI update:", JSON.stringify(this.stagedState.frequency, null, 2));
     }
 
     // Mark pending changes and always broadcast
     this.markPendingChanges();
-    this.broadcastMusicalParameters();
+    this.broadcastControlState();
     
     if (this.isPlaying) {
       // During playback: synth will stage PROGRAM_UPDATE and apply at EOC
@@ -685,7 +685,7 @@ class ControlClient {
       }
 
       if (baseValue !== undefined) {
-        this._updatePendingState({
+        this._updateStagedState({
           type: "SET_BASE_VALUE",
           param: paramName,
           value: baseValue,
@@ -718,7 +718,7 @@ class ControlClient {
         );
         const behavior = behaviorSelect ? behaviorSelect.value : "static";
 
-        this._updatePendingState({
+        this._updateStagedState({
           type: "SET_GENERATOR_CONFIG",
           param: paramName,
           position: position,
@@ -733,7 +733,7 @@ class ControlClient {
       // Single value: create constant generator
       const value = parseFloat(inputValue);
       if (!isNaN(value)) {
-        this._updatePendingState({
+        this._updateStagedState({
           type: "SET_GENERATOR_CONFIG",
           param: paramName,
           position: position,
@@ -784,7 +784,7 @@ class ControlClient {
    * State is now the master, UI is just a reflection of it
    */
   _updateUIFromState(paramName) {
-    const paramState = this.pendingMusicalState[paramName];
+    const paramState = this.stagedState[paramName];
 
     // Get all UI components for this parameter
     const valueInput =
@@ -1100,9 +1100,9 @@ class ControlClient {
     }
   }
 
-  // Capture current HRG inputs into pending state before apply
+  // Capture current HRG inputs into staged state before apply
   _syncHRGStateFromInputs() {
-    const freqState = this.pendingMusicalState.frequency;
+    const freqState = this.stagedState.frequency;
     if (!freqState || freqState.startValueGenerator?.type !== "periodic") {
       return;
     }
@@ -1218,23 +1218,23 @@ class ControlClient {
    */
   setParameterState(paramName, newState) {
     // Update both state objects
-    this.musicalState[paramName] = newState;
-    this.pendingMusicalState[paramName] = { ...newState };
+    this.liveState[paramName] = newState;
+    this.stagedState[paramName] = { ...newState };
 
     // Update UI to match using the centralized function
     this._updateUIFromState(paramName);
   }
 
   applyParameterChanges() {
-    // Sync visible HRG UI inputs into pending state before committing; abort on invalid
+    // Sync visible HRG UI inputs into staged state before committing; abort on invalid
     const ok = this._syncHRGStateFromInputs();
     if (ok === false) {
       this.log("Fix invalid HRG inputs before applying.", "error");
       return;
     }
-    this.musicalState = JSON.parse(JSON.stringify(this.pendingMusicalState));
-    console.log("Applying new state:", this.musicalState);
-    this.broadcastMusicalParameters();
+    this.liveState = JSON.parse(JSON.stringify(this.stagedState));
+    console.log("Applying new state:", this.liveState);
+    this.broadcastControlState();
     this.clearPendingChanges();
   }
 
@@ -1271,14 +1271,14 @@ class ControlClient {
   }
 
   /**
-   * Central method for translating IMusicalState to wire format (unified, scope-free)
-   * Used by both broadcastMusicalParameters and sendCompleteStateToSynth
+   * Central method for translating the staged control state to wire format (unified, scope-free)
+   * Used by both broadcastControlState and sendCompleteStateToSynth
    */
   _getWirePayload(portamentoTime) {
     // Strict validation: reject any state with forbidden fields
-    for (const key in this.pendingMusicalState) {
+    for (const key in this.stagedState) {
       const paramState = this
-        .pendingMusicalState[key];
+        .stagedState[key];
 
       // Debug: Check if paramState is an object
       if (typeof paramState !== "object" || paramState === null) {
@@ -1305,9 +1305,9 @@ class ControlClient {
     }
 
     // Send unified parameter format - interpolation + generators only
-    for (const key in this.pendingMusicalState) {
+    for (const key in this.stagedState) {
       const paramKey = key;
-      const paramState = this.pendingMusicalState[paramKey];
+      const paramState = this.stagedState[paramKey];
 
       // Strict validation: require all necessary fields
       if (
@@ -1363,7 +1363,7 @@ class ControlClient {
     return wirePayload;
   }
 
-  broadcastMusicalParameters(portamentoTime) {
+  broadcastControlState(portamentoTime) {
     // Check if we should accumulate this change for bulk mode
     if (
       this.addToBulkChanges({
@@ -1380,7 +1380,7 @@ class ControlClient {
   }
 
   /**
-   * Send full program update immediately (extracted from broadcastMusicalParameters)
+   * Send full program update immediately (extracted from broadcastControlState)
    */
   _sendFullProgramImmediate(portamentoTime) {
     if (!this.star) return;
@@ -1394,7 +1394,7 @@ class ControlClient {
     );
     this.star.broadcast(message);
     this.log(
-      "📡 Broadcasted musical parameters" +
+      "📡 Broadcasted control state" +
         (portamentoTime ? " with " + portamentoTime + "ms portamento" : ""),
       "info",
     );
@@ -1435,8 +1435,8 @@ class ControlClient {
   broadcastSingleParameterStaged(paramName) {
     if (!this.star) return;
 
-    // Use pending state to get the latest changes (interpolation changes, etc.)
-    const paramState = this.pendingMusicalState[paramName];
+    // Use staged state to get the latest changes (interpolation changes, etc.)
+    const paramState = this.stagedState[paramName];
     if ("scope" in paramState) {
       throw new Error(
         "CRITICAL: Parameter '" + paramName + "' has forbidden 'scope' field",
@@ -1815,7 +1815,7 @@ class ControlClient {
   sendSynthParametersToES8() {
     if (!this.es8Enabled || !this.es8Node) return;
 
-    const params = this.musicalState;
+    const params = this.liveState;
     this.es8Node.port.postMessage({
       type: "synth-parameters",
       frequency: params.frequency,
@@ -1907,9 +1907,9 @@ class ControlClient {
     // Broadcast current phasor state immediately with new playing state
     this.broadcastPhasor(performance.now() / 1000.0, "transport");
     
-    // Broadcast musical parameters to ensure synthesis state is updated
+    // Broadcast control state to ensure synthesis state is updated
     if (action === "play") {
-      this.broadcastMusicalParameters();
+      this.broadcastControlState();
     }
   }
 
@@ -2246,7 +2246,7 @@ class ControlClient {
     }
 
     // Broadcast current state to all synths - using unified payload system
-    this.broadcastMusicalParameters();
+    this.broadcastControlState();
 
     // Send current phasor state so synths know the current phase position
     this.broadcastPhasor(performance.now() / 1000.0, "transport");
@@ -2260,7 +2260,7 @@ class ControlClient {
   sendCompleteStateToSynth(synthId) {
     this.log("Sending complete state to new synth", "info");
 
-    // Send current musical state using unified payload function
+    // Send current control state using unified payload function
     const wirePayload = this._getWirePayload();
 
     const message = MessageBuilder.createParameterUpdate(
@@ -2269,9 +2269,9 @@ class ControlClient {
     );
     const success = this.star.sendToPeer(synthId, message, "control");
     if (success) {
-      this.log("Sent typed musical state to " + synthId, "debug");
+      this.log("Sent typed control state to " + synthId, "debug");
     } else {
-      this.log("Failed to send typed musical state to " + synthId, "error");
+      this.log("Failed to send typed control state to " + synthId, "error");
     }
   }
 
@@ -2548,7 +2548,7 @@ class ControlClient {
     try {
       // 1. Get the current applied program state.
       const programToSave = {
-        ...this.musicalState,
+        ...this.liveState,
         savedAt: Date.now(),
       };
 
@@ -2611,11 +2611,11 @@ class ControlClient {
       });
 
       // 2. Update the controller's internal state.
-      this.pendingMusicalState = filteredProgram;
-      this.musicalState = JSON.parse(JSON.stringify(filteredProgram));
+      this.stagedState = filteredProgram;
+      this.liveState = JSON.parse(JSON.stringify(filteredProgram));
 
       // 3. Update the entire UI to match the loaded state.
-      Object.keys(this.musicalState).forEach((paramName) => {
+      Object.keys(this.liveState).forEach((paramName) => {
         this._updateUIFromState(paramName);
       });
 
@@ -2916,7 +2916,7 @@ class ControlClient {
     paramName,
     portamentoTime,
   ) {
-    const paramState = this.pendingMusicalState[paramName];
+    const paramState = this.stagedState[paramName];
 
     // Strict validation: reject forbidden scope field
     if ("scope" in (paramState)) {

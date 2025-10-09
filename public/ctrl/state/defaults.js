@@ -5,7 +5,7 @@
  */
 
 // JSDoc type imports
-/** @typedef {import('../../../src/common/parameter-types.js').IMusicalState} IMusicalState */
+/** @typedef {import('../../../src/common/parameter-types.js').IControlState} IControlState */
 /** @typedef {import('../../../src/common/parameter-types.js').GeneratorConfig} GeneratorConfig */
 
 /**
@@ -70,9 +70,9 @@ function defaultConstantState(value) {
 }
 
 /**
- * Create default musical state
- * @returns {IMusicalState}
- */
+ * Create default control state
+ * @returns {IControlState}
+*/
 export function createDefaultState() {
   return {
     frequency: defaultFrequencyState(), // Use default disc interpolation from helper
@@ -144,7 +144,7 @@ export function createDefaultState() {
 
 /**
  * Create preset configurations
- * @returns {Object<string, IMusicalState>}
+ * @returns {Object<string, IControlState>}
  */
 export function createPresetConfigs() {
   return {

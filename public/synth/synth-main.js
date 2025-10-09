@@ -536,7 +536,7 @@ class SynthClient {
   isReadyToReceiveParameters() {
     if (!this.voiceNode) {
       console.warn(
-        "⚠️ Cannot apply musical parameters: voice worklet not ready",
+        "⚠️ Cannot apply control state: voice worklet not ready",
       );
       return false;
     }
@@ -765,7 +765,7 @@ class SynthClient {
     // Check if this update includes portamento time for paused parameter changes
     const hasPortamento = message.portamentoTime !== undefined;
 
-    // Store program config in main thread (we are the musical brain now)
+    // Store program config in main thread (control brain lives here)
     this.programConfig = this.programConfig || {};
 
     // Handle synthesis active state

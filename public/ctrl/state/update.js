@@ -5,7 +5,7 @@
  */
 
 // JSDoc type imports
-/** @typedef {import('../../../src/common/parameter-types.js').IMusicalState} IMusicalState */
+/** @typedef {import('../../../src/common/parameter-types.js').IControlState} IControlState */
 /** @typedef {import('../../../src/common/parameter-types.js').ParameterState} ParameterState */
 
 /**
@@ -20,16 +20,16 @@
  */
 
 /**
- * Update pending state with action
- * @param {IMusicalState} pendingState - Current pending state
+ * Update staged state with action
+ * @param {IControlState} stagedState - Current staged state
  * @param {ControlAction} action - Action to apply
- * @returns {IMusicalState} - New pending state
+ * @returns {IControlState} - New staged state
  */
-export function updatePendingState(pendingState, action) {
+export function updateStagedState(stagedState, action) {
   console.log("Action dispatched:", action);
 
-  // Create a deep copy of current pending state
-  const newState = JSON.parse(JSON.stringify(pendingState));
+  // Create a deep copy of current staged state
+  const newState = JSON.parse(JSON.stringify(stagedState));
 
   switch (action.type) {
     case "SET_BASE_VALUE": {
@@ -87,16 +87,16 @@ export function updatePendingState(pendingState, action) {
 }
 
 /**
- * Update active state with action
- * @param {IMusicalState} activeState - Current active state
+ * Update live state with action
+ * @param {IControlState} liveState - Current live state
  * @param {ControlAction} action - Action to apply
- * @returns {IMusicalState} - New active state
+ * @returns {IControlState} - New live state
  */
-export function updateActiveState(activeState, action) {
-  // Clone the current active state
-  const newState = JSON.parse(JSON.stringify(activeState));
+export function updateLiveState(liveState, action) {
+  // Clone the current live state
+  const newState = JSON.parse(JSON.stringify(liveState));
 
-  // Apply the same logic as updatePendingState but to active state
+  // Apply the same logic as updateStagedState but to the live state
   switch (action.type) {
     case "SET_BASE_VALUE": {
       const param = newState[action.param];
@@ -153,23 +153,23 @@ export function updateActiveState(activeState, action) {
 }
 
 /**
- * Set parameter state and sync both active and pending
- * @param {IMusicalState} activeState - Current active state
- * @param {IMusicalState} pendingState - Current pending state
+ * Set parameter state and sync both live and staged copies
+ * @param {IControlState} liveState - Current live state
+ * @param {IControlState} stagedState - Current staged state
  * @param {string} paramName - Parameter name
  * @param {ParameterState} newState - New parameter state
- * @returns {{activeState: IMusicalState, pendingState: IMusicalState}}
+ * @returns {{liveState: IControlState, stagedState: IControlState}}
  */
-export function setParameterState(activeState, pendingState, paramName, newState) {
-  const newActive = { ...activeState };
-  const newPending = { ...pendingState };
+export function setParameterState(liveState, stagedState, paramName, newState) {
+  const newLive = { ...liveState };
+  const newStaged = { ...stagedState };
   
-  newActive[paramName] = newState;
-  newPending[paramName] = { ...newState };
+  newLive[paramName] = newState;
+  newStaged[paramName] = { ...newState };
   
   return {
-    activeState: newActive,
-    pendingState: newPending,
+    liveState: newLive,
+    stagedState: newStaged,
   };
 }
 
@@ -191,10 +191,10 @@ export function clearPendingChanges() {
 }
 
 /**
- * Apply pending changes to active state
- * @param {IMusicalState} pendingState - Current pending state
- * @returns {IMusicalState} - New active state (deep copy of pending)
+ * Apply staged changes to live state
+ * @param {IControlState} stagedState - Current staged state
+ * @returns {IControlState} - New live state (deep copy of staged)
  */
-export function applyPendingChanges(pendingState) {
-  return JSON.parse(JSON.stringify(pendingState));
+export function applyStagedChanges(stagedState) {
+  return JSON.parse(JSON.stringify(stagedState));
 }

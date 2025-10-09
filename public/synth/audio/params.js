@@ -30,7 +30,7 @@ export function handleProgramUpdate(message, context) {
   // Check if this update includes portamento time for paused parameter changes
   const hasPortamento = message.portamentoTime !== undefined;
 
-  // Store program config in main thread (we are the musical brain now)
+  // Store program config in main thread (control brain lives here)
   const programConfig = {};
 
   // Handle synthesis active state

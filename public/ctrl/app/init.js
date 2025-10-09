@@ -22,11 +22,11 @@ export function initializeProperties(ctrl) {
   /** @type {any} WebRTC star connection */
   ctrl.star = null;
   
-  /** @type {IMusicalState} */
-  ctrl.musicalState = createDefaultState();
-  
-  /** @type {IMusicalState} */
-  ctrl.pendingMusicalState = createDefaultState();
+  /** @type {IControlState} */
+  ctrl.liveState = createDefaultState();
+
+  /** @type {IControlState} */
+  ctrl.stagedState = createDefaultState();
   
   /** @type {boolean} */
   ctrl.synthesisActive = false;
@@ -94,7 +94,7 @@ export function wireUpDOMElements(ctrl) {
     manualModeBtn: document.getElementById("manual-mode-btn"),
 
     // Musical controls
-    // Simplified musical controls
+    // Simplified control surface inputs
     frequencyValue: document.getElementById("frequency-base"),
 
     // Phasor controls
@@ -167,7 +167,7 @@ export function initializeApplication(ctrl) {
   ctrl.updatePlayPauseButton(); // Set initial button text
 
   // Step 5: Initialize UI to match default parameter state
-  Object.keys(ctrl.musicalState).forEach((paramName) => {
+  Object.keys(ctrl.liveState).forEach((paramName) => {
     ctrl._updateUIFromState(paramName);
   });
 

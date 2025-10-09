@@ -172,11 +172,11 @@ export function handleJoinRejected(reason, updateConnectionStatus, reconnectCall
  * Send complete state to new synth
  * @param {WebRTCStar} star - WebRTC star instance
  * @param {string} peerId - Peer ID
- * @param {Object} musicalState - Current musical state
+ * @param {Object} liveState - Current live control state
  * @param {boolean} synthesisActive - Synthesis active flag
  * @param {function} log - Logging function
  */
-export function sendCompleteStateToNewSynth(star, peerId, musicalState, synthesisActive, log) {
+export function sendCompleteStateToNewSynth(star, peerId, liveState, synthesisActive, log) {
   if (!star || !peerId.startsWith("synth-")) return;
 
   log("Sending complete state to new synth", "info");
@@ -186,8 +186,8 @@ export function sendCompleteStateToNewSynth(star, peerId, musicalState, synthesi
   };
 
   // Convert each parameter to wire format
-  Object.keys(musicalState).forEach((paramName) => {
-    const paramState = musicalState[paramName];
+  Object.keys(liveState).forEach((paramName) => {
+    const paramState = liveState[paramName];
     
     // Create deep copies to avoid mutation
     const startGen = { ...paramState.startValueGenerator };

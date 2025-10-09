@@ -3,26 +3,30 @@
 ## Overview
 
 Voice.Assembly.FM is a distributed vocal synthesis platform that transforms
-audience members' phones into components of a collective choir. The system
-combines precise timing control via ES-8 Eurorack interface, WebRTC peer-to-peer
-networking, and sophisticated formant/zing synthesis to create
-harmonically-related vocal textures that sum acoustically in the performance
-space.
+audience members' phones into components of a collective choir. The system is
+designed around tight synchronisation between a Eurorack rig (via the Expert
+Sleepers ES-8) and WebRTC-connected mobile devices, using sophisticated
+formant/zing synthesis to create harmonically-related vocal textures that sum
+acoustically in the performance space.
 
-**Core Concept**: The performer controls harmonic and temporal parameters
-through Eurorack CV and a Monome Grid, while 12-24 audience members' phones
-synthesize vocal sounds using shared timing and stochastic harmonic variation.
-The result is distributed synthesis with acoustic summing in physical space.
+**Core Concept**: The performer steers harmonic and temporal parameters from a
+browser-based control surface that also acts as the ES-8 bridge, ensuring the
+Eurorack patch and the distributed phone ensemble share a coherent transport and
+harmonic program. While the current build mirrors its software phasor out to the
+ES-8, the system roadmap keeps hardware synchronisation as a first-class target,
+with 12-24 audience phones generating stochastic harmonic variations that align
+with the Eurorack timing domain.
 
 ## System Architecture
 
 ### High-Level Components
 
 1. **Ctrl Client** (Performer's browser)
-   - ES-8 CV input/output via WebUSB
-   - Monome Grid integration for HRG control
    - WebRTC master for network coordination
    - Parameter broadcast and timing control
+   - ES-8 CV I/O path (current release mirrors phasor/clock; next milestone adds
+     1V/oct sequencing and hardware timing capture)
+   - Planned Monome Grid support for tactile HRG editing
 
 2. **Synth Clients** (Audience phones)
    - Minimal UI: gesture to enable audio + XY oscilloscope
@@ -34,26 +38,43 @@ The result is distributed synthesis with acoustic summing in physical space.
    - Peer discovery and WebRTC connection setup
    - No audio routing - pure coordination
 
-## ES-8 Integration
+## ES-8 Integration (Current Status & Roadmap)
 
-### Channel Mapping
+### Current Support
 
-**Inputs to Browser:**
+The ES-8 bridge is a core pillar of the architecture. The present release
+boots an `es8-processor` AudioWorklet that mirrors the software phasor so the
+Eurorack patch can already receive cycle and clock information while we finish
+inbound timing capture and pitch CV sequencing.
+Channel mapping today:
+  - **Channel 5**: Step clock pulse (gate high for first half of each step).
+  - **Channel 6**: Normalized phasor CV (0-1 ramp) suitable for scope or
+    downstream modulation.
+  - **Channel 7**: End-of-cycle trigger pulse.
+Channels 0-4 remain silent placeholders; the forthcoming 1V/oct and gate lanes
+will occupy these outputs.
+Timing is currently software-driven, but the ES-8 signals already serve as the
+synchronisation hook for the Eurorack patch. Hardware feedback will promote
+the ES-8 ramp to transport authority once implemented.
 
-- **Channel 8**: Linear downward ramp (10V→0V) - cycle position/progress
-- **Channel 7**: Clock pulses - cycle subdivision triggers
+### Roadmap
 
-**Outputs from Browser:**
-
-- **Channels 1-6**: Minimalist TR and CV sequencer (following es_8_test pattern)
-- **Channel 8**: Echo of cycle position (for patching/monitoring)
-- **Channel 7**: Echo of clock pulses
+- **1V/oct CV sequencing**: Port the `reference/es_8_test` approach so the
+  controller can drive pitch CV and triggers directly from the HRG system.
+- **CV input feedback**: Reintroduce ES-8 ramps/clock inputs to allow hardware
+  to become the transport authority when connected.
+- **Expanded gate mapping**: Fill the remaining channels with configurable
+  trigger/CV lanes once the above pieces land.
 
 ### Cycle Control
 
-- **Duration**: ~2 seconds typical (~120 BPM at 4/4)
-- **Control**: Set via ctrl client GUI (not CV controllable)
-- **Timing Source**: ES-8 channel 8 ramp is authoritative reference
+- **Duration**: ~2 seconds typical (~120 BPM in 4/4), adjustable from the ctrl
+  UI.
+- **Control**: Period and subdivision settings are changed in the browser; ES-8
+  reacts to those values when enabled.
+- **Timing Source**: Controller phasor broadcast (mirrored to the ES-8). Once
+  inbound timing capture ships, the ES-8 ramp will be able to drive the network
+  transport.
 
 ## Network Architecture
 
@@ -94,24 +115,30 @@ Based on morphing-zing synthesis from euclidean sequencer reference:
 
 ### Synthesis Parameters
 
-**HRG-Controlled Parameters (uses HRG System):**
+The current control surface exposes the following parameters. Each parameter
+stores a `baseValue`, an interpolation mode, and generator definitions that are
+resolved on the synth clients.
 
-- `frequency` - Fundamental frequency (uses harmonic ratio generation)
+**Periodic generator parameters (`GeneratorConfig.type = "periodic"`):**
 
-**Normalized Parameters (uses Range System, 0-1 range):**
+- `frequency` – Fundamental frequency resolved from harmonic ratios.
+- `vibratoRate` – Optional; can use HRG-style ratios when deeper modulation is
+  needed, but defaults to bounded random ranges.
 
-- `morph` - PM to Ring Mod blend (-1 to 1, mapped to 0-1)
-- `modDepth` - Modulation intensity
-- `symmetry` - Phase warping/pulse width
-- `gain` - Output level
-- `sync` - Hard sync on/off
-- `vowelX` - Front/back vowel position
-- `vowelY` - Close/open vowel position
-- `vowelBlend` - Zing vs formant mode blend
-- `active` - Synthesis enable/disable
+**Normalized parameters (`GeneratorConfig.type = "normalised"`):**
 
-_See "Parameter Randomization Systems" section below for details on the two
-randomization approaches._
+- `vowelX`, `vowelY` – 2D vowel position controlling the formant targets.
+- `zingAmount`, `zingMorph`, `symmetry` – Spectral shaping controls for the
+  zing/formant blend.
+- `amplitude`, `whiteNoise` – Level controls (often left static during
+  performance, but still expressed through the unified generator format).
+- `vibratoWidth` – Depth of vibrato modulation.
+
+`synthesisActive` and other transport flags remain top-level fields in the
+network protocol rather than envelope-driven parameters.
+
+_See "Parameter Randomization Systems" below for how the periodic and
+normalized generators behave._
 
 ### Formant Frequency Constraints
 
@@ -126,39 +153,50 @@ This ensures all synthesis modes produce human voice-like spectral content.
 
 ## Parameter Randomization Systems
 
-Voice.Assembly.FM uses **two distinct randomization systems** depending on
-parameter type:
+Voice.Assembly.FM resolves parameter values with **two generator types** that
+map directly to the runtime implementation:
 
-### 1. HRG System (Frequency/Harmonic Parameters)
+### 1. Periodic (HRG) Generators
 
-- **Purpose**: Generate musical harmonic ratios (e.g., 3/2, 5/4, 7/4)
-- **Parameters**: `frequency` and future harmonic/period parameters
-- **Method**: Numerator/Denominator integer sets with temporal behaviors
-- **Benefits**:
-  - Ensures harmonic relationships between synths
-  - Musical intervals rather than arbitrary frequencies
-  - Temporal behaviors (shuffle, ascending, etc.) for structured variation
-- **Example**: n="1-6" d="2" with shuffle behavior → frequencies of 220×(1/2),
-  220×(2/2), 220×(3/2), etc.
+- **Purpose**: Produce discrete harmonic ratios via paired numerator and
+  denominator sequence generators (each defined by SIN strings and temporal
+  behaviours).
+- **Usage**: `frequency` always uses periodic generators; `vibratoRate` can opt
+  into HRG behavior when required.
+- **Example**: `numerators: "1-3"`, `denominators: "1-2"` with `behavior:
+  "shuffle"` yields cycle-to-cycle ratios like 1/1, 2/1, 3/2, etc., shared with
+  synths as compact SIN definitions.
 
-### 2. Range System (Normalized Parameters)
+### 2. Normalised (Range-Based) Generators
 
-- **Purpose**: Continuous variation within bounded ranges
-- **Parameters**: All normalized (0-1) parameters: `vowelX`, `vowelY`, `morph`,
-  `symmetry`, `amplitude`, etc.
-- **Method**: Min/max ranges for start and end envelope values
-- **Benefits**:
-  - Smooth parameter exploration within safe bounds
-  - Independent randomization per synth
-  - Continuous values rather than discrete ratios
-- **Example**: vowelX start range: 0.2-0.4, end range: 0.6-0.8 → random values
-  within these bounds
+- **Purpose**: Provide bounded random values using `range` definitions and
+  sequence behaviors (`static` or `random`). Values are not limited to [0,1];
+  the controller can specify any meaningful numeric span.
+- **Usage**: Vowel positioning, zing controls, amplitude, white noise, and
+  vibrato width all use `type: "normalised"` generators.
+- **Example**: `vowelX.startValue.range = { min: 0.2, max: 0.4 }` and
+  `.endValue.range = { min: 0.6, max: 0.8 }` randomize each synth within those
+  bounds.
 
 ### Why Two Systems?
 
-- **Frequency parameters need harmonic relationships** (musical intervals)
-- **Normalized parameters need continuous exploration** (perceptual smoothness)
-- **Different mathematical domains** (ratios vs. bounded ranges)
+- Harmonic parameters require discrete ratios to keep the ensemble in tune.
+- Continuous controls benefit from smooth exploration inside safe ranges.
+- Transmitting generator definitions keeps bandwidth low while letting each
+  synth resolve values independently at end-of-cycle (EOC) events.
+
+### Minimal Computation Principle
+
+- **Controller as dispatcher**: The ctrl client avoids heavy stochastic
+  resolution work, broadcasting only the generator deltas that arise from user
+  edits.
+- **Synth-side resolution**: Each synth resolves its NSG/DSG and normalised
+  generators locally at EOC, ensuring per-device uniqueness without controller
+  recomputation.
+- **Sub-parameter messaging**: Fine-grained updates (e.g., tweaking an NSG SIN
+  string or a base value) use `sub-param-update` messages so only the affected
+  generator is recalculated, keeping bandwidth and CPU usage minimal while
+  preserving deterministic staging semantics.
 
 ## Harmonic Ratio Generator (HRG) System
 
@@ -167,6 +205,19 @@ parameter type:
 HRGs provide stochastic variation of frequency parameters across the distributed
 choir using Stochastic Integer Notation (SIN).
 
+### Nomenclature
+
+- **HRG**: A complete harmonic ratio generator attached to a parameter position
+  (e.g., frequency start). It resolves a rational value by combining two
+  sub-generators:
+  - **Numerator Sequence Generator (NSG)**: The integer sequence drawn from the
+    numerator SIN definition plus its temporal behaviour.
+  - **Denominator Sequence Generator (DSG)**: The matching integer sequence drawn
+    from the denominator SIN definition and behaviour.
+- Each HRG is therefore expressed as `{ NSG, DSG }`, and every parameter that
+  supports HRGs carries two instances: a start HRG and (for `disc`/`cont`
+  interpolation) an end HRG.
+
 ### SIN Format
 
 - **Notation**: "1-3, 4, 7-9" → [1, 2, 3, 4, 7, 8, 9]
@@ -174,9 +225,10 @@ choir using Stochastic Integer Notation (SIN).
 
 ### HRG Parameters
 
-- **Frequency Start HRG**: Numerator SIN + Denominator SIN
-- **Frequency End HRG**: Numerator SIN + Denominator SIN
-- **Total**: 4 SIN sets (2 numerator, 2 denominator)
+- **Frequency Start HRG**: `NSG_start` + `DSG_start`
+- **Frequency End HRG**: `NSG_end` + `DSG_end`
+- **Total**: Four sequence generators per parameter (two numerators, two
+  denominators)
 
 ### Resolution Architecture
 
@@ -193,6 +245,7 @@ choir using Stochastic Integer Notation (SIN).
 
 - **[H] Toggle Button**: Compact design replaces dice emoji
 - **Two-line Layout**: Numerators (n:) and denominators (d:) on separate lines
+  to expose the NSG/DSG pair directly
 - **Separate Behaviors**: Independent behavior selection for numerators and
   denominators
 - **Deferred Application**: Changes require "Apply Changes" button (no Range/HRG
@@ -216,41 +269,30 @@ scene memory system for performance recall.
 
 ### Per-Parameter Configuration
 
-Each synthesis parameter gets:
+Each synthesis parameter stores:
 
-- **Start Value** (+ HRG for frequency parameters, + Range for normalized
-  parameters)
-- **End Value** (+ HRG for frequency parameters, + Range for normalized
-  parameters)
-- **Envelope Type**: "lin" or "cos"
-- **Envelope Intensity**: 0-1 morphing parameter
+- **Interpolation**: `"step"`, `"disc"`, or `"cont"`.
+  - `step` holds a single resolved value for the whole cycle.
+  - `disc` performs a cosine glide between start and end values each cycle.
+  - `cont` reuses the previous end value as the next start for seamless motion.
+- **Start/End Generators**: `startValueGenerator` always exists; an
+  `endValueGenerator` is required when interpolation is `disc` or `cont`.
+- **Base Value**: Handy reference for direct numeric edits and for periodic
+  generators that need an anchor frequency in Hz.
 
 **Randomization Integration**:
 
-- **HRG Parameters**: Use numerator/denominator SIN sets with temporal behaviors
-- **Normalized Parameters**: Use min/max range definitions for stochastic
-  variation
-
-### Envelope Types
-
-**Type "lin" (Log→Linear→Exponential):**
-
-- Uses power function: `y = t^exponent`
-- `intensity=0`: exponent=1/8 (logarithmic/concave - fast start, slow finish)
-- `intensity=0.5`: exponent=1 (linear)
-- `intensity=1`: exponent=8 (exponential/convex - slow start, fast finish)
-
-**Type "cos" (Square→Cosine→Median-Step):**
-
-- Linear interpolation between three shapes
-- `intensity=0`: Square (immediate jump to end value)
-- `intensity=0.5`: Cosine S-curve (smooth transition)
-- `intensity=1`: Median-step (jump to median, then to end at termination)
+- Periodic generators use SIN strings and behaviors to resolve ratios at EOC.
+- Normalised generators pick values within configured ranges; when interpolation
+  is `step` the end generator can be omitted.
 
 ### Timing
 
-- **Duration**: One ES-8 cycle (synchronized across all synth clients)
-- **Progress**: Channel 8 voltage maps to normalized time 0-1
+- **Duration**: One controller phasor cycle. The phasor is mirrored to the ES-8
+  so Eurorack gear can already follow along; upcoming hardware capture will let
+  the ES-8 ramp become the authoritative transport reference.
+- **Progress**: Synth phasor worklet provides normalized 0-1 phase for envelope
+  evaluation.
 
 ## Scene Memory System
 
@@ -274,15 +316,15 @@ sceneSnapshots[bank] = {
     whiteNoise: 0.0, // RBG stat mode values
     // ... other direct/stat parameters
   },
-  sequences: {
-    frequency: {
-      numeratorBehavior: "static",
-      denominatorBehavior: "static",
-      indexN: 4, // Current numerator index
-      indexD: 1, // Current denominator index
-      orderN: null, // Shuffle order (if shuffle behavior)
-      orderD: null, // Shuffle order (if shuffle behavior)
-    },
+    sequences: {
+      frequency: {
+        numeratorBehavior: "static",
+        denominatorBehavior: "static",
+        indexN: 4, // NSG position
+        indexD: 1, // DSG position
+        orderN: null, // NSG shuffle order (if shuffle behaviour)
+        orderD: null, // DSG shuffle order (if shuffle behaviour)
+      },
     // ... other HRG parameters
   },
 };
@@ -298,6 +340,13 @@ sceneSnapshots[bank] = {
    values
 3. **Store in memory**: Save to `sceneSnapshots[bank]` array
 4. **No coordination**: Each synth saves independently
+
+**Program vs Scene**:
+
+- **Program**: Shared unresolved control state transmitted from the ctrl
+  client (interpolations, NSG/DSG definitions, normalized ranges).
+- **Scene**: Per-synth resolved snapshot (current AudioParam values + HRG
+  positions) captured locally for recall.
 
 **Load Operation** (per synth):
 
@@ -331,7 +380,7 @@ sceneSnapshots[bank] = {
 
 **Preserves Musical Intent**:
 
-- Each synth maintains its unique musical state
+- Each synth maintains its unique scene state
 - Saved scenes restore exact ensemble textures
 - Re-resolve provides controlled randomization
 
@@ -341,48 +390,64 @@ sceneSnapshots[bank] = {
 - Minimal memory footprint
 - No persistent storage complexity
 
+### Aural Feedback Paradigm
+
+- **Controller intentionally blind**: The ctrl client does not pull resolved per-synth values; it only knows the shared program definition and aggregate peer status.
+- **Synth-side authorship**: Each handset resolves its generators, stores scene snapshots, and recalls them locally without confirmation from the controller.
+- **Performance practice**: The performer listens to the acoustic summation in the room and responds by adjusting the shared program rather than micromanaging individual devices.
+- **Design implication**: Network bandwidth stays minimal and the system tolerates device churn without re-synchronising every resolved value through the controller.
+
 ## Ctrl Client Specification
 
 ### Core Features
 
-- **ES-8 Interface**: WebUSB connection for CV I/O
-- **Network Management**: WebRTC coordination and peer management
-- **Parameter Control**: GUI for all synthesis parameters
-- **HRG Control**: Integration with Monome Grid 128
-- **Connection Status**: Display of connected synth clients
-- **Calibration Mode**: Pink noise generation for volume matching
+- **Network Management**: WebRTC coordination and peer management.
+- **Parameter Control**: GUI for all synthesis parameters with deferred apply.
+- **ES-8 Bridge**: AudioWorklet currently mirrors the software phasor/clock and
+  is the scaffold for forthcoming bidirectional Eurorack synchronisation.
+- **Connection Status**: Display of connected synth clients and diagnostics.
+- **Calibration Preset**: One-click pink-noise scene for level matching.
+- **State Lifecycle**: Two-phase state model (`stagedState` for edits,
+  `liveState` for the currently broadcasting program) with EOC application.
+- **Bulk Update Mode**: Optional batching queue for grouped sub-parameter edits
+  before commit.
 
 ### User Interface
 
 - **Minimalist Design**: Following es_8_test aesthetic
 - **Parameter Sections**: Organized by synthesis function
 - **Real-time Feedback**: Connection count, network health
-- **Calibration Toggle**: Enable/disable calibration mode
+- **Calibration Preset**: Quick access to noise scene for volume matching
 - **Apply Changes Button**: Located in control panel for deferred parameter
   application
 - **Scene Memory Interface**: 10 numbered save/load buttons plus re-resolve
   button
 
-### Monome Grid Integration
+### Monome Grid Integration (Planned)
 
-- **Grid Layout** (8 rows available):
-  - Row 1: Frequency Start HRG (Numerator)
-  - Row 2: Frequency Start HRG (Denominator)
-  - Row 3: Frequency End HRG (Numerator)
-  - Row 4: Frequency End HRG (Denominator)
-  - Rows 5-8: Navigation/parameter assignment/other controls
-
-- **Interaction**:
-  - Tap button: Toggle integer in/out of SIN set
-  - Hold + tap: Set range in SIN set
-  - Columns 13-16: Navigation buttons
-  - Visual feedback: Active integers illuminated
+- Port the `reference/euclidean_seq` grid workflows so HRG editing can be
+  performed on a hardware grid.
+- Mirror the compact HRG UI (numerators/denominators and behaviors) on grid
+  rows, with paging for additional parameters.
+- Provide visual feedback via LED intensity to reflect inclusion, behavior, and
+  pending changes.
 
 ### Parameter Assignment
 
 - GUI controls for assigning parameter pairs to Grid rows
 - Ability to page between different parameter groupings
 - Live editing of SIN sets during performance
+
+### State & Bulk Workflow
+
+- **Two-phase state management**: UI edits collect in `stagedState` while the
+  currently broadcasting configuration lives in `liveState`. Applying changes
+  copies staged values into the live program and broadcasts the delta.
+- **EOC-aligned commits**: When transport is running, staged changes are
+  deferred and dispatched at the next EOC, preserving ensemble synchrony.
+- **Bulk mode**: Performers can enable bulk mode to queue multiple
+  sub-parameter edits (SIN tweaks, range adjustments) and apply them in a single
+  transmission to minimise network spam and keep stochastic resolution aligned.
 
 ## Synth Client Specification
 
@@ -408,7 +473,8 @@ sceneSnapshots[bank] = {
 
 - **Local speakers**: Each phone outputs synthesized audio
 - **Acoustic summing**: Collective sound combines in physical space
-- **Volume calibration**: User-adjustable output level
+- **Calibration preset**: Controller can push a white-noise scene; audience
+  adjusts device volume manually
 - **Fallback behavior**: Go silent and attempt reconnection on network loss
 
 ### Technical Requirements
@@ -422,44 +488,81 @@ sceneSnapshots[bank] = {
 
 ### Phasor-Based Timing
 
-- **Shared phasor state**: Distributed 0.0-1.0 cycle position
-- **Continuous sync**: Regular phasor correction messages
-- **Graceful correction**: Gradual phase alignment (no harsh jumps)
-- **ES-8 authority**: Channel 8 ramp is ground truth reference
+- **Shared phasor state**: Distributed 0.0-1.0 cycle position.
+- **Sync cadence**: Controller sends beacons at each step boundary plus a paused
+  heartbeat (~1 Hz) when transport is stopped.
+- **Graceful correction**: Synths ease into the reported phase rather than hard
+  resets.
 
 ### Timing Messages
 
 ```js
-// Ctrl broadcasts (every 100-200ms)
+// Ctrl broadcasts at step/EOC events (paused heartbeat at ~1 Hz)
 {
   type: "phasor_sync",
-  phasor: 0.347,              // current cycle position
-  audioTime: scheduledTime,   // when this phasor is valid
-  cycleFreq: 0.5             // cycles per second
+  phasor: 0.347,          // current cycle position
+  cpm: null,              // legacy field (cycles per minute)
+  stepsPerCycle: 16,
+  cycleLength: 2.0,       // seconds per cycle
+  isPlaying: true,
+  timestamp: 171234567890.123
 }
 ```
 
 ### Parameter Updates
 
 ```js
-// Sent at cycle boundaries
+// Sent when controller parameters change (full payload)
 {
-  type: "parameter_update", 
-  synthId: "unique-id",
-  parameters: {
-    frequency: 440.0,        // resolved from HRG
-    vowelX: 0.3,
-    morph: 0.7,
-    // ... other parameters
+  type: "program-update",
+  frequency: {
+    interpolation: "disc",
+    baseValue: 220,
+    startValueGenerator: {
+      type: "periodic",
+      numerators: "1-3",
+      denominators: "1-2",
+      numeratorBehavior: "random",
+      denominatorBehavior: "random",
+    },
+    endValueGenerator: {
+      type: "periodic",
+      numerators: "1-6",
+      denominators: "2-3",
+      numeratorBehavior: "shuffle",
+      denominatorBehavior: "static",
+    },
   },
-  envelopes: {
-    frequency: { type: "lin", intensity: 0.8 },
-    vowelX: { type: "cos", intensity: 0.2 },
-    // ... per-parameter envelopes
-  }
+  vowelX: {
+    interpolation: "cont",
+    startValueGenerator: {
+      type: "normalised",
+      range: { min: 0.2, max: 0.6 },
+      sequenceBehavior: "random",
+    },
+    endValueGenerator: {
+      type: "normalised",
+      range: { min: 0.4, max: 0.8 },
+      sequenceBehavior: "random",
+    },
+  },
+  // ...other parameters omitted for brevity...
+  synthesisActive: true,
+  portamentoTime: 120,
+  timestamp: 171234567900.456
 }
 ```
 
+```js
+// Sent for targeted edits (minimal computation path)
+{
+  type: "sub-param-update",
+  paramPath: "frequency.startValueGenerator.numerators",
+  value: "1-5",
+  portamentoTime: 80,
+  timestamp: 171234567905.321
+}
+```
 ### Latency Compensation
 
 - **RTT measurement**: Continuous ping/pong latency tracking
@@ -471,15 +574,17 @@ sceneSnapshots[bank] = {
 
 ### Volume Matching Mode
 
-- **Activation**: Toggle from ctrl client
-- **Behavior**: All synth clients play pink noise at amplitude 0.1
-- **User Control**: Volume slider on each synth client
-- **Goal**: Match perceived loudness across all devices
+- **Activation**: Calibration preset button in the ctrl client reconfigures the
+  program state.
+- **Behavior**: Synths receive a scene with `amplitude = 0` and `whiteNoise ≈
+  0.3`, producing consistent broadband noise.
+- **User Control**: No in-app slider; participants manually set device/system
+  volume while the preset is active.
+- **Goal**: Normalize perceived loudness across phones before performance.
 - **Workflow**:
-  1. Performer enables calibration mode
-  2. Audience adjusts phone volumes until balanced
-  3. Performer disables calibration mode
-  4. Synthesis begins
+  1. Performer applies the calibration preset.
+  2. Audience members adjust device volume to taste.
+  3. Performer loads/returns to a musical scene to begin the piece.
 
 ### Connection Lifecycle
 
@@ -525,17 +630,17 @@ sceneSnapshots[bank] = {
 - Signaling server with proper peer routing
 - Basic peer connection and GUI updates
 
-### Phase 2: Synthesis Engine
+### Phase 2: Synthesis Engine ✅ COMPLETED
 
 - Morphing-zing AudioWorklet implementation
-- Parameter envelope system
-- XY oscilloscope visualization
+- Unified envelope system (`step`/`disc`/`cont`)
+- XY oscilloscope visualization on synth clients
 
-### Phase 3: ES-8 Integration
+### Phase 3: ES-8 Integration ⏳ IN PROGRESS
 
-- WebUSB CV interface
-- Cycle timing synchronization
-- TR/CV output sequencing
+- ✅ AudioWorklet output mirroring phasor/step/reset signals (monitoring)
+- ⏳ 1V/oct pitch CV and trigger sequencing (port from `reference/es_8_test`)
+- ⏳ Hardware clock capture to let ES-8 drive the transport
 
 ### Phase 4: HRG System ✅ PARTIALLY COMPLETED
 
@@ -558,18 +663,21 @@ sceneSnapshots[bank] = {
 - **WebRTC**: Peer-to-peer networking
 - **Web Audio API**: High-precision synthesis
 - **AudioWorklet**: Real-time audio processing
-- **WebUSB**: ES-8 hardware interface
-- **Web MIDI**: Monome Grid communication
+- **WebUSB**: ES-8 bridge for CV/gate synchronisation (currently outbound,
+  inbound capture forthcoming)
+- **Web MIDI**: Planned for Monome Grid support
 
 ### External Libraries
 
-- **Monome Grid utilities**: Grid interaction handling
 - **WebRTC signaling**: Peer discovery coordination
 - **Math libraries**: Envelope curve calculations
+- **Monome Grid utilities**: Planned for future hardware control surface
 
 ### Hardware Requirements
 
-- **Ctrl Client**: Modern browser, WebUSB support, ES-8 interface
+- **Ctrl Client**: Modern browser with WebUSB support for the ES-8 bridge (runs
+  in software-only fallback without hardware); Web MIDI planned for optional
+  Monome Grid control.
 - **Synth Clients**: Modern mobile browsers with Web Audio support
 - **Network**: Local Wi-Fi with reasonable bandwidth and latency
 

@@ -33,7 +33,7 @@ export function setupCompactParameterControls(ctrl, paramName) {
     ctrl._handleValueInput(paramName, textInput.value, "start");
     
     // Send SUB_PARAM_UPDATE for the start value generator change
-    const paramState = ctrl.pendingMusicalState[paramName];
+    const paramState = ctrl.stagedState[paramName];
     if (paramState.startValueGenerator?.type === "normalised") {
       if (typeof paramState.startValueGenerator.range === "number") {
         // Single value - send the range value
@@ -58,7 +58,7 @@ export function setupCompactParameterControls(ctrl, paramName) {
     interpSelect.addEventListener("change", () => {
       const interpolation = interpSelect.value;
 
-      ctrl._updatePendingState({
+      ctrl._updateStagedState({
         type: "SET_INTERPOLATION",
         param: paramName,
         interpolation: interpolation,
@@ -80,7 +80,7 @@ export function setupCompactParameterControls(ctrl, paramName) {
       ctrl._handleValueInput(paramName, endValueInput.value, "end");
       
       // Send SUB_PARAM_UPDATE for the end value generator change
-      const paramState = ctrl.pendingMusicalState[paramName];
+      const paramState = ctrl.stagedState[paramName];
       if (paramState.endValueGenerator?.type === "normalised") {
         if (typeof paramState.endValueGenerator.range === "number") {
           // Single value - send the range value
@@ -138,8 +138,8 @@ export function setupCompactParameterControls(ctrl, paramName) {
   // Handle start RBG behavior changes
   if (startRbgBehaviorSelect) {
     startRbgBehaviorSelect.addEventListener("change", () => {
-      // Update pending state
-      const paramState = ctrl.pendingMusicalState[paramName];
+      // Update staged state
+      const paramState = ctrl.stagedState[paramName];
       if (paramState.startValueGenerator) {
         paramState.startValueGenerator.sequenceBehavior = startRbgBehaviorSelect.value;
       }
@@ -157,8 +157,8 @@ export function setupCompactParameterControls(ctrl, paramName) {
   // Handle end RBG behavior changes
   if (endRbgBehaviorSelect) {
     endRbgBehaviorSelect.addEventListener("change", () => {
-      // Update pending state
-      const paramState = ctrl.pendingMusicalState[paramName];
+      // Update staged state
+      const paramState = ctrl.stagedState[paramName];
       if (paramState.endValueGenerator) {
         paramState.endValueGenerator.sequenceBehavior = endRbgBehaviorSelect.value;
       }
@@ -230,7 +230,7 @@ export function setupHrgParameterControls(ctrl, paramName) {
       const baseValue = parseFloat(baseInput.value);
 
       // Check if value actually changed
-      const currentBaseValue = ctrl.pendingMusicalState[paramName]?.baseValue;
+      const currentBaseValue = ctrl.stagedState[paramName]?.baseValue;
       if (baseValue === currentBaseValue) {
         return; // No change, skip everything
       }
@@ -258,7 +258,7 @@ export function setupHrgParameterControls(ctrl, paramName) {
       }
 
       // Update internal state for UI consistency
-      ctrl._updatePendingState({
+      ctrl._updateStagedState({
         type: "SET_BASE_VALUE",
         param: paramName,
         value: baseValue,
@@ -281,7 +281,7 @@ export function setupHrgParameterControls(ctrl, paramName) {
   if (interpSelect) {
     interpSelect.addEventListener("change", () => {
       const interpolation = interpSelect.value;
-      ctrl._updatePendingState({
+      ctrl._updateStagedState({
         type: "SET_INTERPOLATION",
         param: paramName,
         interpolation: interpolation,
@@ -289,8 +289,8 @@ export function setupHrgParameterControls(ctrl, paramName) {
 
       if (!ctrl.isPlaying) {
         // When paused: update active state and broadcast with portamento
-        ctrl.musicalState = JSON.parse(JSON.stringify(ctrl.pendingMusicalState));
-        ctrl.broadcastMusicalParameters();
+        ctrl.liveState = JSON.parse(JSON.stringify(ctrl.stagedState));
+        ctrl.broadcastControlState();
       } else {
         // When playing: stage for application at EOC
         ctrl.broadcastSingleParameterStaged(paramName);

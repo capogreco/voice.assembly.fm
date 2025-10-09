@@ -5,7 +5,7 @@
  */
 
 // JSDoc type imports
-/** @typedef {import('../../../src/common/parameter-types.js').IMusicalState} IMusicalState */
+/** @typedef {import('../../../src/common/parameter-types.js').IControlState} IControlState */
 
 // Import message types
 import {
@@ -15,12 +15,12 @@ import {
 
 /**
  * Create wire payload for parameter broadcast
- * @param {IMusicalState} musicalState - Current musical state
+ * @param {IControlState} liveState - Current live state
  * @param {boolean} synthesisActive - Synthesis active flag
  * @param {number} [portamentoTime] - Portamento time in ms
  * @returns {Object} - Wire payload
  */
-export function createWirePayload(musicalState, synthesisActive, portamentoTime = null) {
+export function createWirePayload(liveState, synthesisActive, portamentoTime = null) {
   const wirePayload = {
     synthesisActive: synthesisActive,
   };
@@ -30,8 +30,8 @@ export function createWirePayload(musicalState, synthesisActive, portamentoTime 
   }
 
   // Convert each parameter to wire format
-  Object.keys(musicalState).forEach((paramName) => {
-    const paramState = musicalState[paramName];
+  Object.keys(liveState).forEach((paramName) => {
+    const paramState = liveState[paramName];
     
     if ("scope" in paramState) {
       throw new Error(
@@ -59,17 +59,17 @@ export function createWirePayload(musicalState, synthesisActive, portamentoTime 
 }
 
 /**
- * Broadcast full musical parameters
+ * Broadcast full control state payload
  * @param {Object} star - WebRTC star instance
- * @param {IMusicalState} musicalState - Current musical state
+ * @param {IControlState} liveState - Current live state
  * @param {boolean} synthesisActive - Synthesis active flag
  * @param {function} logFn - Logging function
  * @param {number} [portamentoTime] - Portamento time in ms
  */
-export function broadcastMusicalParameters(star, musicalState, synthesisActive, logFn, portamentoTime) {
+export function broadcastControlState(star, liveState, synthesisActive, logFn, portamentoTime) {
   if (!star) return;
 
-  const wirePayload = createWirePayload(musicalState, synthesisActive, portamentoTime);
+  const wirePayload = createWirePayload(liveState, synthesisActive, portamentoTime);
   console.log("Broadcasting translated payload:", wirePayload);
 
   const message = MessageBuilder.createParameterUpdate(
@@ -85,15 +85,15 @@ export function broadcastMusicalParameters(star, musicalState, synthesisActive, 
  * Broadcast single parameter update
  * @param {Object} star - WebRTC star instance
  * @param {string} paramName - Parameter name
- * @param {IMusicalState} musicalState - Current musical state
+ * @param {IControlState} liveState - Current live state
  * @param {boolean} synthesisActive - Synthesis active flag
  * @param {function} logFn - Logging function
  * @param {number} [portamentoTime] - Portamento time in ms
  */
-export function broadcastSingleParameter(star, paramName, musicalState, synthesisActive, logFn, portamentoTime) {
+export function broadcastSingleParameter(star, paramName, liveState, synthesisActive, logFn, portamentoTime) {
   if (!star) return;
 
-  const paramState = musicalState[paramName];
+  const paramState = liveState[paramName];
   if ("scope" in paramState) {
     throw new Error(
       "CRITICAL: Parameter '" + paramName + "' has forbidden 'scope' field",
@@ -143,13 +143,10 @@ export function broadcastSingleParameter(star, paramName, musicalState, synthesi
 export function broadcastSubParameterUpdate(star, paramPath, value, portamentoTime, logFn) {
   if (!star) return;
 
-  const message = MessageBuilder.createParameterUpdate(
-    MessageTypes.SUB_PARAM_UPDATE,
-    {
-      paramPath: paramPath,
-      value: value,
-      portamentoTime: portamentoTime,
-    },
+  const message = MessageBuilder.subParamUpdate(
+    paramPath,
+    value,
+    portamentoTime,
   );
   
   star.broadcast(message);

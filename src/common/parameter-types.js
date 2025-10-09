@@ -31,8 +31,8 @@
  */
 
 /**
- * Defines the shape of the entire musical state object.
- * @typedef {Object} IMusicalState
+ * Defines the shape of the entire control state object.
+ * @typedef {Object} IControlState
  * @property {ParameterState} frequency
  * @property {ParameterState} vowelX
  * @property {ParameterState} vowelY

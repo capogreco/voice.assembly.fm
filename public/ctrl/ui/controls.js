@@ -101,7 +101,7 @@ export function setupEventHandlers(ctrl) {
 }
 
 /**
- * Setup musical parameter controls (timing, transport, etc.)
+ * Setup control parameter controls (timing, transport, etc.)
  * @param {Object} ctrl - The ControlClient instance
  */
 export function setupMusicalControls(ctrl) {
@@ -249,7 +249,7 @@ export function setupMusicalControls(ctrl) {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       ctrl.log("Keyboard shortcut: Broadcasting parameters", "info");
-      ctrl.broadcastMusicalParameters();
+      ctrl.broadcastControlState();
     }
   });
 
@@ -258,7 +258,7 @@ export function setupMusicalControls(ctrl) {
 }
 
 /**
- * Setup envelope controls for all musical parameters
+ * Setup envelope controls for all control parameters
  * @param {Object} ctrl - The ControlClient instance
  */
 export function setupEnvelopeControls(ctrl) {
@@ -280,10 +280,10 @@ export function setupEnvelopeControls(ctrl) {
   setupCompactParameterControls(ctrl, "vibratoWidth");
 
   // Initialize all parameter UIs using unified state/UI sync
-  Object.keys(ctrl.musicalState).forEach((paramName) => {
+  Object.keys(ctrl.liveState).forEach((paramName) => {
     ctrl.setParameterState(
       paramName,
-      ctrl.musicalState[paramName],
+      ctrl.liveState[paramName],
     );
   });
 }
