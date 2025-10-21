@@ -158,62 +158,6 @@ export function isReadyToReceiveParameters(context) {
  * @param {Object} message - Synth parameters message
  * @param {Object} context - Synth context
  */
-export function handleSynthParams(message, context) {
-  // Always store the latest parameters for application after audio init
-  context.lastSynthParams = message;
-
-  // Handle manual mode state changes
-  const wasSynthesisActive = context.synthesisActive;
-  context.synthesisActive = message.synthesisActive;
-
-  // Update synthesis status display
-  context.updateSynthesisStatus(context.synthesisActive);
-
-  // If exiting manual mode, stop synthesis
-  if (wasSynthesisActive && !context.synthesisActive) {
-    if (context.voiceNode) {
-      context.voiceNode.parameters.get("active").value = 0;
-    }
-    return;
-  }
-
-  // Check if we're ready to receive parameters
-  if (!isReadyToReceiveParameters(context)) {
-    return;
-  }
-
-  // If synthesis was just enabled, ensure immediate audio output
-  if (!wasSynthesisActive && context.synthesisActive) {
-    context.activateImmediateSynthesis();
-  }
-
-  // If not in manual mode, don't apply parameters
-  if (!context.synthesisActive) {
-    return;
-  }
-
-  // Extract parameter values (handle both static values and envelope objects)
-  const extractValue = (param) => {
-    return (param && typeof param === "object" && param.static)
-      ? param.value
-      : param;
-  };
-
-  // Resume audio context if needed
-  if (context.audioContext.state === "suspended") {
-    context.audioContext.resume().then(() => {
-    }).catch((err) => {
-      console.error("❌ Failed to resume audio context:", err);
-    });
-  }
-
-  // Legacy handleSynthParams - parameters now handled by PROGRAM_UPDATE
-  if (context.verbose) {
-    console.log(
-      "⚠️ handleSynthParams is deprecated - use PROGRAM_UPDATE instead",
-    );
-  }
-}
 
 /**
  * Connect to network via WebRTC star

@@ -111,9 +111,7 @@ export async function initializeFormantSynthesis(audioContext, phasorWorklet, ma
  * Apply stored state after audio worklets are ready
  * @param {Object} context - Synth context
  * @param {Object} context.lastProgramUpdate - Cached program update
- * @param {Object} context.lastSynthParams - Cached synth parameters
  * @param {function} context.handleProgramUpdate - Program update handler
- * @param {function} context.handleSynthParams - Synth params handler
  * @param {boolean} context.verbose - Verbose logging
  */
 export function applyStoredState(context) {
@@ -130,13 +128,6 @@ export function applyStoredState(context) {
     context.lastProgramUpdate = null; // Clear cache
   }
 
-  // Apply cached synth parameters if available
-  if (context.lastSynthParams) {
-    if (context.verbose) {
-      console.log("📦 Applying cached synth parameters after audio init");
-    }
-    context.handleSynthParams(context.lastSynthParams);
-  }
 }
 
 /**

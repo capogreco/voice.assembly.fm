@@ -12,16 +12,24 @@ import { XYOscilloscope } from "./src/visualization/xy-oscilloscope.js";
 class SynthClient {
   constructor() {
     this.peerId = generatePeerId("synth");
-    
+
     // Required parameter set for complete programConfig
     this.REQUIRED_PARAMS = [
-      'frequency', 'vibratoRate', 'vowelX', 'vowelY', 'zingAmount', 
-      'zingMorph', 'symmetry', 'amplitude', 'whiteNoise', 'vibratoWidth'
+      "frequency",
+      "vibratoRate",
+      "vowelX",
+      "vowelY",
+      "zingAmount",
+      "zingMorph",
+      "symmetry",
+      "amplitude",
+      "whiteNoise",
+      "vibratoWidth",
     ];
-    
+
     // Track staging readiness
     this.programConfigComplete = false;
-    
+
     this.star = null;
     this.audioContext = null;
     this.oscilloscope = null;
@@ -55,7 +63,6 @@ class SynthClient {
     this.volume = 0.1;
 
     // Store received state for application after audio init
-    this.lastSynthParams = null;
     this.lastProgramUpdate = null; // Cache PROGRAM_UPDATE until audio/worklets are ready
 
     // Program configuration
@@ -177,7 +184,6 @@ class SynthClient {
     this.hrgState = {}; // HRG sequence state per parameter
     this.rbgState = {}; // RBG random value state per parameter (for static behavior)
     this.reresolveAtNextEOC = false; // Flag to re-randomize static HRG indices
-
 
     // Note: No persistent synth ID - using ephemeral session
 
@@ -320,10 +326,9 @@ class SynthClient {
 
       // Track current parameter values for portamento (strict - no defaults)
       this.lastResolvedValues = {};
-      
-      // Track HRG components for minimal re-computation 
+
+      // Track HRG components for minimal re-computation
       this.lastResolvedHRG = {};
-      
 
       // Create mixer for voice output
       this.mixer = this.audioContext.createGain();
@@ -368,30 +373,17 @@ class SynthClient {
   applyStoredState() {
     console.log("🔄 Applying stored state after audio initialization");
 
-    // Prefer applying the most recent PROGRAM_UPDATE (full state)
+    // Minimal safe implementation: only handle cached PROGRAM_UPDATE
     if (this.lastProgramUpdate) {
       if (this.verbose) {
         console.log("🎼 Applying cached PROGRAM_UPDATE after init");
       }
       const cached = this.lastProgramUpdate;
-      // Clear before applying in case apply triggers another cache
-      this.lastProgramUpdate = null;
+      this.lastProgramUpdate = null; // Clear cache
       
-      // CRITICAL: If transport is playing, treat cached program as staged
-      if (this.receivedIsPlaying) {
-        console.log("📋 Cached PROGRAM_UPDATE treated as staged - transport is playing");
-        // Initialize staged config from programConfig
-        this.stagedConfig = JSON.parse(JSON.stringify(this.programConfig || {}));
-        // Update staging config with cached program parameters
-        if (cached.parameters) {
-          Object.assign(this.stagedConfig, cached.parameters);
-        }
-        // Don't apply to worklet yet - wait for EOC
-      } else {
-        this.handleProgramUpdate(cached);
-      }
+      // Pass to unified handler - it will manage all state decisions
+      this.handleProgramUpdate(cached);
     }
-
 
     // Ensure phasor/timing config reaches worklets now that they exist
     this.updatePhasorWorklet();
@@ -413,11 +405,11 @@ class SynthClient {
 
   // Helper predicates for interpolation modes
   isCosInterp(interp) {
-    return interp === 'disc' || interp === 'cont';
+    return interp === "disc" || interp === "cont";
   }
 
   isCont(interp) {
-    return interp === 'cont';
+    return interp === "cont";
   }
 
   setupStarEventHandlers() {
@@ -544,62 +536,6 @@ class SynthClient {
     return true;
   }
 
-  handleSynthParams(message) {
-    // Always store the latest parameters for application after audio init
-    this.lastSynthParams = message;
-
-    // Handle manual mode state changes
-    const wasSynthesisActive = this.synthesisActive;
-    this.synthesisActive = message.synthesisActive;
-
-    // Update synthesis status display
-    this.updateSynthesisStatus(this.synthesisActive);
-
-    // If exiting manual mode, stop synthesis
-    if (wasSynthesisActive && !this.synthesisActive) {
-      if (this.voiceNode) {
-        this.voiceNode.parameters.get("active").value = 0;
-      }
-      return;
-    }
-
-    // Check if we're ready to receive parameters
-    if (!this.isReadyToReceiveParameters()) {
-      return;
-    }
-
-    // If synthesis was just enabled, ensure immediate audio output
-    if (!wasSynthesisActive && this.synthesisActive) {
-      this.activateImmediateSynthesis();
-    }
-
-    // If not in manual mode, don't apply parameters
-    if (!this.synthesisActive) {
-      return;
-    }
-
-    // Extract parameter values (handle both static values and envelope objects)
-    const extractValue = (param) => {
-      return (param && typeof param === "object" && param.static)
-        ? param.value
-        : param;
-    };
-
-    // Resume audio context if needed
-    if (this.audioContext.state === "suspended") {
-      this.audioContext.resume().then(() => {
-      }).catch((err) => {
-        console.error("❌ Failed to resume audio context:", err);
-      });
-    }
-
-    // Legacy handleSynthParams - parameters now handled by PROGRAM_UPDATE
-    if (this.verbose) {
-      console.log(
-        "⚠️ handleSynthParams is deprecated - use PROGRAM_UPDATE instead",
-      );
-    }
-  }
 
   /**
    * OBSOLETE - Apply a parameter value that may be static or have envelope configuration
@@ -610,28 +546,50 @@ class SynthClient {
   // }
 
   /**
+   * Set synthesis active flag and AudioParam in one place
+   * Single source of truth for synthesis state
+   */
+  setSynthesisActiveFlag(active) {
+    this.synthesisActive = !!active;
+    
+    // Immediately update worklet's active AudioParam
+    const activeParam = this.voiceNode?.parameters.get("active");
+    if (activeParam) {
+      activeParam.value = this.synthesisActive ? 1 : 0;
+    }
+    
+    if (this.verbose) {
+      console.log(
+        `🎵 Synthesis ${this.synthesisActive ? "enabled" : "disabled"}`,
+      );
+    }
+  }
+
+  /**
    * Activate synthesis immediately when enabled while paused
    * Ensures audio output starts right away regardless of transport state
    */
   activateImmediateSynthesis() {
     console.log("🎵 Activating immediate synthesis...");
 
+    // Guard against incomplete state - fail gracefully, never crash
+    if (!this.voiceNode) {
+      console.log("⚠️ No voice node available - synthesis activation deferred");
+      return;
+    }
+    
     if (!this.programConfig || Object.keys(this.programConfig).length === 0) {
-      console.error(
-        "🚨 CRITICAL: Synth activated WITHOUT program config! Using emergency defaults.",
-      );
-      console.error(
-        "🚨 This means controller→synth communication failed or synth activated too early",
-      );
-      throw new Error(
-        "Synth activation without program config - this should never happen!",
-      );
+      console.log("⚠️ Program config incomplete - synthesis activation deferred");
+      return;
+    }
+    
+    if (!this.programConfigComplete) {
+      console.log("⚠️ Program config not complete - synthesis activation deferred");
+      return;
     }
 
-    if (this.voiceNode) {
-      console.log(
-        "🎼 Resolving parameter values for immediate synthesis",
-      );
+    try {
+      console.log("🎼 Resolving parameter values for immediate synthesis");
 
       // Get current phase
       const phase = this.getCurrentPhase();
@@ -648,7 +606,12 @@ class SynthClient {
         };
 
         // Update tracking with new format
-        this._updateValueTracking(paramName, resolved.startValue, resolved.endValue, cfg.interpolation);
+        this._updateValueTracking(
+          paramName,
+          resolved.startValue,
+          resolved.endValue,
+          cfg.interpolation,
+        );
       }
 
       // Send batch envelope update to voice worklet
@@ -658,12 +621,16 @@ class SynthClient {
         params: resolvedParams,
       });
 
-      console.log(
-        "🎯 [Immediate] SET_ALL_ENV message sent with resolved parameters:",
-        this.lastResolvedValues,
-      );
-    } else {
-      console.log("⚠️ No voice node available for immediate synthesis");
+      // Follow with immediate apply
+      this.voiceNode.port.postMessage({
+        type: "APPLY_NOW",
+        portamentoMs: 0,
+      });
+
+      console.log("✅ Immediate synthesis activated successfully");
+    } catch (error) {
+      console.warn("⚠️ Failed to activate immediate synthesis:", error.message);
+      // Continue gracefully - don't crash the join
     }
   }
 
@@ -696,7 +663,12 @@ class SynthClient {
       };
 
       // Update tracking with new format
-      this._updateValueTracking(paramName, resolved.startValue, resolved.endValue, cfg.interpolation);
+      this._updateValueTracking(
+        paramName,
+        resolved.startValue,
+        resolved.endValue,
+        cfg.interpolation,
+      );
     }
 
     // Send batch envelope update to voice worklet
@@ -755,64 +727,54 @@ class SynthClient {
   handleProgramUpdate(message) {
     if (this.verbose) console.log("📨 PROGRAM_UPDATE received:", message);
 
+    // Step 1: Guard against unready state
     if (!this.voiceNode) {
-      // Cache and apply after audio/worklets are initialized
       console.warn("⚠️ Worklets not ready; caching PROGRAM_UPDATE for later");
       this.lastProgramUpdate = message;
       return;
     }
 
-    // Check if this update includes portamento time for paused parameter changes
-    const hasPortamento = message.portamentoTime !== undefined;
-
-    // Store program config in main thread (control brain lives here)
-    this.programConfig = this.programConfig || {};
-
-    // Handle synthesis active state
+    // Step 2: Extract meta fields and update synthesis state
+    const wasActive = this.synthesisActive;
     if (message.synthesisActive !== undefined) {
-      if (this.voiceNode && this.voiceNode.parameters.has("active")) {
-        const activeParam = this.voiceNode.parameters.get("active");
-        activeParam.value = message.synthesisActive ? 1 : 0;
-        if (this.verbose) {
-          console.log(
-            `🎵 Synthesis ${message.synthesisActive ? "enabled" : "disabled"}`,
-          );
-        }
-      }
-      this.synthesisActive = !!message.synthesisActive;
+      this.setSynthesisActiveFlag(message.synthesisActive);
       
+      // Handle immediate activation when synthesis is turned on
+      if (!wasActive && this.synthesisActive) {
+        console.log("⚡ Synthesis turned ON - will activate after config processing");
+      }
+      
+      // Handle deactivation - clear staged config
+      if (wasActive && !this.synthesisActive) {
+        console.log("🔇 Synthesis turned OFF - clearing staged config");
+        this.stagedConfig = {};
+      }
     }
 
+    // Step 3: Process parameter payload
+    this.programConfig = this.programConfig || {};
+    
     for (const paramName in message) {
-      // Skip non-parameter fields
+      // Skip meta fields
       if (
         [
-          "type",
-          "timestamp",
-          "synthesisActive",
-          "isManualMode",
-          "portamentoTime",
-        ].includes(
-          paramName,
-        )
+          "type", 
+          "timestamp", 
+          "synthesisActive", 
+          "isManualMode", 
+          "portamentoTime"
+        ].includes(paramName)
       ) continue;
 
       const paramData = message[paramName];
 
-      // Store parameter config
-      this.programConfig[paramName] = paramData;
-
-      // Error guard: reject messages with scope field
+      // Error guard: reject forbidden scope field
       if ("scope" in paramData) {
         console.error(
           `BREAKING: Parameter '${paramName}' contains forbidden 'scope' field. Ignoring message.`,
         );
-        throw new Error(
-          `Parameter '${paramName}' has scope field - this is forbidden`,
-        );
+        return; // Fail gracefully instead of throwing
       }
-
-      // Handle unified format with interpolation + generators
 
       // Validate baseValue for periodic generators
       if (
@@ -822,15 +784,11 @@ class SynthClient {
         console.error(
           `🚨 CRITICAL: Periodic generator for ${paramName} missing baseValue!`,
         );
-        console.error(
-          `🚨 This means controller sent incomplete parameter data`,
-        );
-        throw new Error(
-          `Missing baseValue for periodic generator ${paramName} - controller bug?`,
-        );
+        return; // Fail gracefully instead of throwing
       }
 
-      // Initialize HRG state for periodic generators
+      // Store parameter config and initialize HRG state
+      this.programConfig[paramName] = paramData;
       this._initializeHRGState(paramName, paramData);
 
       if (this.verbose) {
@@ -840,78 +798,43 @@ class SynthClient {
       }
     }
 
-    // Check completeness after processing all parameters
+    // Check completeness - bail early if incomplete
     this.checkProgramConfigCompleteness();
-
-    // Only proceed if programConfig is complete
     if (!this.programConfigComplete) {
-      console.log("⏸️ Deferring HRG initialization until programConfig is complete");
+      console.log("⏸️ Program config incomplete - deferring worklet updates");
       return;
     }
 
-    console.log(
-      "✅ Program config stored in main thread, HRG states initialized",
-    );
+    console.log("✅ Program config complete - determining apply path");
 
-    // Forward complete program configuration to worklet (only when paused)
-    if (this.voiceNode && this.programConfigComplete) {
-      if (this.receivedIsPlaying) {
-        console.log(`📋 Blocking PROGRAM forward to worklet while playing - will stage for EOC`);
-        // Store as staged config for commit at EOC
-        this.stagedConfig = JSON.parse(JSON.stringify(this.programConfig));
-      } else {
-        this.voiceNode.port.postMessage({
-          type: "PROGRAM",
-          config: this.programConfig
-        });
-        console.log(`📤 Forwarded PROGRAM config with ${Object.keys(this.programConfig).length} params to worklet`);
-      }
-    } else if (this.voiceNode) {
-      console.log(`📋 Skipping worklet forward - config incomplete (${Object.keys(this.programConfig).length}/10 params)`);
+    // Step 4: Decide on apply path based on synthesis state
+    if (!this.synthesisActive) {
+      // Synthesis disabled: clear staged config, don't touch worklet
+      console.log("🔇 Synthesis disabled - clearing staged config");
+      this.stagedConfig = {};
+      return;
     }
 
-    if (this.synthesisActive) {
-      if (this.receivedIsPlaying) {
-        console.log("📋 Program update while playing - worklet will resolve at next wrap");
-      } else {
-        const pt = message.portamentoTime ?? 0;
-        console.log(
-          `⚡ Applying program update now with ${pt}ms portamento (paused)`,
-        );
-
-        // Call activateImmediateSynthesis only when synthesis is being enabled for the first time
-        if (message.synthesisActive && !this.synthesisActive) {
-          this.activateImmediateSynthesis();
-        }
-
-        // Send APPLY_NOW message to worklet for immediate application with portamento
-        if (this.voiceNode) {
-          this.voiceNode.port.postMessage({
-            type: "APPLY_NOW",
-            portamentoMs: pt
-          });
-          console.log(`📤 Sent APPLY_NOW with ${pt}ms portamento to worklet`);
-        }
-
-        // Update local programConfig for completeness tracking
-        for (const paramName in message) {
-          if (
-            [
-              "type",
-              "timestamp",
-              "synthesisActive",
-              "isManualMode",
-              "portamentoTime",
-            ].includes(paramName)
-          ) {
-            continue; // Skip meta fields
-          }
-
-          this.programConfig[paramName] = message[paramName];
-        }
-        
-        // Check completeness after merge
-        this.checkProgramConfigCompleteness();
+    // Synthesis enabled: check transport state
+    if (this.receivedIsPlaying) {
+      // Playing: stage for cycle reset
+      console.log("📋 Transport playing - staging config for cycle reset");
+      this.stagedConfig = JSON.parse(JSON.stringify(this.programConfig));
+    } else {
+      // Paused: apply immediately
+      console.log("⚡ Transport paused - applying immediately");
+      
+      // Send PROGRAM config to worklet
+      this.voiceNode.port.postMessage({
+        type: "PROGRAM",
+        config: this.programConfig,
+      });
+      console.log(`📤 Sent PROGRAM config to worklet`);
+      
+      // Only call activateImmediateSynthesis when turning synthesis on while paused
+      if (!wasActive && this.synthesisActive) {
+        console.log("🎵 Activating synthesis for turn-on-while-paused case");
+        this.activateImmediateSynthesis();
       }
     }
   }
@@ -940,13 +863,13 @@ class SynthClient {
     }
 
     // PROPER STAGING - Update appropriate config based on playing state
-    
+
     if (this.receivedIsPlaying) {
       // When playing: Update staged config only, don't touch programConfig
       if (!this._setByPath(this.stagedConfig, paramPath, value)) {
         throw new Error(`CRITICAL: Failed to update staged path ${paramPath}`);
       }
-      
+
       console.log(
         `📋 Staging sub-parameter update for EOC: ${paramPath} = ${value}`,
       );
@@ -957,12 +880,12 @@ class SynthClient {
     if (!this._setByPath(this.programConfig, paramPath, value)) {
       throw new Error(`CRITICAL: Failed to update path ${paramPath}`);
     }
-    
+
     // Apply HRG/RBG state updates for paused mode
     this._updateParameterState(paramName, paramPath, value);
-    
+
     console.log(`⚡ Applying sub-parameter update: ${paramPath} = ${value}`);
-    
+
     this.applySingleParamWithPortamento(paramName, portamentoTime);
 
     // Forward to worklet when paused (not when playing)
@@ -1053,46 +976,54 @@ class SynthClient {
     if (!this.audioContext) {
       console.log("⏳ Audio context not ready, deferring EOC beacon PLL");
       // Fall back to legacy behavior until audio context is available
-      
+
       // Update phasor worklet parameters when ready
       if (this.phasorWorklet) {
-        this.phasorWorklet.parameters.get("cycleLength").value = this.receivedCycleLength;
-        this.phasorWorklet.parameters.get("stepsPerCycle").value = this.receivedStepsPerCycle;
-        
+        this.phasorWorklet.parameters.get("cycleLength").value =
+          this.receivedCycleLength;
+        this.phasorWorklet.parameters.get("stepsPerCycle").value =
+          this.receivedStepsPerCycle;
+
         if (this.receivedIsPlaying) {
           this.phasorWorklet.port.postMessage({ type: "start" });
         } else {
           this.phasorWorklet.port.postMessage({ type: "stop" });
         }
       }
-      
+
       // Continue with rest of method for compatibility
-      if (this.unifiedSynthNode && this.unifiedSynthNode.parameters.has("isPlaying")) {
-        this.unifiedSynthNode.parameters.get("isPlaying").value = this.receivedIsPlaying ? 1 : 0;
+      if (
+        this.unifiedSynthNode &&
+        this.unifiedSynthNode.parameters.has("isPlaying")
+      ) {
+        this.unifiedSynthNode.parameters.get("isPlaying").value =
+          this.receivedIsPlaying ? 1 : 0;
       }
-      
+
       if (this.programNode) {
-        const periodDisplay = message.cpm ? `${message.cpm} CPM` : `${this.receivedCycleLength}s period`;
+        const periodDisplay = message.cpm
+          ? `${message.cpm} CPM`
+          : `${this.receivedCycleLength}s period`;
         console.log(`⏰ Received phasor sync: ${periodDisplay}`);
-        
+
         const newTimingConfig = {
           cpm: message.cpm,
           stepsPerCycle: message.stepsPerCycle,
           cycleLength: message.cycleLength,
           phasor: message.phasor,
         };
-        
+
         this.timingConfig = newTimingConfig;
       }
-      
+
       this.updatePhasorWorklet();
-      
+
       if (!this.phasorUpdateId) {
         this.startPhasorInterpolation();
       }
       return;
     }
-    
+
     const currentAudioTime = this.audioContext.currentTime;
     const messageTimestamp = message.timestamp || performance.now();
 
@@ -1134,10 +1065,11 @@ class SynthClient {
             this.nextCycleTime.toFixed(3)
           }s`,
         );
-        
       } else {
         // Step beacon - apply gentle PLL correction
-        const expectedStepIndex = Math.round(this.receivedPhasor * this.receivedStepsPerCycle);
+        const expectedStepIndex = Math.round(
+          this.receivedPhasor * this.receivedStepsPerCycle,
+        );
         const stepPhase = expectedStepIndex / this.receivedStepsPerCycle;
 
         // Send step-aligned phase correction to worklet
@@ -1150,7 +1082,9 @@ class SynthClient {
         }
 
         console.log(
-          `🔄 Step beacon: step ${expectedStepIndex} (phase ${stepPhase.toFixed(3)})`,
+          `🔄 Step beacon: step ${expectedStepIndex} (phase ${
+            stepPhase.toFixed(3)
+          })`,
         );
       }
     } else {
@@ -1425,35 +1359,41 @@ class SynthClient {
       this._pendingSceneAtEoc = null;
       return;
     }
-    
+
     // Apply staged config changes at EOC
     if (Object.keys(this.stagedConfig).length > 0) {
-      console.log(`🚀 Committing staged config changes at EOC (${Object.keys(this.stagedConfig).length} parameters)`);
-      
+      console.log(
+        `🚀 Committing staged config changes at EOC (${
+          Object.keys(this.stagedConfig).length
+        } parameters)`,
+      );
+
       // Merge staged config into active config
       this.programConfig = JSON.parse(JSON.stringify(this.stagedConfig));
-      
+
       // Forward updated config to worklet using COMMIT_STAGED to preserve envelope continuity
       if (this.voiceNode) {
         this.voiceNode.port.postMessage({
           type: "COMMIT_STAGED",
-          config: this.programConfig
+          config: this.programConfig,
         });
-        console.log(`📤 Forwarded committed config to worklet (preserving envelope state)`);
+        console.log(
+          `📤 Forwarded committed config to worklet (preserving envelope state)`,
+        );
       }
-      
+
       // Clear staged config
       this.stagedConfig = {};
-      
+
       console.log(`✅ Staged config committed and applied at EOC`);
       return;
     }
-    
+
     // EOC logging for debugging
-    console.log(`📊 handleCycleReset: EOC received, worklet handles resolution`);
+    console.log(
+      `📊 handleCycleReset: EOC received, worklet handles resolution`,
+    );
   }
-
-
 
   sendPhaseCorrection() {
     if (!this.phasorWorklet || !this.pllEnabled || !this.receivedIsPlaying) {
@@ -1868,8 +1808,12 @@ class SynthClient {
 
     // Restore cont mode end values
     Object.assign(this.rbgState, preservedEndValues);
-    
-    console.log(`🎲 Cleared all RBG cached values (preserved ${Object.keys(preservedEndValues).length} cont mode end values)`);
+
+    console.log(
+      `🎲 Cleared all RBG cached values (preserved ${
+        Object.keys(preservedEndValues).length
+      } cont mode end values)`,
+    );
 
     // Re-initialize HRG indices for all parameters
     for (const paramName in this.programConfig) {
@@ -2000,7 +1944,6 @@ class SynthClient {
   // Build complete scene snapshot with versioned schema
   buildSceneSnapshot() {
     const program = JSON.parse(JSON.stringify(this.programConfig || {}));
-
 
     // Capture complete HRG state
     const hrg = {};
@@ -2437,7 +2380,7 @@ class SynthClient {
             console.log(
               `📋 Creating missing end generator for ${message.param} cosine interpolation`,
             );
-            
+
             if (existingConfig.startValueGenerator?.type === "periodic") {
               // Create periodic neutral end selector
               this.programConfig[message.param].endValueGenerator = {
@@ -3030,17 +2973,25 @@ class SynthClient {
    */
   checkProgramConfigCompleteness() {
     const currentParams = Object.keys(this.programConfig);
-    const missingParams = this.REQUIRED_PARAMS.filter(param => !currentParams.includes(param));
-    
+    const missingParams = this.REQUIRED_PARAMS.filter((param) =>
+      !currentParams.includes(param)
+    );
+
     const wasComplete = this.programConfigComplete;
     this.programConfigComplete = missingParams.length === 0;
-    
+
     if (!this.programConfigComplete) {
-      console.warn(`🚫 programConfig incomplete: ${currentParams.length}/10 params, missing: [${missingParams.join(', ')}]`);
+      console.warn(
+        `🚫 programConfig incomplete: ${currentParams.length}/10 params, missing: [${
+          missingParams.join(", ")
+        }]`,
+      );
     } else if (!wasComplete) {
-      console.log(`✅ programConfig now complete: [${currentParams.join(', ')}]`);
+      console.log(
+        `✅ programConfig now complete: [${currentParams.join(", ")}]`,
+      );
     }
-    
+
     return this.programConfigComplete;
   }
 
@@ -3131,11 +3082,16 @@ class SynthClient {
     });
 
     // Update tracking with new format
-    this._updateValueTracking(paramName, resolvedParam.startValue, resolvedParam.endValue, cfg.interpolation);
+    this._updateValueTracking(
+      paramName,
+      resolvedParam.startValue,
+      resolvedParam.endValue,
+      cfg.interpolation,
+    );
   }
 
   // GRANULAR UPDATE METHODS - Minimal Re-Resolution Architecture
-  
+
   // Apply only start value update (preserves end value)
   applyStartValueUpdate(paramName, portamentoMs) {
     const cfg = this.programConfig[paramName];
@@ -3147,14 +3103,14 @@ class SynthClient {
     const newStartValue = this._resolveParameterValue(
       cfg.startValueGenerator,
       paramName,
-      "start"
+      "start",
     );
 
     // Preserve existing end value
     const preservedEndValue = this._getPreservedEndValue(paramName, cfg);
 
     console.log(
-      `⚡ START-ONLY update for ${paramName}: start=${newStartValue}, preserving end=${preservedEndValue}`
+      `⚡ START-ONLY update for ${paramName}: start=${newStartValue}, preserving end=${preservedEndValue}`,
     );
 
     // Send targeted SET_ENV message
@@ -3169,7 +3125,12 @@ class SynthClient {
     });
 
     // Update tracking
-    this._updateValueTracking(paramName, newStartValue, preservedEndValue, cfg.interpolation);
+    this._updateValueTracking(
+      paramName,
+      newStartValue,
+      preservedEndValue,
+      cfg.interpolation,
+    );
   }
 
   // Apply only end value update (preserves start value)
@@ -3183,12 +3144,12 @@ class SynthClient {
     const preservedStartValue = this._getPreservedStartValue(paramName);
 
     // Resolve only the end value (if cosine interpolation)
-    const newEndValue = cfg.interpolation === "step" 
-      ? preservedStartValue  // Step mode: end = start
+    const newEndValue = cfg.interpolation === "step"
+      ? preservedStartValue // Step mode: end = start
       : this._resolveParameterValue(cfg.endValueGenerator, paramName, "end");
 
     console.log(
-      `⚡ END-ONLY update for ${paramName}: preserving start=${preservedStartValue}, end=${newEndValue}`
+      `⚡ END-ONLY update for ${paramName}: preserving start=${preservedStartValue}, end=${newEndValue}`,
     );
 
     // Send targeted SET_ENV message
@@ -3203,7 +3164,12 @@ class SynthClient {
     });
 
     // Update tracking
-    this._updateValueTracking(paramName, preservedStartValue, newEndValue, cfg.interpolation);
+    this._updateValueTracking(
+      paramName,
+      preservedStartValue,
+      newEndValue,
+      cfg.interpolation,
+    );
   }
 
   // Apply base value change without re-resolving HRG (preserves ratios)
@@ -3216,20 +3182,29 @@ class SynthClient {
     // Get stored HRG components (not absolute values!)
     const hrgState = this.lastResolvedHRG[paramName];
     if (!hrgState) {
-      console.warn(`⚠️ No HRG state for ${paramName}, falling back to full resolution`);
+      console.warn(
+        `⚠️ No HRG state for ${paramName}, falling back to full resolution`,
+      );
       return this.applySingleParamWithPortamento(paramName, portamentoMs);
     }
 
     // Recalculate frequencies using NEW base but SAME ratios
-    const newStartValue = newBaseValue * (hrgState.start.numerator / hrgState.start.denominator);
+    const newStartValue = newBaseValue *
+      (hrgState.start.numerator / hrgState.start.denominator);
     const newEndValue = this.isCosInterp(cfg.interpolation) && hrgState.end
       ? newBaseValue * (hrgState.end.numerator / hrgState.end.denominator)
-      : newStartValue;  // For step interpolation, end = start
+      : newStartValue; // For step interpolation, end = start
 
     console.log(
       `⚡ BASE-ONLY update for ${paramName}: base=${newBaseValue}, ` +
-      `start=${newStartValue.toFixed(3)} (${hrgState.start.numerator}/${hrgState.start.denominator}), ` +
-      `end=${newEndValue.toFixed(3)} ${hrgState.end ? `(${hrgState.end.numerator}/${hrgState.end.denominator})` : '(step)'}`
+        `start=${
+          newStartValue.toFixed(3)
+        } (${hrgState.start.numerator}/${hrgState.start.denominator}), ` +
+        `end=${newEndValue.toFixed(3)} ${
+          hrgState.end
+            ? `(${hrgState.end.numerator}/${hrgState.end.denominator})`
+            : "(step)"
+        }`,
     );
 
     // Send to worklet
@@ -3252,7 +3227,12 @@ class SynthClient {
 
     // Also update the config and legacy tracking for consistency
     cfg.baseValue = newBaseValue;
-    this._updateValueTracking(paramName, newStartValue, newEndValue, cfg.interpolation);
+    this._updateValueTracking(
+      paramName,
+      newStartValue,
+      newEndValue,
+      cfg.interpolation,
+    );
   }
 
   // Apply interpolation change (may need to resolve end value)
@@ -3271,12 +3251,12 @@ class SynthClient {
       endValue = preservedStartValue;
     } else {
       // Cosine mode: may need to resolve end value if not already available
-      endValue = this._getPreservedEndValue(paramName, cfg) || 
-                 this._resolveParameterValue(cfg.endValueGenerator, paramName, "end");
+      endValue = this._getPreservedEndValue(paramName, cfg) ||
+        this._resolveParameterValue(cfg.endValueGenerator, paramName, "end");
     }
 
     console.log(
-      `⚡ INTERPOLATION change for ${paramName}: ${cfg.interpolation}→${newInterpolation}, start=${preservedStartValue}, end=${endValue}`
+      `⚡ INTERPOLATION change for ${paramName}: ${cfg.interpolation}→${newInterpolation}, start=${preservedStartValue}, end=${endValue}`,
     );
 
     // Send SET_ENV with new interpolation
@@ -3291,33 +3271,42 @@ class SynthClient {
     });
 
     // Update tracking
-    this._updateValueTracking(paramName, preservedStartValue, endValue, newInterpolation);
+    this._updateValueTracking(
+      paramName,
+      preservedStartValue,
+      endValue,
+      newInterpolation,
+    );
   }
 
   // Helper: Get preserved start value from tracking
   _getPreservedStartValue(paramName) {
     const tracking = this.lastResolvedValues[paramName];
-    if (typeof tracking === 'object' && tracking.start !== undefined) {
+    if (typeof tracking === "object" && tracking.start !== undefined) {
       return tracking.start;
-    } else if (typeof tracking === 'number') {
+    } else if (typeof tracking === "number") {
       return tracking; // Legacy format
     } else {
-      throw new Error(`CRITICAL: No preserved start value available for ${paramName}`);
+      throw new Error(
+        `CRITICAL: No preserved start value available for ${paramName}`,
+      );
     }
   }
 
   // Helper: Get preserved end value from tracking
   _getPreservedEndValue(paramName, cfg) {
     const tracking = this.lastResolvedValues[paramName];
-    if (typeof tracking === 'object' && tracking.end !== undefined) {
+    if (typeof tracking === "object" && tracking.end !== undefined) {
       return tracking.end;
-    } else if (typeof tracking === 'number') {
+    } else if (typeof tracking === "number") {
       return tracking; // Legacy format - use for end too
     } else if (cfg.interpolation === "step") {
       // For step mode, end = start
       return this._getPreservedStartValue(paramName);
     } else {
-      throw new Error(`CRITICAL: No preserved end value available for ${paramName}`);
+      throw new Error(
+        `CRITICAL: No preserved end value available for ${paramName}`,
+      );
     }
   }
 
@@ -3326,7 +3315,7 @@ class SynthClient {
     this.lastResolvedValues[paramName] = {
       start: startValue,
       end: endValue,
-      current: interpolation === "step" ? startValue : endValue
+      current: interpolation === "step" ? startValue : endValue,
     };
   }
 
@@ -3522,7 +3511,7 @@ class SynthClient {
 
     const base = Number(cfg.baseValue);
     const frequency = base * (numerator / (denominator || 1));
-    
+
     // Store HRG components for minimal re-computation (even for peek)
     if (!this.lastResolvedHRG[paramName]) {
       this.lastResolvedHRG[paramName] = { baseValue: base };
@@ -3533,10 +3522,10 @@ class SynthClient {
     this.lastResolvedHRG[paramName][position] = {
       numerator,
       denominator: denominator || 1,
-      frequency
+      frequency,
     };
     this.lastResolvedHRG[paramName].baseValue = base;
-    
+
     return frequency;
   }
 
@@ -3615,7 +3604,7 @@ class SynthClient {
 
     const base = Number(cfg.baseValue);
     const frequency = base * (numerator / (denominator || 1));
-    
+
     // Store HRG components for minimal re-computation
     if (!this.lastResolvedHRG[param]) {
       this.lastResolvedHRG[param] = { baseValue: base };
@@ -3626,10 +3615,10 @@ class SynthClient {
     this.lastResolvedHRG[param][position] = {
       numerator,
       denominator: denominator || 1,
-      frequency
+      frequency,
     };
     this.lastResolvedHRG[param].baseValue = base;
-    
+
     return frequency;
   }
 
@@ -3695,9 +3684,6 @@ class SynthClient {
     }
   }
 
-
-
-
   _resolveProgram(program) {
     // Resolve a program config to envelope configurations for SET_ALL_ENV
     const resolvedParams = {};
@@ -3734,20 +3720,31 @@ class SynthClient {
         let startValue, endValue;
 
         // Disc vs Cont semantics for start value
-        if (config.interpolation === "cont" && this.lastResolvedHRG[paramName]?.end) {
+        if (
+          config.interpolation === "cont" &&
+          this.lastResolvedHRG[paramName]?.end
+        ) {
           // CONT mode: use previous end as current start (smooth morphing)
           if (config.startValueGenerator?.type === "periodic") {
             startValue = this.lastResolvedHRG[paramName].end.frequency;
-            console.log(`🔄 CONT: ${paramName} start = previous end = ${startValue}`);
+            console.log(
+              `🔄 CONT: ${paramName} start = previous end = ${startValue}`,
+            );
           } else if (config.startValueGenerator?.type === "normalised") {
             // For RBG, we need to check if we have cached end value
             const cachedEndValue = this.rbgState[`${paramName}_end`];
             if (cachedEndValue !== undefined) {
               startValue = cachedEndValue;
-              console.log(`🔄 CONT: ${paramName} start = previous RBG end = ${startValue}`);
+              console.log(
+                `🔄 CONT: ${paramName} start = previous RBG end = ${startValue}`,
+              );
             } else {
               // Fallback to fresh resolution
-              startValue = this._resolveRBG(config.startValueGenerator, paramName, "start");
+              startValue = this._resolveRBG(
+                config.startValueGenerator,
+                paramName,
+                "start",
+              );
             }
           }
         } else {
@@ -3794,14 +3791,18 @@ class SynthClient {
             if (config.endValueGenerator?.type === "normalised") {
               // Store RBG end value for next cycle
               this.rbgState[`${paramName}_end`] = endValue;
-              console.log(`💾 CONT: Stored ${paramName} RBG end value = ${endValue}`);
+              console.log(
+                `💾 CONT: Stored ${paramName} RBG end value = ${endValue}`,
+              );
             } else if (config.endValueGenerator?.type === "periodic") {
               // Store HRG end value for next cycle
               if (!this.lastResolvedHRG[paramName]) {
                 this.lastResolvedHRG[paramName] = {};
               }
               this.lastResolvedHRG[paramName].end = { frequency: endValue };
-              console.log(`💾 CONT: Stored ${paramName} HRG end value = ${endValue}`);
+              console.log(
+                `💾 CONT: Stored ${paramName} HRG end value = ${endValue}`,
+              );
             }
           }
         }

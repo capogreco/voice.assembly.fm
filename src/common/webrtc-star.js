@@ -142,13 +142,13 @@ export class WebRTCStar extends EventTarget {
   /**
    * Connect to signaling server and register
    */
-  async connect(
+  connect(
     signalingUrl = "ws://localhost:8000/ws",
     forceTakeover = false,
   ) {
     this.forceTakeover = forceTakeover;
     this.signalingUrl = signalingUrl; // Save for reconnection
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve, _reject) => {
       this.signalingSocket = new WebSocket(signalingUrl);
 
       this.signalingSocket.addEventListener("open", () => {
@@ -285,16 +285,16 @@ export class WebRTCStar extends EventTarget {
           } else {
             // Reset retry counter on successful response
             this.ctrlRetryCount = 0;
-            // Deterministic role: ctrl is initiator. Synth does NOT initiate.
-            // We simply ensure a placeholder peer record exists and wait for ctrl to offer.
+            // NEW: Synth initiates connection to controllers
+            // Synth creates peer connections and sends offers to all controllers
             for (const ctrlId of message.ctrls) {
               if (!this.peers.has(ctrlId)) {
                 if (this.verbose) {
                   console.log(
-                    `[SYNTH-HANDSHAKE] Discovered new controller ${ctrlId}. Creating placeholder peer connection.`,
+                    `[SYNTH-HANDSHAKE] Discovered new controller ${ctrlId}. Creating peer connection and sending offer.`,
                   );
                 }
-                await this.createPeerConnection(ctrlId, false);
+                await this.createPeerConnection(ctrlId, true);
               } else {
                 if (this.verbose) {
                   console.log(
@@ -317,11 +317,11 @@ export class WebRTCStar extends EventTarget {
           }
           if (this.verbose) {
             console.log(
-              `🎛️ Ctrl joined: ${message.ctrl_id} (waiting for offer)`,
+              `🎛️ Ctrl joined: ${message.ctrl_id} (synth will initiate)`,
             );
           }
           if (!this.peers.has(message.ctrl_id)) {
-            await this.createPeerConnection(message.ctrl_id, false);
+            await this.createPeerConnection(message.ctrl_id, true);
           }
         }
         break;
@@ -336,11 +336,13 @@ export class WebRTCStar extends EventTarget {
       case "synth-joined":
         if (this.peerType === "ctrl") {
           if (this.verbose) {
-            console.log(`🎤 New synth joined: ${message.synth_id}`);
+            console.log(
+              `🎤 New synth joined: ${message.synth_id} (waiting for offer)`,
+            );
           }
-          // Ctrl initiates connection to new synth
+          // NEW: Ctrl waits for synth to initiate connection
           if (!this.peers.has(message.synth_id)) {
-            await this.createPeerConnection(message.synth_id, true);
+            await this.createPeerConnection(message.synth_id, false);
           }
         }
         break;
@@ -363,22 +365,22 @@ export class WebRTCStar extends EventTarget {
           if (this.verbose) {
             console.log("📋 Received synths list:", message.synths);
           }
-          
+
           // Dispatch event to indicate this controller is now active
           this.dispatchEvent(
             new CustomEvent("controller-active", {
               detail: { synths: message.synths },
             }),
           );
-          // Ctrl initiates connections to all synths
+          // NEW: Ctrl waits for synths to initiate connections
           for (const synthId of message.synths) {
             if (!this.peers.has(synthId)) {
               if (this.verbose) {
                 console.log(
-                  `[CTRL-HANDSHAKE] Discovered new synth ${synthId}. Creating peer connection and sending offer.`,
+                  `[CTRL-HANDSHAKE] Discovered new synth ${synthId}. Creating placeholder peer connection.`,
                 );
               }
-              await this.createPeerConnection(synthId, true);
+              await this.createPeerConnection(synthId, false);
             } else {
               if (this.verbose) {
                 console.log(
@@ -1290,7 +1292,9 @@ export class WebRTCStar extends EventTarget {
       // Close old pc; don't act on its events due to stale guard
       try {
         peer.connection.close();
-      } catch {}
+      } catch {
+        // Intentionally empty - close() can fail if already closed
+      }
 
       // New pc
       const pc = new RTCPeerConnection({ iceServers: this.iceServers });

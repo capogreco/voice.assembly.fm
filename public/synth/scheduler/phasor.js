@@ -77,7 +77,7 @@ export function handlePhasorSync(message, context) {
 
     // Estimate message arrival time accounting for network delay
     const estimatedSendTime = messageTimestamp / 1000.0; // Convert to seconds
-    const estimatedArrivalDelay = 0.01; // Assume ~10ms network delay
+    const estimatedArrivalDelay = 0.01; // TODO: replace hardcoded guess with per-peer RTT/2 (critical follow-up)
     const beaconAudioTime = currentAudioTime - estimatedArrivalDelay;
 
     // Store beacon timing for PLL
