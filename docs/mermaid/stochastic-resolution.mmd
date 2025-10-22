@@ -1,0 +1,27 @@
+flowchart TD
+  Msg["PROGRAM_UPDATE / SUB_PARAM_UPDATE received"]
+  Playing{"Transport running?"}
+  Stage["Stash delta in stagedConfig"]
+  WaitEOC["Wait for cycle reset"]
+  Commit["COMMIT_STAGED triggered"]
+  ApplyNow["Apply immediately"]
+  Iterate["Iterate parameters"]
+  Periodic{"Generator type = periodic?"}
+  UpdateHRG["Update HRG state (indices / shuffle)"]
+  Normalised{"Generator type = normalised?"}
+  SampleRBG["Sample RBG within range / behaviour"]
+  Direct["Use baseValue / constant"]
+  BuildEnv["Build envelope payload (start/end/interp)"]
+  SendWorklet["Send SET_ENV / SET_ALL_ENV to voice worklet"]
+  EOCReset["cycle-reset message"]
+
+  Msg --> Playing
+  Playing -- Yes --> Stage --> WaitEOC --> Commit --> Iterate
+  Playing -- No --> ApplyNow --> Iterate
+  Iterate --> Periodic
+  Periodic -- Yes --> UpdateHRG --> BuildEnv
+  Periodic -- No --> Normalised
+  Normalised -- Yes --> SampleRBG --> BuildEnv
+  Normalised -- No --> Direct --> BuildEnv
+  BuildEnv --> SendWorklet
+  WaitEOC <-- EOCReset --> SendWorklet

@@ -127,6 +127,17 @@ Data Channels                 │  Data Channels
 └───────────────────┘   └───────────────────┘
 ```
 
+### WebRTC Connection Flow
+
+- Synth clients register with the signaling server, request the active ctrl ID,
+  and immediately create an `RTCPeerConnection`.
+- Each synth opens its data channels, generates the WebRTC offer, and sends it
+  to the controller via the server mailbox.
+- The controller responds with the answer plus its ICE candidates; synths keep
+  forwarding their own candidates until the link stabilises.
+- Controllers never dial audience devices directly—waiting for offers keeps
+  reconnection cheap when phones churn.
+
 ### Network Messages
 
 **Parameter Control (Clean Three-Message Model):**

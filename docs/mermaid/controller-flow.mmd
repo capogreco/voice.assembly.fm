@@ -1,0 +1,30 @@
+sequenceDiagram
+  actor Performer
+  participant CtrlUI as Ctrl UI (browser)
+  participant CtrlRTC as Ctrl→Synth Data Channel
+  participant Synth as Synth Client
+
+  Performer->>CtrlUI: Adjust control
+  CtrlUI->>CtrlUI: Mutate stagedState / mark pending
+  alt Bulk mode enabled
+    CtrlUI->>CtrlUI: Queue change for Apply
+    Performer->>CtrlUI: Press Apply Changes
+    CtrlUI->>CtrlRTC: PROGRAM_UPDATE (staged payload)
+  else Real-time edit
+    opt Sub-parameter tweak
+      CtrlUI->>CtrlRTC: SUB_PARAM_UPDATE
+    end
+    opt Single parameter change
+      CtrlUI->>CtrlRTC: PROGRAM_UPDATE (single param)
+    end
+  end
+  CtrlRTC-->>Synth: Deliver message over control channel
+  alt Transport running
+    Synth->>Synth: Stage change until next cycle reset
+  else Paused
+    Synth->>Synth: Apply immediately with portamento
+  end
+  Performer->>CtrlUI: Toggle synthesis
+  CtrlUI->>CtrlRTC: PROGRAM_UPDATE (synthesisActive flag)
+  Performer->>CtrlUI: Play / Pause / Stop / Jump
+  CtrlUI->>CtrlRTC: phasor_sync / transport message

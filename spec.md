@@ -412,6 +412,14 @@ sceneSnapshots[bank] = {
 - **Bulk Update Mode**: Optional batching queue for grouped sub-parameter edits
   before commit.
 
+### WebRTC Role (Controller)
+
+- Registers with the signaling server and advertises availability in KV.
+- Waits for synth offers—does not create outbound `RTCPeerConnection`
+  instances.
+- On incoming offer: answers, emits ICE candidates, and mirrors state over the
+  already-established data channels.
+
 ### User Interface
 
 - **Minimalist Design**: Following es_8_test aesthetic
@@ -449,6 +457,43 @@ sceneSnapshots[bank] = {
   sub-parameter edits (SIN tweaks, range adjustments) and apply them in a single
   transmission to minimise network spam and keep stochastic resolution aligned.
 
+### Controller Performance Flow
+
+```mermaid
+sequenceDiagram
+  actor Performer
+  participant CtrlUI as Ctrl UI (browser)
+  participant CtrlRTC as Ctrl→Synth Data Channel
+  participant Synth as Synth Client
+
+  Performer->>CtrlUI: Adjust control
+  CtrlUI->>CtrlUI: Mutate stagedState / mark pending
+  alt Bulk mode enabled
+    CtrlUI->>CtrlUI: Queue change for Apply
+    Performer->>CtrlUI: Press Apply Changes
+    CtrlUI->>CtrlRTC: PROGRAM_UPDATE (staged payload)
+  else Real-time edit
+    opt Sub-parameter tweak
+      CtrlUI->>CtrlRTC: SUB_PARAM_UPDATE
+    end
+    opt Single parameter change
+      CtrlUI->>CtrlRTC: PROGRAM_UPDATE (single param)
+    end
+  end
+  CtrlRTC-->>Synth: Deliver message over control channel
+  alt Transport running
+    Synth->>Synth: Stage change until next cycle reset
+  else Paused
+    Synth->>Synth: Apply immediately with portamento
+  end
+  Performer->>CtrlUI: Toggle synthesis
+  CtrlUI->>CtrlRTC: PROGRAM_UPDATE (synthesisActive flag)
+  Performer->>CtrlUI: Play / Pause / Stop / Jump
+  CtrlUI->>CtrlRTC: phasor_sync / transport message
+```
+
+Source: `docs/mermaid/controller-flow.mmd`
+
 ## Synth Client Specification
 
 ### Minimal UI Design
@@ -483,6 +528,49 @@ sceneSnapshots[bank] = {
 - **AudioWorklet**: High-precision synthesis timing
 - **Touch/gesture handling**: Single-tap audio enablement
 - **Responsive design**: Works on phones and tablets
+
+### WebRTC Role (Synth)
+
+- Registers, polls the signaling server for the active controller, and builds
+  the `RTCPeerConnection` locally.
+- Creates data channels, generates the SDP offer, and pushes it to the
+  controller through the server mailbox.
+- Continues to emit ICE candidates until the controller answers and the link is
+  stable.
+
+### Stochastic Resolution Flow
+
+```mermaid
+flowchart TD
+  Msg["PROGRAM_UPDATE / SUB_PARAM_UPDATE received"]
+  Playing{"Transport running?"}
+  Stage["Stash delta in stagedConfig"]
+  WaitEOC["Wait for cycle reset"]
+  Commit["COMMIT_STAGED triggered"]
+  ApplyNow["Apply immediately"]
+  Iterate["Iterate parameters"]
+  Periodic{"Generator type = periodic?"}
+  UpdateHRG["Update HRG state (indices / shuffle)"]
+  Normalised{"Generator type = normalised?"}
+  SampleRBG["Sample RBG within range / behaviour"]
+  Direct["Use baseValue / constant"]
+  BuildEnv["Build envelope payload (start/end/interp)"]
+  SendWorklet["Send SET_ENV / SET_ALL_ENV to voice worklet"]
+  EOCReset["cycle-reset message"]
+
+  Msg --> Playing
+  Playing -- Yes --> Stage --> WaitEOC --> Commit --> Iterate
+  Playing -- No --> ApplyNow --> Iterate
+  Iterate --> Periodic
+  Periodic -- Yes --> UpdateHRG --> BuildEnv
+  Periodic -- No --> Normalised
+  Normalised -- Yes --> SampleRBG --> BuildEnv
+  Normalised -- No --> Direct --> BuildEnv
+  BuildEnv --> SendWorklet
+  WaitEOC <-- EOCReset --> SendWorklet
+```
+
+Source: `docs/mermaid/stochastic-resolution.mmd`
 
 ## Network Synchronization Protocol
 
