@@ -886,7 +886,13 @@ class SynthClient {
 
     console.log(`⚡ Applying sub-parameter update: ${paramPath} = ${value}`);
 
-    this.applySingleParamWithPortamento(paramName, portamentoTime);
+    const finalPortamento = portamentoTime ?? 0;
+
+    if (paramPath.endsWith(".baseValue")) {
+      this.applyBaseValueUpdate(paramName, value, finalPortamento);
+    } else {
+      this.applySingleParamWithPortamento(paramName, finalPortamento);
+    }
 
     // Forward to worklet when paused (not when playing)
     this.voiceNode.port.postMessage({
@@ -897,36 +903,165 @@ class SynthClient {
   }
 
   /**
-   * Update HRG/RBG state when parameter config changes (paused mode only)
+   * Perform minimal recomputation based on parameter path
+   * @param {string} paramName - Parameter name (e.g., 'frequency')
+   * @param {string} paramPath - Full dot-notation path
+   * @param {*} value - New value
+   * @param {boolean} stagingMode - If true, only update caches, don't send to worklet
+   * @param {number} portamentoMs - Portamento time (only for immediate application)
    */
-  _updateParameterState(paramName, paramPath, value) {
-    // Selective HRG updates to maintain independence between numerators and denominators
-    if (paramPath.includes(".numerators")) {
-      if (paramPath.includes(".startValueGenerator.")) {
-        this._updateHRGNumerators(paramName, "start");
-      } else if (paramPath.includes(".endValueGenerator.")) {
-        this._updateHRGNumerators(paramName, "end");
-      }
-    } else if (paramPath.includes(".denominators")) {
-      if (paramPath.includes(".startValueGenerator.")) {
-        this._updateHRGDenominators(paramName, "start");
-      } else if (paramPath.includes(".endValueGenerator.")) {
-        this._updateHRGDenominators(paramName, "end");
-      }
-    } else if (paramPath.includes("numeratorBehavior")) {
-      if (paramPath.includes(".startValueGenerator.")) {
-        this._updateHRGNumeratorBehavior(paramName, "start");
-      } else if (paramPath.includes(".endValueGenerator.")) {
-        this._updateHRGNumeratorBehavior(paramName, "end");
-      }
-    } else if (paramPath.includes("denominatorBehavior")) {
-      if (paramPath.includes(".startValueGenerator.")) {
-        this._updateHRGDenominatorBehavior(paramName, "start");
-      } else if (paramPath.includes(".endValueGenerator.")) {
-        this._updateHRGDenominatorBehavior(paramName, "end");
-      }
+  _performMinimalRecomputation(paramName, paramPath, value, stagingMode = false, portamentoMs = 0) {
+    const cfg = this.programConfig[paramName] || this.stagedConfig[paramName];
+    if (!cfg) {
+      throw new Error(`CRITICAL: Missing config for ${paramName}`);
     }
 
+    // Handle baseValue changes - rescale using existing ratios
+    if (paramPath.endsWith(".baseValue")) {
+      if (!stagingMode) {
+        this.applyBaseValueUpdate(paramName, value, portamentoMs);
+      } else {
+        // In staging mode, just update the lastResolvedHRG baseValue
+        if (this.lastResolvedHRG[paramName]) {
+          this.lastResolvedHRG[paramName].baseValue = value;
+        }
+      }
+      return;
+    }
+
+    // Handle start numerator changes
+    if (paramPath.includes(".startValueGenerator.numerators")) {
+      this._updateHRGComponent(paramName, "start", "numerator", stagingMode, portamentoMs);
+      return;
+    }
+
+    // Handle start denominator changes
+    if (paramPath.includes(".startValueGenerator.denominators")) {
+      this._updateHRGComponent(paramName, "start", "denominator", stagingMode, portamentoMs);
+      return;
+    }
+
+    // Handle end numerator changes
+    if (paramPath.includes(".endValueGenerator.numerators")) {
+      this._updateHRGComponent(paramName, "end", "numerator", stagingMode, portamentoMs);
+      return;
+    }
+
+    // Handle end denominator changes
+    if (paramPath.includes(".endValueGenerator.denominators")) {
+      this._updateHRGComponent(paramName, "end", "denominator", stagingMode, portamentoMs);
+      return;
+    }
+
+    // Handle behavior changes
+    if (paramPath.includes("numeratorBehavior") || paramPath.includes("denominatorBehavior")) {
+      // Behavior changes don't affect current values, just future generation
+      if (paramPath.includes(".startValueGenerator.")) {
+        this._updateHRGBehavior(paramName, "start", paramPath);
+      } else if (paramPath.includes(".endValueGenerator.")) {
+        this._updateHRGBehavior(paramName, "end", paramPath);
+      }
+      return;
+    }
+
+    // Handle RBG range/behavior updates
+    if (paramPath.includes(".range") || paramPath.includes(".behavior") || paramPath.includes(".sequenceBehavior")) {
+      this._updateRBGState(paramName, paramPath, value);
+      if (!stagingMode) {
+        this.applySingleParamWithPortamento(paramName, portamentoMs);
+      }
+      return;
+    }
+
+    // For all other paths, fall back to full resolution
+    if (!stagingMode) {
+      this.applySingleParamWithPortamento(paramName, portamentoMs);
+    }
+  }
+
+  /**
+   * Update a specific HRG component (numerator or denominator) for start or end
+   */
+  _updateHRGComponent(paramName, position, component, stagingMode = false, portamentoMs = 0) {
+    const cfg = this.programConfig[paramName] || this.stagedConfig[paramName];
+    const generator = position === "start" ? cfg.startValueGenerator : cfg.endValueGenerator;
+    
+    if (!generator || generator.type !== "periodic") {
+      return;
+    }
+
+    // Update the HRG state for this component
+    if (component === "numerator") {
+      this._updateHRGNumerators(paramName, position);
+    } else {
+      this._updateHRGDenominators(paramName, position);
+    }
+
+    // If not staging, compute new value and send to worklet
+    if (!stagingMode) {
+      const baseValue = cfg.baseValue;
+      const hrgState = this.lastResolvedHRG[paramName];
+      
+      if (hrgState && hrgState[position]) {
+        const newValue = baseValue * (hrgState[position].numerator / hrgState[position].denominator);
+        
+        // Update the appropriate component in lastResolvedHRG
+        hrgState[position].frequency = newValue;
+        
+        // Send minimal SET_ENV for just the affected value
+        if (position === "start") {
+          const endValue = this._getPreservedEndValue(paramName, cfg);
+          this._sendSetEnvMessage(paramName, newValue, endValue, cfg.interpolation, portamentoMs);
+        } else {
+          const startValue = this._getPreservedStartValue(paramName);
+          this._sendSetEnvMessage(paramName, startValue, newValue, cfg.interpolation, portamentoMs);
+        }
+        
+        // Update tracking
+        this._updateValueTracking(paramName, 
+          position === "start" ? newValue : this._getPreservedStartValue(paramName),
+          position === "end" ? newValue : this._getPreservedEndValue(paramName, cfg),
+          cfg.interpolation
+        );
+        
+        console.log(
+          `🔄 Minimal ${component} update for ${paramName}.${position}: ${newValue.toFixed(3)} ` +
+          `(${hrgState[position].numerator}/${hrgState[position].denominator})`
+        );
+      }
+    }
+  }
+
+  /**
+   * Update HRG behavior without affecting current values
+   */
+  _updateHRGBehavior(paramName, position, paramPath) {
+    if (paramPath.includes("numeratorBehavior")) {
+      this._updateHRGNumeratorBehavior(paramName, position);
+    } else if (paramPath.includes("denominatorBehavior")) {
+      this._updateHRGDenominatorBehavior(paramName, position);
+    }
+  }
+
+  /**
+   * Send SET_ENV message to worklet
+   */
+  _sendSetEnvMessage(paramName, startValue, endValue, interpolation, portamentoMs) {
+    this.voiceNode.port.postMessage({
+      type: "SET_ENV",
+      v: 1,
+      param: paramName,
+      startValue: startValue,
+      endValue: endValue,
+      interpolation: interpolation,
+      portamentoMs: portamentoMs,
+    });
+  }
+
+  /**
+   * Update RBG state when parameter config changes
+   */
+  _updateRBGState(paramName, paramPath, value) {
     // Clear RBG state for behavior changes to allow random behavior to take effect
     if (paramPath.includes(".sequenceBehavior")) {
       const pathParts = paramPath.split(".");
@@ -1371,21 +1506,46 @@ class SynthClient {
       // Merge staged config into active config
       this.programConfig = JSON.parse(JSON.stringify(this.stagedConfig));
 
-      // Forward updated config to worklet using COMMIT_STAGED to preserve envelope continuity
+      // Apply minimal recomputation for each staged parameter to generate fresh values
+      // This ensures the caches (lastResolvedHRG, rbgState) are current for the committed config
+      const resolvedParams = {};
+      for (const paramName of Object.keys(this.stagedConfig)) {
+        const phase = this.getCurrentPhase();
+        const cfg = this.programConfig[paramName];
+        if (cfg) {
+          const resolvedParam = this.resolveParameter(paramName, cfg, phase);
+          resolvedParams[paramName] = {
+            startValue: resolvedParam.startValue,
+            endValue: resolvedParam.endValue,
+            interpolation: cfg.interpolation,
+          };
+          
+          // Update tracking with new resolved values
+          this._updateValueTracking(
+            paramName,
+            resolvedParam.startValue,
+            resolvedParam.endValue,
+            cfg.interpolation
+          );
+        }
+      }
+
+      // Forward resolved parameters to worklet
       if (this.voiceNode) {
         this.voiceNode.port.postMessage({
-          type: "COMMIT_STAGED",
-          config: this.programConfig,
+          type: "SET_ALL_ENV",
+          v: 1,
+          params: resolvedParams,
         });
         console.log(
-          `📤 Forwarded committed config to worklet (preserving envelope state)`,
+          `📤 Applied committed config with preserved caches to worklet`,
         );
       }
 
       // Clear staged config
       this.stagedConfig = {};
 
-      console.log(`✅ Staged config committed and applied at EOC`);
+      console.log(`✅ Staged config committed with minimal recomputation at EOC`);
       return;
     }
 

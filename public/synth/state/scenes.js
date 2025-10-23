@@ -115,13 +115,39 @@ export function buildSceneSnapshot(context) {
     }
   }
 
+  // Capture lastResolvedHRG cache for minimal recomputation
+  const lastResolvedHRG = {};
+  for (const [param, hrgCache] of Object.entries(context.lastResolvedHRG || {})) {
+    lastResolvedHRG[param] = {
+      baseValue: hrgCache.baseValue,
+    };
+    if (hrgCache.start) {
+      lastResolvedHRG[param].start = {
+        numerator: hrgCache.start.numerator,
+        denominator: hrgCache.start.denominator,
+        frequency: hrgCache.start.frequency,
+      };
+    }
+    if (hrgCache.end) {
+      lastResolvedHRG[param].end = {
+        numerator: hrgCache.end.numerator,
+        denominator: hrgCache.end.denominator,
+        frequency: hrgCache.end.frequency,
+      };
+    }
+  }
+
+  // Capture lastResolvedValues cache  
+  const lastResolvedValues = { ...(context.lastResolvedValues || {}) };
+
   // Capture RBG cache
   const rbg = { ...(context.rbgState || {}) };
 
   return {
-    v: 1, // Version for future compatibility
+    v: 2, // Updated version for cache support
     program,
     stochastic: { hrg, rbg },
+    caches: { lastResolvedHRG, lastResolvedValues },
     meta: {
       synthId: context.peerId,
       sampleRate: context.audioContext?.sampleRate || 48000,
@@ -138,7 +164,7 @@ export function buildSceneSnapshot(context) {
  * @param {Object} context - Synth context
  */
 export function restoreSceneSnapshot(snapshot, context) {
-  if (!snapshot || snapshot.v !== 1) {
+  if (!snapshot || (snapshot.v !== 1 && snapshot.v !== 2)) {
     throw new Error("Unsupported scene snapshot version");
   }
 
@@ -195,6 +221,20 @@ export function restoreSceneSnapshot(snapshot, context) {
 
   // 3) Restore RBG cache
   context.rbgState = { ...(snapshot.stochastic.rbg || {}) };
+
+  // 4) Restore minimal recomputation caches (v2 snapshots only)
+  if (snapshot.v >= 2 && snapshot.caches) {
+    context.lastResolvedHRG = { ...(snapshot.caches.lastResolvedHRG || {}) };
+    context.lastResolvedValues = { ...(snapshot.caches.lastResolvedValues || {}) };
+    console.log(
+      `🔄 Restored minimal recomputation caches: lastResolvedHRG for [${Object.keys(context.lastResolvedHRG).join(",")}]`,
+    );
+  } else {
+    // For v1 snapshots, initialize empty caches
+    context.lastResolvedHRG = {};
+    context.lastResolvedValues = {};
+    console.log("🆕 Initialized empty caches for v1 snapshot");
+  }
 
   console.log(
     `✅ Restored scene snapshot v${snapshot.v}: ${

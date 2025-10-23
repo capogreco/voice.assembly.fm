@@ -538,6 +538,7 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
 
   /**
    * Handle UPDATE_PARAM_CONFIG message - incremental parameter updates
+   * Now performs minimal recomputation to match main thread behavior
    */
   handleUpdateParamConfig(msg) {
     const { path, value } = msg;
@@ -551,11 +552,117 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
     const pathParts = path.split('.');
     const paramName = pathParts[0];
     
-    // Reinitialize HRG state if generator configuration changed
-    if (path.includes('Generator') || path.includes('Behavior') || 
-        path.includes('numerators') || path.includes('denominators')) {
-      this.initializeHRGState(paramName, this.programConfig[paramName]);
+    // Perform minimal updates based on path, matching main thread logic
+    if (path.endsWith('.baseValue')) {
+      this.updateBaseValueInWorklet(paramName, value);
+    } else if (path.includes('.startValueGenerator.numerators')) {
+      this.updateHRGComponentInWorklet(paramName, 'start', 'numerator');
+    } else if (path.includes('.startValueGenerator.denominators')) {
+      this.updateHRGComponentInWorklet(paramName, 'start', 'denominator');
+    } else if (path.includes('.endValueGenerator.numerators')) {
+      this.updateHRGComponentInWorklet(paramName, 'end', 'numerator');
+    } else if (path.includes('.endValueGenerator.denominators')) {
+      this.updateHRGComponentInWorklet(paramName, 'end', 'denominator');
+    } else if (path.includes('numeratorBehavior') || path.includes('denominatorBehavior')) {
+      // Behavior changes only affect future generation, not current values
+      if (path.includes('.startValueGenerator.')) {
+        this.updateHRGBehaviorInWorklet(paramName, 'start');
+      } else if (path.includes('.endValueGenerator.')) {
+        this.updateHRGBehaviorInWorklet(paramName, 'end');
+      }
+    } else if (path.includes('.range') || path.includes('.behavior') || path.includes('.sequenceBehavior')) {
+      // RBG updates - reinitialize the affected state
+      this.updateRBGStateInWorklet(paramName, path);
+    } else {
+      // For other changes, do minimal update
+      console.log(`🔧 Worklet: Non-HRG config update for ${path}`);
     }
+  }
+
+  /**
+   * Update base value while preserving ratios in worklet
+   */
+  updateBaseValueInWorklet(paramName, newBaseValue) {
+    const env = this.env[paramName];
+    if (!env || !this.hrgState[paramName]) {
+      return;
+    }
+
+    const hrgState = this.hrgState[paramName];
+    
+    // Update stored start value using existing ratio
+    if (hrgState.start) {
+      const ratio = hrgState.start.numerator / hrgState.start.denominator;
+      env.start = newBaseValue * ratio;
+    }
+    
+    // Update stored end value using existing ratio (for cosine)
+    if (hrgState.end && env.interpolation !== 'step') {
+      const ratio = hrgState.end.numerator / hrgState.end.denominator;
+      env.end = newBaseValue * ratio;
+    } else if (env.interpolation === 'step') {
+      env.end = env.start;
+    }
+    
+    console.log(`🔄 Worklet base update: ${paramName} start=${env.start.toFixed(3)}, end=${env.end.toFixed(3)}`);
+  }
+
+  /**
+   * Update specific HRG component in worklet
+   */
+  updateHRGComponentInWorklet(paramName, position, component) {
+    const config = this.programConfig[paramName];
+    if (!config) return;
+    
+    const generator = position === 'start' ? config.startValueGenerator : config.endValueGenerator;
+    if (!generator || generator.type !== 'periodic') return;
+    
+    // Reinitialize the specific component
+    if (component === 'numerator') {
+      this.updateHRGNumerators(paramName, position);
+    } else {
+      this.updateHRGDenominators(paramName, position);
+    }
+    
+    // Update envelope value
+    const hrgState = this.hrgState[paramName];
+    const env = this.env[paramName];
+    
+    if (hrgState && hrgState[position] && env) {
+      const baseValue = config.baseValue;
+      const ratio = hrgState[position].numerator / hrgState[position].denominator;
+      const newValue = baseValue * ratio;
+      
+      if (position === 'start') {
+        env.start = newValue;
+      } else {
+        env.end = newValue;
+      }
+      
+      console.log(`🔄 Worklet ${component} update: ${paramName}.${position} = ${newValue.toFixed(3)}`);
+    }
+  }
+
+  /**
+   * Update HRG behavior in worklet (affects future generation only)
+   */
+  updateHRGBehaviorInWorklet(paramName, position) {
+    // Just update the behavior state, don't change current values
+    if (position === 'start') {
+      this.updateHRGNumeratorBehavior(paramName, 'start');
+      this.updateHRGDenominatorBehavior(paramName, 'start');
+    } else {
+      this.updateHRGNumeratorBehavior(paramName, 'end');
+      this.updateHRGDenominatorBehavior(paramName, 'end');
+    }
+  }
+
+  /**
+   * Update RBG state in worklet
+   */
+  updateRBGStateInWorklet(paramName, path) {
+    // For RBG changes, reinitialize the affected state
+    this.initializeRBGState(paramName, this.programConfig[paramName]);
   }
 
   /**
