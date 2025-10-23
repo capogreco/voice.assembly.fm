@@ -1,153 +1,42 @@
 /**
- * Scene management for Voice.Assembly.FM Synth Client
+ * Scene management helpers for Voice.Assembly.FM Synth Client
  */
 
-/**
- * Handle save scene message
- * @param {Object} payload - Save scene payload
- * @param {Object} context - Synth context
- */
-export function handleSaveScene(payload, context) {
-  // Save immediately regardless of play/pause state
-  console.log(`💾 Capturing scene ${payload.memoryLocation} immediately`);
-  context.sceneSnapshots[payload.memoryLocation] = buildSceneSnapshot(context);
-}
+// ---------------------------------------------------------------------------
+// Snapshot creation ---------------------------------------------------------
+// ---------------------------------------------------------------------------
 
 /**
- * Capture scene to memory bank
- * @param {number} bank - Memory bank number
- * @param {Object} context - Synth context
- */
-export function captureScene(bank, context) {
-  const snapshot = {};
-  const sequences = {};
-
-  // Capture minimal scene state based on parameter mode and generator type
-  for (
-    const param of [
-      "frequency",
-      "vowelX",
-      "vowelY",
-      "zingAmount",
-      "zingMorph",
-      "symmetry",
-      "amplitude",
-      "whiteNoise",
-    ]
-  ) {
-    const paramConfig = context.programConfig[param];
-
-    if (!paramConfig) {
-      // No configuration available
-      continue;
-    }
-
-    if (paramConfig.interpolation === "step") {
-      // Program step mode - check generator type
-      if (paramConfig.startValueGenerator?.type === "periodic") {
-        // HRG - save sequence state (not values)
-        const hrgState = context.hrgState[param]?.start;
-        if (hrgState) {
-          sequences[param] = {
-            numeratorBehavior: hrgState.numeratorBehavior,
-            denominatorBehavior: hrgState.denominatorBehavior,
-            indexN: hrgState.indexN,
-            indexD: hrgState.indexD,
-            orderN: hrgState.orderN,
-            orderD: hrgState.orderD,
-          };
-        }
-      } else if (paramConfig.startValueGenerator?.type === "normalised") {
-        // RBG - determine if stat or rand mode
-        const generator = paramConfig.startValueGenerator;
-        if (typeof generator.range === "number") {
-          // Stat mode - save scalar value
-          snapshot[param] = generator.range;
-        }
-        // Rand mode - save nothing, let it re-randomize
-      }
-    }
-    // Skip cosine parameters - they regenerate from program
-  }
-
-  // Save to in-memory array (ephemeral)
-  context.sceneSnapshots[bank] = { snapshot, sequences };
-
-  console.log(
-    `[SCENE] saved to memory slot ${bank}, sequences.frequency:`,
-    sequences.frequency,
-    `snapshot.frequency:`,
-    snapshot.frequency,
-  );
-}
-
-/**
- * Build complete scene snapshot with versioned schema
- * @param {Object} context - Synth context
- * @returns {Object} - Scene snapshot
+ * Build a complete scene snapshot including minimal recomputation caches.
+ * @param {any} context
+ * @returns {SceneSnapshotV2}
  */
 export function buildSceneSnapshot(context) {
-  const program = JSON.parse(JSON.stringify(context.programConfig || {}));
+  const program = deepClone(context.programConfig || {});
 
-  // Capture complete HRG state
   const hrg = {};
   for (const [param, state] of Object.entries(context.hrgState || {})) {
     hrg[param] = {};
     if (state.start) {
-      hrg[param].start = {
-        numeratorBehavior: state.start.numeratorBehavior,
-        denominatorBehavior: state.start.denominatorBehavior,
-        indexN: state.start.indexN,
-        indexD: state.start.indexD,
-        orderN: state.start.orderN || null,
-        orderD: state.start.orderD || null,
-      };
+      hrg[param].start = serializeHRGState(state.start);
     }
     if (state.end) {
-      hrg[param].end = {
-        numeratorBehavior: state.end.numeratorBehavior,
-        denominatorBehavior: state.end.denominatorBehavior,
-        indexN: state.end.indexN,
-        indexD: state.end.indexD,
-        orderN: state.end.orderN || null,
-        orderD: state.end.orderD || null,
-      };
+      hrg[param].end = serializeHRGState(state.end);
     }
   }
 
-  // Capture lastResolvedHRG cache for minimal recomputation
-  const lastResolvedHRG = {};
-  for (const [param, hrgCache] of Object.entries(context.lastResolvedHRG || {})) {
-    lastResolvedHRG[param] = {
-      baseValue: hrgCache.baseValue,
-    };
-    if (hrgCache.start) {
-      lastResolvedHRG[param].start = {
-        numerator: hrgCache.start.numerator,
-        denominator: hrgCache.start.denominator,
-        frequency: hrgCache.start.frequency,
-      };
-    }
-    if (hrgCache.end) {
-      lastResolvedHRG[param].end = {
-        numerator: hrgCache.end.numerator,
-        denominator: hrgCache.end.denominator,
-        frequency: hrgCache.end.frequency,
-      };
-    }
-  }
+  const caches = {
+    lastResolvedHRG: deepClone(context.lastResolvedHRG || {}),
+    lastResolvedValues: deepClone(context.lastResolvedValues || {}),
+  };
 
-  // Capture lastResolvedValues cache  
-  const lastResolvedValues = { ...(context.lastResolvedValues || {}) };
-
-  // Capture RBG cache
-  const rbg = { ...(context.rbgState || {}) };
+  const rbg = deepClone(context.rbgState || {});
 
   return {
-    v: 2, // Updated version for cache support
+    v: 2,
     program,
     stochastic: { hrg, rbg },
-    caches: { lastResolvedHRG, lastResolvedValues },
+    caches,
     meta: {
       synthId: context.peerId,
       sampleRate: context.audioContext?.sampleRate || 48000,
@@ -158,117 +47,287 @@ export function buildSceneSnapshot(context) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Snapshot restoration ------------------------------------------------------
+// ---------------------------------------------------------------------------
+
 /**
- * Restore scene snapshot with bounds safety
- * @param {Object} snapshot - Scene snapshot
- * @param {Object} context - Synth context
+ * Restore a previously captured scene snapshot into the synth context.
+ * @param {SceneSnapshotV2} snapshot
+ * @param {any} context
  */
 export function restoreSceneSnapshot(snapshot, context) {
-  if (!snapshot || (snapshot.v !== 1 && snapshot.v !== 2)) {
-    throw new Error("Unsupported scene snapshot version");
+  if (!snapshot || snapshot.v !== 2) {
+    throw new Error("Unsupported scene snapshot version (expected v2)");
   }
 
-  // 1) Restore program
-  context.programConfig = JSON.parse(JSON.stringify(snapshot.program));
+  context.programConfig = deepClone(snapshot.program || {});
 
-  // 2) Restore HRG with bounds clamping
+  // Restore HRG state (numerators/denominators arrays + indices)
   context.hrgState = {};
-  for (
-    const [param, positions] of Object.entries(snapshot.stochastic.hrg || {})
-  ) {
-    if (!context.programConfig[param]) continue;
-
+  for (const [param, positions] of Object.entries(snapshot.stochastic?.hrg || {})) {
     context.hrgState[param] = {};
 
-    // Restore start position
     if (positions.start) {
-      const startGen = context.programConfig[param].startValueGenerator;
-      const numerators = context._parseSIN(startGen?.numerators || "1");
-      const denominators = context._parseSIN(startGen?.denominators || "1");
-
-      context.hrgState[param].start = {
-        numerators,
-        denominators,
-        numeratorBehavior: positions.start.numeratorBehavior,
-        denominatorBehavior: positions.start.denominatorBehavior,
-        // Clamp indices to array bounds
-        indexN: Math.min(positions.start.indexN, numerators.length - 1),
-        indexD: Math.min(positions.start.indexD, denominators.length - 1),
-        orderN: positions.start.orderN || null,
-        orderD: positions.start.orderD || null,
-      };
+      context.hrgState[param].start = deserializeHRGState(
+        positions.start,
+        context.programConfig[param]?.startValueGenerator,
+      );
     }
 
-    // Restore end position (for cosine)
     if (positions.end) {
-      const endGen = context.programConfig[param].endValueGenerator;
-      const numerators = context._parseSIN(endGen?.numerators || "1");
-      const denominators = context._parseSIN(endGen?.denominators || "1");
-
-      context.hrgState[param].end = {
-        numerators,
-        denominators,
-        numeratorBehavior: positions.end.numeratorBehavior,
-        denominatorBehavior: positions.end.denominatorBehavior,
-        // Clamp indices to array bounds
-        indexN: Math.min(positions.end.indexN, numerators.length - 1),
-        indexD: Math.min(positions.end.indexD, denominators.length - 1),
-        orderN: positions.end.orderN || null,
-        orderD: positions.end.orderD || null,
-      };
+      context.hrgState[param].end = deserializeHRGState(
+        positions.end,
+        context.programConfig[param]?.endValueGenerator,
+      );
     }
   }
 
-  // 3) Restore RBG cache
-  context.rbgState = { ...(snapshot.stochastic.rbg || {}) };
+  context.rbgState = deepClone(snapshot.stochastic?.rbg || {});
+  context.lastResolvedHRG = deepClone(snapshot.caches?.lastResolvedHRG || {});
+  context.lastResolvedValues = deepClone(snapshot.caches?.lastResolvedValues || {});
+}
 
-  // 4) Restore minimal recomputation caches (v2 snapshots only)
-  if (snapshot.v >= 2 && snapshot.caches) {
-    context.lastResolvedHRG = { ...(snapshot.caches.lastResolvedHRG || {}) };
-    context.lastResolvedValues = { ...(snapshot.caches.lastResolvedValues || {}) };
-    console.log(
-      `🔄 Restored minimal recomputation caches: lastResolvedHRG for [${Object.keys(context.lastResolvedHRG).join(",")}]`,
-    );
-  } else {
-    // For v1 snapshots, initialize empty caches
-    context.lastResolvedHRG = {};
-    context.lastResolvedValues = {};
-    console.log("🆕 Initialized empty caches for v1 snapshot");
+// ---------------------------------------------------------------------------
+// Scene loading -------------------------------------------------------------
+// ---------------------------------------------------------------------------
+
+/**
+ * Build resolved envelope values from cached scene data.
+ * @param {Record<string, any>} programConfig
+ * @param {Record<string, any>} lastResolvedValues
+ * @returns {Record<string, {startValue:number,endValue:number,interpolation:string}>}
+ */
+function buildResolvedFromCache(programConfig, lastResolvedValues) {
+  const resolved = {};
+
+  for (const [paramName, cfg] of Object.entries(programConfig || {})) {
+    const cached = lastResolvedValues?.[paramName];
+    if (!cached) continue;
+
+    const startValue = typeof cached === "number" ? cached : cached.start;
+    const endValue = typeof cached === "number"
+      ? cached
+      : cached.end !== undefined
+        ? cached.end
+        : cached.start;
+
+    if (startValue === undefined) continue;
+
+    resolved[paramName] = {
+      interpolation: cfg.interpolation,
+      startValue,
+      endValue,
+    };
   }
 
-  console.log(
-    `✅ Restored scene snapshot v${snapshot.v}: ${
-      Object.keys(snapshot.program).length
-    } params, HRG for [${Object.keys(snapshot.stochastic.hrg).join(",")}]`,
-  );
+  return resolved;
 }
 
 /**
- * Convert resolved parameters to worklet envelope payload
- * @param {Object} resolved - Resolved parameters
- * @param {Object} context - Synth context
- * @param {number} portamentoMs - Portamento time in milliseconds
- * @returns {Object} - Envelope payload
+ * Apply a snapshot to the synth, honouring paused vs playing transport.
+ * @param {SceneSnapshotV2} snapshot
+ * @param {any} context
+ */
+export function loadScene(snapshot, context, portamentoNorm = null) {
+  if (!snapshot) {
+    console.warn("⚠️ loadScene called without snapshot");
+    return;
+  }
+
+  restoreSceneSnapshot(snapshot, context);
+
+  let resolved = buildResolvedFromCache(
+    context.programConfig,
+    context.lastResolvedValues,
+  );
+
+  const missingParams = new Set(
+    Object.keys(context.programConfig || {}),
+  );
+  for (const key of Object.keys(resolved)) missingParams.delete(key);
+
+  if (missingParams.size > 0) {
+    console.warn(
+      `⚠️ Scene cache missing ${missingParams.size} parameter(s); falling back to resolve`,
+    );
+    const fallbackResolved = context._resolveProgram(context.programConfig);
+    for (const param of missingParams) {
+      if (fallbackResolved[param]) {
+        resolved[param] = {
+          interpolation: fallbackResolved[param].interpolation,
+          startValue: fallbackResolved[param].startValue,
+          endValue: fallbackResolved[param].endValue,
+        };
+      }
+    }
+
+    // Update caches with fallback values so subsequent edits behave correctly
+    for (const param of missingParams) {
+      if (!context.lastResolvedValues[param] && resolved[param]) {
+        context.lastResolvedValues[param] = {
+          start: resolved[param].startValue,
+          end: resolved[param].endValue,
+        };
+      }
+    }
+  }
+
+  let portamentoMs = 0;
+  if (context.isPlaying) {
+    portamentoMs = 0;
+  } else if (typeof portamentoNorm === "number") {
+    portamentoMs = context._mapPortamentoNormToMs(portamentoNorm);
+  } else if (context.elements?.portamentoTime) {
+    portamentoMs = context._mapPortamentoNormToMs(
+      parseFloat(context.elements.portamentoTime.value),
+    );
+  }
+
+  const envPayload = toEnvPayload(resolved, context, portamentoMs);
+
+  if (context.isPlaying) {
+    context._pendingSceneAtEoc = envPayload;
+    context.reresolveAtNextEOC = false;
+    console.log("📋 Scene staged for EOC boundary snap");
+  } else {
+    context.voiceNode?.port.postMessage({
+      type: "SET_ALL_ENV",
+      v: 1,
+      params: envPayload,
+    });
+    console.log(`⚡ Scene loaded immediately with ${portamentoMs}ms portamento`);
+  }
+}
+
+/**
+ * Handle LOAD_SCENE command from controller or other peers.
+ * @param {{memoryLocation:number, program?:object, snapshot?:SceneSnapshotV2}} payload
+ * @param {any} context
+ */
+export function handleLoadScene(payload, context) {
+  const { memoryLocation, program, snapshot } = payload;
+
+  const storedSnapshot = snapshot || context.sceneSnapshots[memoryLocation];
+
+  if (storedSnapshot) {
+    context.sceneSnapshots[memoryLocation] = storedSnapshot;
+    const portNorm = payload.portamento ?? null;
+    loadScene(storedSnapshot, context, portNorm);
+    return;
+  }
+
+  if (!program) {
+    console.warn(`⚠️ No scene data found for bank ${memoryLocation}`);
+    return;
+  }
+
+  console.log(
+    `[SCENE] Legacy load for bank ${memoryLocation} (no snapshot)`,
+  );
+
+  context.programConfig = deepClone(program);
+  context.hrgState = {};
+  for (const paramName in context.programConfig) {
+    context._initializeHRGState(paramName, context.programConfig[paramName]);
+  }
+
+  const resolved = context._resolveProgram(context.programConfig);
+  const envPayload = toEnvPayload(resolved, context, 0);
+
+  if (context.isPlaying) {
+    context._pendingSceneAtEoc = envPayload;
+    context.reresolveAtNextEOC = false;
+  } else {
+    context.voiceNode?.port.postMessage({
+      type: "SET_ALL_ENV",
+      v: 1,
+      params: envPayload,
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Utility helpers -----------------------------------------------------------
+// ---------------------------------------------------------------------------
+
+function serializeHRGState(state) {
+  return {
+    numerators: [...(state.numerators || [])],
+    denominators: [...(state.denominators || [])],
+    numeratorBehavior: state.numeratorBehavior,
+    denominatorBehavior: state.denominatorBehavior,
+    indexN: state.indexN ?? 0,
+    indexD: state.indexD ?? 0,
+    orderN: state.orderN ? [...state.orderN] : null,
+    orderD: state.orderD ? [...state.orderD] : null,
+  };
+}
+
+function deserializeHRGState(serialized, generator) {
+  const numerators = serialized.numerators?.length
+    ? [...serialized.numerators]
+    : parseSequence(generator?.numerators || "1");
+  const denominators = serialized.denominators?.length
+    ? [...serialized.denominators]
+    : parseSequence(generator?.denominators || "1");
+
+  const clamp = (value, arr) => Math.max(0, Math.min(value ?? 0, arr.length - 1));
+
+  return {
+    numerators,
+    denominators,
+    numeratorBehavior: serialized.numeratorBehavior || "static",
+    denominatorBehavior: serialized.denominatorBehavior || "static",
+    indexN: clamp(serialized.indexN, numerators),
+    indexD: clamp(serialized.indexD, denominators),
+    orderN: serialized.orderN ? [...serialized.orderN] : null,
+    orderD: serialized.orderD ? [...serialized.orderD] : null,
+  };
+}
+
+function parseSequence(str) {
+  return str.split(",").flatMap((part) => {
+    if (part.includes("-")) {
+      const [start, end] = part.split("-").map(Number);
+      const result = [];
+      for (let i = start; i <= end; i++) result.push(i);
+      return result;
+    }
+    return [Number(part)];
+  });
+}
+
+function deepClone(obj) {
+  return obj ? JSON.parse(JSON.stringify(obj)) : obj;
+}
+
+/**
+ * Convert resolved parameter map into worklet envelope payload.
+ * @param {Record<string,{startValue:number,endValue:number,interpolation:string}>} resolved
+ * @param {any} context
+ * @param {number} portamentoMs
  */
 export function toEnvPayload(resolved, context, portamentoMs = 0) {
   const payload = {};
 
-  for (const [param, config] of Object.entries(context.programConfig || {})) {
-    if (!resolved.hasOwnProperty(param)) continue;
+  for (const [param, cfg] of Object.entries(context.programConfig || {})) {
+    const resolvedParam = resolved[param];
+    if (!resolvedParam) continue;
 
-    if (config.interpolation === "step") {
+    if (cfg.interpolation === "step") {
       payload[param] = {
         interpolation: "step",
-        startValue: resolved[param].startValue || resolved[param],
-        endValue: resolved[param].startValue || resolved[param],
-        portamentoMs: portamentoMs, // Always explicit
+        startValue: resolvedParam.startValue,
+        endValue: resolvedParam.startValue,
+        portamentoMs,
       };
-    } else if (config.interpolation === "disc" || config.interpolation === "cont") {
+    } else {
       payload[param] = {
-        interpolation: resolved[param].interpolation || config.interpolation, // Use actual interpolation mode
-        startValue: resolved[param].startValue,
-        endValue: resolved[param].endValue,
-        portamentoMs: portamentoMs, // Always explicit
+        interpolation: resolvedParam.interpolation || cfg.interpolation,
+        startValue: resolvedParam.startValue,
+        endValue: resolvedParam.endValue,
+        portamentoMs,
       };
     }
   }
@@ -277,177 +336,47 @@ export function toEnvPayload(resolved, context, portamentoMs = 0) {
 }
 
 /**
- * Load scene with proper paused vs playing behavior
- * @param {Object} snapshot - Scene snapshot
- * @param {Object} context - Synth context
- */
-export function loadScene(snapshot, context) {
-  if (!snapshot) {
-    console.warn("⚠️ No snapshot to load");
-    return;
-  }
-
-  // Restore state
-  restoreSceneSnapshot(snapshot, context);
-
-  // Resolve targets from restored state
-  const resolved = context._resolveProgram(context.programConfig);
-
-  if (!context.voiceNode) {
-    console.error("❌ Voice worklet not ready for scene load");
-    return;
-  }
-
-  if (context.isPlaying) {
-    // Playing: stage for EOC snap (no portamento)
-    const payload = toEnvPayload(resolved, context, 0);
-    context._pendingSceneAtEoc = payload;
-    context.reresolveAtNextEOC = false; // Explicitly not re-resolving
-    console.log("📋 Scene staged for EOC boundary snap");
-  } else {
-    // Paused: glide with portamento
-    const portMs = context.elements?.portamentoTime
-      ? parseInt(context.elements.portamentoTime.value, 10)
-      : 100;
-    const payload = toEnvPayload(resolved, context, portMs);
-    context.voiceNode.port.postMessage({
-      type: "SET_ALL_ENV",
-      v: 1,
-      params: payload,
-    });
-    console.log(`⚡ Scene loaded with ${portMs}ms portamento (paused)`);
-  }
-}
-
-/**
- * Handle load scene message
- * @param {Object} payload - Load scene payload
- * @param {Object} context - Synth context
- */
-export function handleLoadScene(payload, context) {
-  const { memoryLocation, program } = payload;
-
-  // Check if we have a saved snapshot in memory first
-  const saved = context.sceneSnapshots[memoryLocation];
-
-  // Only update program config if we don't have saved state
-  // (If we have saved state, we want to keep using the config that was active when we saved)
-  if (!saved) {
-    context.programConfig = {};
-    for (const paramName in program) {
-      if (
-        !["type", "timestamp", "synthesisActive", "isManualMode"].includes(
-          paramName,
-        )
-      ) {
-        context.programConfig[paramName] = program[paramName];
-      }
-    }
-  }
-
-  if (saved) {
-    const { snapshot, sequences } = saved;
-
-    console.log(
-      `[SCENE] load from memory slot ${memoryLocation}, snapshotKeys:`,
-      Object.keys(snapshot),
-      `hasHRG:`,
-      Object.keys(sequences).length > 0,
-    );
-
-    // Initialize HRG state - but only for params without saved sequences
-    for (const paramName in context.programConfig) {
-      if (sequences[paramName]) {
-        // Use saved sequence data to restore complete HRG state
-        context._restoreHRGState(
-          paramName,
-          sequences[paramName],
-          context.programConfig[paramName],
-        );
-
-        // Detailed frequency HRG state logging
-        if (paramName === "frequency") {
-          const hrgState = context.hrgState[paramName]?.start;
-          console.log(
-            `[LOAD_SCENE] frequency HRG state - behavior: ${hrgState.numeratorBehavior}/${hrgState.denominatorBehavior}, index: ${hrgState.indexN}/${hrgState.indexD}, arrays: [${
-              hrgState.numerators?.slice(0, 3).join(",")
-            }...] / [${hrgState.denominators?.slice(0, 3).join(",")}...]`,
-          );
-        }
-      } else {
-        // No saved sequence - initialize fresh with per-synth randomization
-        context._initializeHRGState(paramName, context.programConfig[paramName]);
-      }
-    }
-
-    // Handle scalar values - apply immediately if paused, stage if playing
-    if (Object.keys(snapshot).length > 0) {
-      if (context.isPlaying) {
-        // Playing: stage for next EOC
-        context.pendingSceneState = snapshot;
-        console.log(`📋 Staged scene snapshot for next EOC:`, snapshot);
-      } else {
-        // Paused: apply immediately with portamento
-        console.log(
-          `⚡ Applying scene snapshot immediately (paused):`,
-          snapshot,
-        );
-        for (const [param, value] of Object.entries(snapshot)) {
-          // Use portamento for smooth transitions when paused
-          const portamentoTime = 100; // Default portamento time
-          context.applyWithPortamento(param, value, portamentoTime);
-        }
-      }
-    }
-  } else {
-    console.log(
-      `[SCENE] load, no data in memory slot ${memoryLocation} - initializing fresh`,
-    );
-    // No saved scene - initialize fresh HRG state with per-synth randomization
-    for (const paramName in context.programConfig) {
-      context._initializeHRGState(paramName, context.programConfig[paramName]);
-    }
-  }
-}
-
-/**
- * Clear all scene banks
- * @param {Object} context - Synth context
+ * Clear all in-memory scene banks.
+ * @param {any} context
  */
 export function clearAllBanks(context) {
-  // Clear all in-memory scene snapshots
-  const clearedCount = context.sceneSnapshots.filter((s) => s).length;
+  const cleared = context.sceneSnapshots.filter(Boolean).length;
   context.sceneSnapshots = [];
-  console.log(`🧹 Cleared ${clearedCount} synth scene bank(s) from memory`);
+  console.log(`🧹 Cleared ${cleared} synth scene bank(s)`);
 }
 
 /**
- * Clear specific scene bank
- * @param {number} memoryLocation - Memory bank to clear
- * @param {Object} context - Synth context
+ * Clear a single bank.
+ * @param {number} memoryLocation
+ * @param {any} context
  */
 export function clearBank(memoryLocation, context) {
   if (context.sceneSnapshots[memoryLocation]) {
     context.sceneSnapshots[memoryLocation] = null;
-    console.log(`🧹 Cleared synth scene bank ${memoryLocation} from memory`);
-  } else {
-    console.log(`⚠️ Scene bank ${memoryLocation} was already empty`);
+    console.log(`🧹 Cleared synth scene bank ${memoryLocation}`);
   }
 }
 
 /**
- * Apply pending scene state at EOC
- * @param {Object} context - Synth context
+ * Apply a pending staged scene at EOC.
+ * @param {import("../synth-main.js").default} context
  */
 export function applyPendingScene(context) {
-  if (context._pendingSceneAtEoc) {
-    context.voiceNode.port.postMessage({
-      type: "SET_ALL_ENV",
-      v: 1,
-      params: context._pendingSceneAtEoc,
-    });
-    
-    console.log("🎬 Applied pending scene at EOC");
-    context._pendingSceneAtEoc = null;
-  }
+  if (!context._pendingSceneAtEoc) return;
+
+  context.voiceNode?.port.postMessage({
+    type: "SET_ALL_ENV",
+    v: 1,
+    params: context._pendingSceneAtEoc,
+  });
+  context._pendingSceneAtEoc = null;
+  console.log("🎬 Applied pending scene at EOC");
 }
+
+// ---------------------------------------------------------------------------
+// Types ---------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+
+/**
+ * @typedef {ReturnType<typeof buildSceneSnapshot>} SceneSnapshotV2
+ */

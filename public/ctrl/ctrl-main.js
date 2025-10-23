@@ -652,7 +652,10 @@ class ControlClient {
       this.log("No network available", "error");
       return;
     }
-    const message = MessageBuilder.immediateReinitialize();
+    const portNorm = this.elements.portamentoTime
+      ? parseFloat(this.elements.portamentoTime.value)
+      : null;
+    const message = MessageBuilder.immediateReinitialize(portNorm);
     const sent = this.star.broadcastToType("synth", message, "control");
     this.log("Sent IMMEDIATE_REINITIALIZE to " + sent + " synth(s)", "info");
   }
@@ -1209,6 +1212,56 @@ class ControlClient {
   clearPendingChanges() {
     this.hasPendingChanges = false;
     // Apply button removed - staging handled by transport state
+  }
+  
+  /**
+   * Handle PROGRAM_UPDATE message from synth (after scene load)
+   * Updates controller state and UI to match synth's loaded scene
+   */
+  _handleProgramUpdateFromSynth(message) {
+    // Extract program parameters from message
+    const programParams = {};
+    for (const key of Object.keys(message)) {
+      if (key !== 'type' && key !== 'synthesisActive' && key !== 'isPlaying') {
+        programParams[key] = message[key];
+      }
+    }
+    
+    // Update both staged and live state
+    this.stagedState = programParams;
+    this.liveState = JSON.parse(JSON.stringify(programParams));
+    
+    // Update UI for all parameters
+    for (const paramName of Object.keys(programParams)) {
+      this._updateUIFromState(paramName);
+    }
+    
+    // Update synthesis state if provided
+    if (message.synthesisActive !== undefined) {
+      this.synthesisActive = message.synthesisActive;
+      this._updateToggleButton();
+    }
+    
+    console.log(`✅ Controller updated with scene from synth: ${Object.keys(programParams).length} parameters`);
+  }
+
+  _handleSceneSnapshotFromSynth(memoryLocation, snapshot) {
+    try {
+      localStorage.setItem(
+        `scene_${memoryLocation}_snapshot`,
+        JSON.stringify(snapshot),
+      );
+      if (snapshot?.program) {
+        localStorage.setItem(
+          `scene_${memoryLocation}_controller`,
+          JSON.stringify(snapshot.program),
+        );
+      }
+      this.updateSceneMemoryIndicators();
+      console.log(`💾 Stored scene snapshot ${memoryLocation} from synth (v${snapshot.v})`);
+    } catch (error) {
+      console.error("Failed to store scene snapshot:", error);
+    }
   }
 
   /**
@@ -2197,10 +2250,23 @@ class ControlClient {
         const pong = MessageBuilder.pong(message.id, message.timestamp);
         this.star.sendToPeer(peerId, pong, "sync");
       }
+      
+      // Handle program updates from synth (after scene load)
+      if (message.type === MessageTypes.PROGRAM_UPDATE && channelType === "control") {
+        console.log("📨 Received PROGRAM_UPDATE from synth after scene load");
+        this._handleProgramUpdateFromSynth(message);
+      }
+
+      if (message.type === MessageTypes.SCENE_SNAPSHOT) {
+        this._handleSceneSnapshotFromSynth(message.memoryLocation, message.snapshot);
+      }
 
       // Log other messages for debugging
       if (
-        message.type !== MessageTypes.PING && message.type !== MessageTypes.PONG
+        message.type !== MessageTypes.PING &&
+        message.type !== MessageTypes.PONG &&
+        message.type !== MessageTypes.PROGRAM_UPDATE &&
+        message.type !== MessageTypes.SCENE_SNAPSHOT
       ) {
         this.log("Received " + message.type + " from " + peerId, "debug");
       }
@@ -2528,8 +2594,11 @@ class ControlClient {
     const sceneButtons = document.querySelectorAll(".scene-btn");
     sceneButtons.forEach((button) => {
       const location = parseInt(button.getAttribute("data-location"));
-      const key = "scene_" + location + "_controller";
-      const hasScene = localStorage.getItem(key) !== null;
+      const controllerKey = `scene_${location}_controller`;
+      const snapshotKey = `scene_${location}_snapshot`;
+      const hasScene =
+        localStorage.getItem(snapshotKey) !== null ||
+        localStorage.getItem(controllerKey) !== null;
 
       if (hasScene) {
         button.classList.add("has-scene");
@@ -2576,16 +2645,37 @@ class ControlClient {
     console.log("📂 Loading scene from memory location " + memoryLocation + "...");
 
     try {
-      const savedProgramString = localStorage.getItem(
-        "scene_" + memoryLocation + "_controller",
-      );
-      if (!savedProgramString) {
+      const snapshotKey = `scene_${memoryLocation}_snapshot`;
+      const controllerKey = `scene_${memoryLocation}_controller`;
+
+      const snapshotString = localStorage.getItem(snapshotKey);
+      const savedProgramString = localStorage.getItem(controllerKey);
+
+      if (!snapshotString && !savedProgramString) {
         this.log("No scene found at location " + memoryLocation + ".", "error");
         return;
       }
 
-      // 1. Load and parse the saved program.
-      const loadedProgram = JSON.parse(savedProgramString);
+      let snapshot = null;
+      let loadedProgram = null;
+
+      if (snapshotString) {
+        try {
+          snapshot = JSON.parse(snapshotString);
+          loadedProgram = snapshot.program;
+        } catch (error) {
+          console.error("Failed to parse stored snapshot:", error);
+        }
+      }
+
+      if (!loadedProgram && savedProgramString) {
+        loadedProgram = JSON.parse(savedProgramString);
+      }
+
+      if (!loadedProgram) {
+        this.log("Stored scene data is corrupted.", "error");
+        return;
+      }
 
       // Filter out metadata fields like savedAt when loading scene
       const validParams = [
@@ -2618,9 +2708,14 @@ class ControlClient {
 
       // 4. Broadcast LOAD_SCENE only (contains full program config)
       if (this.star) {
+        const portNorm = this.elements.portamentoTime
+          ? parseFloat(this.elements.portamentoTime.value)
+          : null;
         const message = MessageBuilder.loadScene(
           memoryLocation,
           filteredProgram,
+          snapshot,
+          portNorm,
         );
         this.star.broadcastToType("synth", message, "control");
       }
@@ -2640,6 +2735,7 @@ class ControlClient {
     // 1) Clear controller banks
     for (let i = 0; i <= 9; i++) {
       localStorage.removeItem("scene_" + i + "_controller");
+      localStorage.removeItem(`scene_${i}_snapshot`);
     }
     this.updateSceneMemoryIndicators();
     this.log("Cleared all scene banks", "success");
@@ -2654,6 +2750,7 @@ class ControlClient {
   clearBank(memoryLocation) {
     // Clear single bank
     localStorage.removeItem("scene_" + memoryLocation + "_controller");
+    localStorage.removeItem(`scene_${memoryLocation}_snapshot`);
     this.updateSceneMemoryIndicators();
     this.log("Cleared scene bank " + memoryLocation, "success");
 

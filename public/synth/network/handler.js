@@ -73,12 +73,7 @@ export function handleDataMessage(peerId, channelType, message, context) {
       break;
 
     case MessageTypes.LOAD_SCENE:
-      const snapshot = context.sceneSnapshots[message.memoryLocation];
-      if (snapshot) {
-        context.loadScene(snapshot);
-      } else {
-        console.warn(`⚠️ No scene in bank ${message.memoryLocation}`);
-      }
+      context.handleLoadScene(message);
       break;
 
     case MessageTypes.CLEAR_BANKS:

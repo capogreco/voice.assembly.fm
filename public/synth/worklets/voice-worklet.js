@@ -490,6 +490,8 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
 
     // Calculate portamento coefficient
     this.updatePortamentoCoeff(msg.param);
+
+    this.updateCachedRatiosFromEnv(msg.param);
   }
 
   /**
@@ -507,6 +509,8 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
 
         // Calculate portamento coefficient
         this.updatePortamentoCoeff(param);
+
+        this.updateCachedRatiosFromEnv(param);
       }
     }
   }
@@ -587,44 +591,9 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
    * Update base value while preserving ratios in worklet
    */
   updateBaseValueInWorklet(paramName, newBaseValue) {
-    const env = this.env[paramName];
-    if (!env || !this.hrgState[paramName]) {
-      return;
-    }
-
-    const hrgState = this.hrgState[paramName];
-    
-    // Update stored start value using cached ratio
-    if (hrgState.start && hrgState.start.currentRatio !== undefined) {
-      env.start = newBaseValue * hrgState.start.currentRatio;
-    } else if (hrgState.start) {
-      // Fallback: resolve HRG to seed the cache, then rescale
-      this.resolveHRG(paramName, "start", false);
-      if (hrgState.start.currentRatio !== undefined) {
-        env.start = newBaseValue * hrgState.start.currentRatio;
-      } else {
-        env.start = newBaseValue; // Last resort fallback
-      }
-    }
-    
-    // Update stored end value using cached ratio (for cosine)
-    if (hrgState.end && env.interpolation !== 'step') {
-      if (hrgState.end.currentRatio !== undefined) {
-        env.end = newBaseValue * hrgState.end.currentRatio;
-      } else {
-        // Fallback: resolve HRG to seed the cache, then rescale
-        this.resolveHRG(paramName, "end", false);
-        if (hrgState.end.currentRatio !== undefined) {
-          env.end = newBaseValue * hrgState.end.currentRatio;
-        } else {
-          env.end = newBaseValue; // Last resort fallback
-        }
-      }
-    } else if (env.interpolation === 'step') {
-      env.end = env.start;
-    }
-    
-    console.log(`🔄 Worklet base update: ${paramName} start=${env.start.toFixed(3)}, end=${env.end.toFixed(3)}`);
+    if (!this.programConfig[paramName]) return;
+    this.programConfig[paramName].baseValue = newBaseValue;
+    this.updateCachedRatiosFromEnv(paramName);
   }
 
   /**
@@ -656,14 +625,16 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
     if (hrgState && hrgState[position] && env) {
       // Resolve HRG to refresh cached ratio with new component values
       const newValue = this.resolveHRG(paramName, position, false);
-      
+
       if (newValue !== undefined) {
         if (position === 'start') {
           env.start = newValue;
         } else {
           env.end = newValue;
         }
-        
+
+        this.updateCachedRatiosFromEnv(paramName);
+
         console.log(`🔄 Worklet ${component} update: ${paramName}.${position} = ${newValue.toFixed(3)} ` +
           `(${hrgState[position].currentNumerator}/${hrgState[position].currentDenominator})`);
       }
@@ -690,6 +661,26 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
   updateRBGStateInWorklet(paramName, path) {
     // For RBG changes, reinitialize the affected state
     this.initializeRBGState(paramName, this.programConfig[paramName]);
+  }
+
+  updateCachedRatiosFromEnv(paramName) {
+    const env = this.env[paramName];
+    const config = this.programConfig[paramName];
+    const base = config?.baseValue;
+    if (!env || !config || !Number.isFinite(base) || base === 0) return;
+
+    const hrgState = this.hrgState[paramName];
+    if (!hrgState) return;
+
+    if (hrgState.start && env.start !== undefined) {
+      hrgState.start.currentRatio = env.start / base;
+    }
+
+    if (hrgState.end && env.interpolation !== 'step' && env.end !== undefined) {
+      hrgState.end.currentRatio = env.end / base;
+    } else if (hrgState.end && env.interpolation === 'step' && env.start !== undefined) {
+      hrgState.end.currentRatio = env.start / base;
+    }
   }
 
   /**

@@ -8,6 +8,15 @@ import {
   MessageTypes,
 } from "../../src/common/message-protocol.js";
 import { XYOscilloscope } from "./src/visualization/xy-oscilloscope.js";
+import {
+  buildSceneSnapshot,
+  loadScene as loadSceneSnapshot,
+  handleLoadScene as handleSceneCommand,
+  clearAllBanks as clearAllSceneBanks,
+  clearBank as clearSceneBank,
+  applyPendingScene as applyPendingSceneAtEoc,
+  toEnvPayload,
+} from "./state/scenes.js";
 
 class SynthClient {
   constructor() {
@@ -189,6 +198,11 @@ class SynthClient {
 
     // Auto-connect to network on page load
     this.autoConnect();
+  }
+
+  _mapPortamentoNormToMs(norm) {
+    const clamped = Math.min(Math.max(norm ?? 0, 0), 1);
+    return 0.5 * Math.pow(40000, clamped);
   }
 
   /**
@@ -458,7 +472,7 @@ class SynthClient {
         break;
 
       case MessageTypes.IMMEDIATE_REINITIALIZE:
-        this.handleImmediateReinitialize();
+        this.handleImmediateReinitialize(message);
         break;
 
       case MessageTypes.SAVE_SCENE:
@@ -466,12 +480,7 @@ class SynthClient {
         break;
 
       case MessageTypes.LOAD_SCENE:
-        const snapshot = this.sceneSnapshots[message.memoryLocation];
-        if (snapshot) {
-          this.loadScene(snapshot);
-        } else {
-          console.warn(`⚠️ No scene in bank ${message.memoryLocation}`);
-        }
+        this.handleLoadScene(message);
         break;
 
       case MessageTypes.CLEAR_BANKS:
@@ -1476,17 +1485,8 @@ class SynthClient {
       ((resetData.blockSize - resetData.sampleIndex) /
         this.audioContext.sampleRate);
 
-    // Apply staged scene (takes precedence over staged config)
     if (this._pendingSceneAtEoc) {
-      if (this.voiceNode) {
-        this.voiceNode.port.postMessage({
-          type: "SET_ALL_ENV",
-          v: 1,
-          params: this._pendingSceneAtEoc,
-        });
-        console.log("🎬 Applied staged scene at EOC boundary");
-      }
-      this._pendingSceneAtEoc = null;
+      applyPendingSceneAtEoc(this);
       return;
     }
 
@@ -1934,7 +1934,7 @@ class SynthClient {
 
   // Immediate Re-initialization Methods
 
-  handleImmediateReinitialize() {
+  handleImmediateReinitialize(message = {}) {
     console.log("⚡ Re-initializing all stochastic generators...");
 
     // Guard for config presence
@@ -1998,8 +1998,21 @@ class SynthClient {
 
     // Resolve fresh values using stochastic generators
     const resolvedParams = this._resolveProgram(this.programConfig);
+    let portamentoMs = 0;
+    if (typeof message.portamento === "number") {
+      portamentoMs = this._mapPortamentoNormToMs(message.portamento);
+    } else if (this.elements?.portamentoTime) {
+      portamentoMs = this._mapPortamentoNormToMs(
+        parseFloat(this.elements.portamentoTime.value),
+      );
+    }
 
-    // Send new envelopes to voice worklet (instant portamento)
+    // Add portamento to all resolved parameters
+    for (const paramName in resolvedParams) {
+      resolvedParams[paramName].portamentoMs = portamentoMs;
+    }
+
+    // Send new envelopes to voice worklet with appropriate portamento
     this.voiceNode.port.postMessage({
       type: "SET_ALL_ENV",
       v: 1,
@@ -2013,9 +2026,9 @@ class SynthClient {
     }
 
     console.log(
-      `⚡ Sent immediate re-initialization to voice worklet: ${
+      `⚡ Sent re-initialization to voice worklet: ${
         Object.keys(resolvedParams).length
-      } parameters`,
+      } parameters with ${portamentoMs}ms portamento`,
     );
 
     // Update status
@@ -2028,353 +2041,43 @@ class SynthClient {
   // Scene Memory Methods
 
   handleSaveScene(payload) {
-    // Save immediately regardless of play/pause state
-    console.log(`💾 Capturing scene ${payload.memoryLocation} immediately`);
-    this.sceneSnapshots[payload.memoryLocation] = this.buildSceneSnapshot();
+    const snapshot = buildSceneSnapshot(this);
+    this.sceneSnapshots[payload.memoryLocation] = snapshot;
+    console.log(`💾 Captured scene ${payload.memoryLocation} (v${snapshot.v})`);
+
+    if (this.star) {
+      const message = MessageBuilder.sceneSnapshot(
+        payload.memoryLocation,
+        snapshot,
+      );
+      this.star.broadcastToType("control", message, "synth");
+      console.log("📡 Broadcast scene snapshot to controller(s)");
+    }
   }
 
   captureScene(bank) {
-    const snapshot = {};
-    const sequences = {};
-
-    // Capture minimal scene state based on parameter mode and generator type
-    for (
-      const param of [
-        "frequency",
-        "vowelX",
-        "vowelY",
-        "zingAmount",
-        "zingMorph",
-        "symmetry",
-        "amplitude",
-        "whiteNoise",
-      ]
-    ) {
-      const paramConfig = this.programConfig[param];
-
-      if (!paramConfig) {
-        // No configuration available
-        continue;
-      }
-
-      if (paramConfig.interpolation === "step") {
-        // Program step mode - check generator type
-        if (paramConfig.startValueGenerator?.type === "periodic") {
-          // HRG - save sequence state (not values)
-          const hrgState = this.hrgState[param]?.start;
-          if (hrgState) {
-            sequences[param] = {
-              numeratorBehavior: hrgState.numeratorBehavior,
-              denominatorBehavior: hrgState.denominatorBehavior,
-              indexN: hrgState.indexN,
-              indexD: hrgState.indexD,
-              orderN: hrgState.orderN,
-              orderD: hrgState.orderD,
-            };
-          }
-        } else if (paramConfig.startValueGenerator?.type === "normalised") {
-          // RBG - determine if stat or rand mode
-          const generator = paramConfig.startValueGenerator;
-          if (typeof generator.range === "number") {
-            // Stat mode - save scalar value
-            snapshot[param] = generator.range;
-          }
-          // Rand mode - save nothing, let it re-randomize
-        }
-      }
-      // Skip cosine parameters - they regenerate from program
-    }
-
-    // Save to in-memory array (ephemeral)
-    this.sceneSnapshots[bank] = { snapshot, sequences };
-
-    console.log(
-      `[SCENE] saved to memory slot ${bank}, sequences.frequency:`,
-      sequences.frequency,
-      `snapshot.frequency:`,
-      snapshot.frequency,
-    );
+    const snapshot = buildSceneSnapshot(this);
+    this.sceneSnapshots[bank] = snapshot;
+    console.log(`[SCENE] saved to memory slot ${bank} (v${snapshot.v})`);
   }
 
-  // Build complete scene snapshot with versioned schema
-  buildSceneSnapshot() {
-    const program = JSON.parse(JSON.stringify(this.programConfig || {}));
-
-    // Capture complete HRG state
-    const hrg = {};
-    for (const [param, state] of Object.entries(this.hrgState || {})) {
-      hrg[param] = {};
-      if (state.start) {
-        hrg[param].start = {
-          numeratorBehavior: state.start.numeratorBehavior,
-          denominatorBehavior: state.start.denominatorBehavior,
-          indexN: state.start.indexN,
-          indexD: state.start.indexD,
-          orderN: state.start.orderN || null,
-          orderD: state.start.orderD || null,
-        };
-      }
-      if (state.end) {
-        hrg[param].end = {
-          numeratorBehavior: state.end.numeratorBehavior,
-          denominatorBehavior: state.end.denominatorBehavior,
-          indexN: state.end.indexN,
-          indexD: state.end.indexD,
-          orderN: state.end.orderN || null,
-          orderD: state.end.orderD || null,
-        };
-      }
-    }
-
-    // Capture RBG cache
-    const rbg = { ...(this.rbgState || {}) };
-
-    return {
-      v: 1, // Version for future compatibility
-      program,
-      stochastic: { hrg, rbg },
-      meta: {
-        synthId: this.peerId,
-        sampleRate: this.audioContext?.sampleRate || 48000,
-        synthesisActive: this.synthesisActive,
-        isPlaying: this.isPlaying,
-        createdAt: Date.now(),
-      },
-    };
-  }
-
-  // Restore scene snapshot with bounds safety
-  restoreSceneSnapshot(snapshot) {
-    if (!snapshot || snapshot.v !== 1) {
-      throw new Error("Unsupported scene snapshot version");
-    }
-
-    // 1) Restore program
-    this.programConfig = JSON.parse(JSON.stringify(snapshot.program));
-
-    // 2) Restore HRG with bounds clamping
-    this.hrgState = {};
-    for (
-      const [param, positions] of Object.entries(snapshot.stochastic.hrg || {})
-    ) {
-      if (!this.programConfig[param]) continue;
-
-      this.hrgState[param] = {};
-
-      // Restore start position
-      if (positions.start) {
-        const startGen = this.programConfig[param].startValueGenerator;
-        const numerators = this._parseSIN(startGen?.numerators || "1");
-        const denominators = this._parseSIN(startGen?.denominators || "1");
-
-        this.hrgState[param].start = {
-          numerators,
-          denominators,
-          numeratorBehavior: positions.start.numeratorBehavior,
-          denominatorBehavior: positions.start.denominatorBehavior,
-          // Clamp indices to array bounds
-          indexN: Math.min(positions.start.indexN, numerators.length - 1),
-          indexD: Math.min(positions.start.indexD, denominators.length - 1),
-          orderN: positions.start.orderN || null,
-          orderD: positions.start.orderD || null,
-        };
-      }
-
-      // Restore end position (for cosine)
-      if (positions.end) {
-        const endGen = this.programConfig[param].endValueGenerator;
-        const numerators = this._parseSIN(endGen?.numerators || "1");
-        const denominators = this._parseSIN(endGen?.denominators || "1");
-
-        this.hrgState[param].end = {
-          numerators,
-          denominators,
-          numeratorBehavior: positions.end.numeratorBehavior,
-          denominatorBehavior: positions.end.denominatorBehavior,
-          // Clamp indices to array bounds
-          indexN: Math.min(positions.end.indexN, numerators.length - 1),
-          indexD: Math.min(positions.end.indexD, denominators.length - 1),
-          orderN: positions.end.orderN || null,
-          orderD: positions.end.orderD || null,
-        };
-      }
-    }
-
-    // 3) Restore RBG cache
-    this.rbgState = { ...(snapshot.stochastic.rbg || {}) };
-
-    console.log(
-      `✅ Restored scene snapshot v${snapshot.v}: ${
-        Object.keys(snapshot.program).length
-      } params, HRG for [${Object.keys(snapshot.stochastic.hrg).join(",")}]`,
-    );
-  }
-
-  // Convert resolved parameters to worklet envelope payload
-  _toEnvPayload(resolved, portamentoMs = 0) {
-    const payload = {};
-
-    for (const [param, config] of Object.entries(this.programConfig || {})) {
-      if (!resolved.hasOwnProperty(param)) continue;
-
-      if (config.interpolation === "step") {
-        payload[param] = {
-          interpolation: "step",
-          startValue: resolved[param].startValue || resolved[param],
-          endValue: resolved[param].startValue || resolved[param],
-          portamentoMs: portamentoMs, // Always explicit
-        };
-      } else if (this.isCosInterp(config.interpolation)) {
-        payload[param] = {
-          interpolation: resolved[param].interpolation || config.interpolation, // Use actual interpolation mode
-          startValue: resolved[param].startValue,
-          endValue: resolved[param].endValue,
-          portamentoMs: portamentoMs, // Always explicit
-        };
-      }
-    }
-
-    return payload;
-  }
-
-  // Load scene with proper paused vs playing behavior
-  loadScene(snapshot) {
-    if (!snapshot) {
-      console.warn("⚠️ No snapshot to load");
-      return;
-    }
-
-    // Restore state
-    this.restoreSceneSnapshot(snapshot);
-
-    // Resolve targets from restored state
-    const resolved = this._resolveProgram(this.programConfig);
-
-    if (!this.voiceNode) {
-      console.error("❌ Voice worklet not ready for scene load");
-      return;
-    }
-
-    if (this.isPlaying) {
-      // Playing: stage for EOC snap (no portamento)
-      const payload = this._toEnvPayload(resolved, 0);
-      this._pendingSceneAtEoc = payload;
-      this.reresolveAtNextEOC = false; // Explicitly not re-resolving
-      console.log("📋 Scene staged for EOC boundary snap");
-    } else {
-      // Paused: glide with portamento
-      const portMs = this.elements?.portamentoTime
-        ? parseInt(this.elements.portamentoTime.value, 10)
-        : 100;
-      const payload = this._toEnvPayload(resolved, portMs);
-      this.voiceNode.port.postMessage({
-        type: "SET_ALL_ENV",
-        v: 1,
-        params: payload,
-      });
-      console.log(`⚡ Scene loaded with ${portMs}ms portamento (paused)`);
-    }
+  loadScene(snapshot, memoryLocation = null) {
+    // Delegate to external loader
+    loadSceneSnapshot(snapshot, this);
   }
 
   handleLoadScene(payload) {
-    const { memoryLocation, program } = payload;
-
-    // Check if we have a saved snapshot in memory first
-    const saved = this.sceneSnapshots[memoryLocation];
-
-    // Only update program config if we don't have saved state
-    // (If we have saved state, we want to keep using the config that was active when we saved)
-    if (!saved) {
-      this.programConfig = {};
-      for (const paramName in program) {
-        if (
-          !["type", "timestamp", "synthesisActive", "isManualMode"].includes(
-            paramName,
-          )
-        ) {
-          this.programConfig[paramName] = program[paramName];
-        }
-      }
-    }
-
-    if (saved) {
-      const { snapshot, sequences } = saved;
-
-      console.log(
-        `[SCENE] load from memory slot ${memoryLocation}, snapshotKeys:`,
-        Object.keys(snapshot),
-        `hasHRG:`,
-        Object.keys(sequences).length > 0,
-      );
-
-      // Initialize HRG state - but only for params without saved sequences
-      for (const paramName in this.programConfig) {
-        if (sequences[paramName]) {
-          // Use saved sequence data to restore complete HRG state
-          this._restoreHRGState(
-            paramName,
-            sequences[paramName],
-            this.programConfig[paramName],
-          );
-
-          // Detailed frequency HRG state logging
-          if (paramName === "frequency") {
-            const hrgState = this.hrgState[paramName]?.start;
-            console.log(
-              `[LOAD_SCENE] frequency HRG state - behavior: ${hrgState.numeratorBehavior}/${hrgState.denominatorBehavior}, index: ${hrgState.indexN}/${hrgState.indexD}, arrays: [${
-                hrgState.numerators?.slice(0, 3).join(",")
-              }...] / [${hrgState.denominators?.slice(0, 3).join(",")}...]`,
-            );
-          }
-        } else {
-          // No saved sequence - initialize fresh with per-synth randomization
-          this._initializeHRGState(paramName, this.programConfig[paramName]);
-        }
-      }
-
-      // Handle scalar values - apply immediately if paused, stage if playing
-      if (Object.keys(snapshot).length > 0) {
-        if (this.isPlaying) {
-          // Playing: stage for next EOC
-          this.pendingSceneState = snapshot;
-          console.log(`📋 Staged scene snapshot for next EOC:`, snapshot);
-        } else {
-          // Paused: apply immediately with portamento
-          console.log(
-            `⚡ Applying scene snapshot immediately (paused):`,
-            snapshot,
-          );
-          for (const [param, value] of Object.entries(snapshot)) {
-            // Use portamento for smooth transitions when paused
-            const portamentoTime = 100; // Default portamento time
-            this.applyWithPortamento(param, value, portamentoTime);
-          }
-        }
-      }
-    } else {
-      console.log(
-        `[SCENE] load, no data in memory slot ${memoryLocation} - initializing fresh`,
-      );
-      // No saved scene - initialize fresh HRG state with per-synth randomization
-      for (const paramName in this.programConfig) {
-        this._initializeHRGState(paramName, this.programConfig[paramName]);
-      }
-    }
+    // Delegate to external handler - no need to notify controller
+    // as it initiated the load and already knows the state
+    handleSceneCommand(payload, this);
   }
 
   clearAllBanks() {
-    // Clear all in-memory scene snapshots
-    const clearedCount = this.sceneSnapshots.filter((s) => s).length;
-    this.sceneSnapshots = [];
-    console.log(`🧹 Cleared ${clearedCount} synth scene bank(s) from memory`);
+    clearAllSceneBanks(this);
   }
 
   clearBank(bank) {
-    // Clear specific in-memory scene snapshot
-    if (this.sceneSnapshots[bank]) {
-      delete this.sceneSnapshots[bank];
-      console.log(`🧹 Cleared synth scene bank ${bank} from memory`);
-    }
+    clearSceneBank(bank, this);
   }
 
   // Transport control methods

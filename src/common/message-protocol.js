@@ -33,6 +33,7 @@ export const MessageTypes = {
   // Worklet Control (obsolete message types removed - now using SET_ENV/SET_ALL_ENV)
   RERESOLVE_AT_EOC: "reresolve-at-eoc",
   IMMEDIATE_REINITIALIZE: "immediate-reinitialize",
+  SCENE_SNAPSHOT: "scene-snapshot",
 
   // Scene Memory
   SAVE_SCENE: "save-scene",
@@ -139,9 +140,10 @@ export class MessageBuilder {
     };
   }
 
-  static immediateReinitialize() {
+  static immediateReinitialize(portamento) {
     return {
       type: MessageTypes.IMMEDIATE_REINITIALIZE,
+      portamento,
       timestamp: performance.now(),
     };
   }
@@ -154,11 +156,13 @@ export class MessageBuilder {
     };
   }
 
-  static loadScene(memoryLocation, program) {
+  static loadScene(memoryLocation, program, snapshot = null, portamento = null) {
     return {
       type: MessageTypes.LOAD_SCENE,
       memoryLocation,
       program,
+      snapshot,
+      portamento,
       timestamp: performance.now(),
     };
   }
@@ -184,6 +188,15 @@ export class MessageBuilder {
       paramPath,
       value,
       portamentoTime,
+      timestamp: performance.now(),
+    };
+  }
+
+  static sceneSnapshot(memoryLocation, snapshot) {
+    return {
+      type: MessageTypes.SCENE_SNAPSHOT,
+      memoryLocation,
+      snapshot,
       timestamp: performance.now(),
     };
   }
