@@ -862,13 +862,16 @@ class SynthClient {
       this.stagedConfig = JSON.parse(JSON.stringify(this.programConfig));
     }
 
-    // PROPER STAGING - Update appropriate config based on playing state
+    const finalPortamento = portamentoTime ?? 0;
 
     if (this.receivedIsPlaying) {
-      // When playing: Update staged config only, don't touch programConfig
+      // When playing: Update staged config and mirror minimal recomputation on caches
       if (!this._setByPath(this.stagedConfig, paramPath, value)) {
         throw new Error(`CRITICAL: Failed to update staged path ${paramPath}`);
       }
+
+      // Mirror the same minimal recomputation that paused path would perform
+      this._performMinimalRecomputation(paramName, paramPath, value, true); // true = staging mode
 
       console.log(
         `📋 Staging sub-parameter update for EOC: ${paramPath} = ${value}`,
@@ -876,23 +879,15 @@ class SynthClient {
       return; // Don't apply immediately, wait for EOC
     }
 
-    // When paused: Update programConfig and apply immediately
+    // When paused: Update programConfig and apply minimal recomputation immediately
     if (!this._setByPath(this.programConfig, paramPath, value)) {
       throw new Error(`CRITICAL: Failed to update path ${paramPath}`);
     }
 
-    // Apply HRG/RBG state updates for paused mode
-    this._updateParameterState(paramName, paramPath, value);
-
     console.log(`⚡ Applying sub-parameter update: ${paramPath} = ${value}`);
 
-    const finalPortamento = portamentoTime ?? 0;
-
-    if (paramPath.endsWith(".baseValue")) {
-      this.applyBaseValueUpdate(paramName, value, finalPortamento);
-    } else {
-      this.applySingleParamWithPortamento(paramName, finalPortamento);
-    }
+    // Perform minimal recomputation based on paramPath
+    this._performMinimalRecomputation(paramName, paramPath, value, false, finalPortamento);
 
     // Forward to worklet when paused (not when playing)
     this.voiceNode.port.postMessage({

@@ -320,11 +320,15 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
     const numerator = state.numerators[numeratorIndex];
     const denominator = state.denominators[denominatorIndex];
     
+    // Cache the resolved components for minimal recomputation
+    state.currentNumerator = numerator;
+    state.currentDenominator = denominator || 1;
+    state.currentRatio = state.currentNumerator / state.currentDenominator;
+    
     // Calculate frequency based on base frequency
     const config = this.programConfig[paramName];
     const baseFreq = config.baseValue || 220;
-    const ratio = numerator / denominator;
-    const frequency = baseFreq * ratio;
+    const frequency = baseFreq * state.currentRatio;
     
     // Advance indices if requested (only for cont mode start should not advance)
     if (advance) {
@@ -590,16 +594,32 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
 
     const hrgState = this.hrgState[paramName];
     
-    // Update stored start value using existing ratio
-    if (hrgState.start) {
-      const ratio = hrgState.start.numerator / hrgState.start.denominator;
-      env.start = newBaseValue * ratio;
+    // Update stored start value using cached ratio
+    if (hrgState.start && hrgState.start.currentRatio !== undefined) {
+      env.start = newBaseValue * hrgState.start.currentRatio;
+    } else if (hrgState.start) {
+      // Fallback: resolve HRG to seed the cache, then rescale
+      this.resolveHRG(paramName, "start", false);
+      if (hrgState.start.currentRatio !== undefined) {
+        env.start = newBaseValue * hrgState.start.currentRatio;
+      } else {
+        env.start = newBaseValue; // Last resort fallback
+      }
     }
     
-    // Update stored end value using existing ratio (for cosine)
+    // Update stored end value using cached ratio (for cosine)
     if (hrgState.end && env.interpolation !== 'step') {
-      const ratio = hrgState.end.numerator / hrgState.end.denominator;
-      env.end = newBaseValue * ratio;
+      if (hrgState.end.currentRatio !== undefined) {
+        env.end = newBaseValue * hrgState.end.currentRatio;
+      } else {
+        // Fallback: resolve HRG to seed the cache, then rescale
+        this.resolveHRG(paramName, "end", false);
+        if (hrgState.end.currentRatio !== undefined) {
+          env.end = newBaseValue * hrgState.end.currentRatio;
+        } else {
+          env.end = newBaseValue; // Last resort fallback
+        }
+      }
     } else if (env.interpolation === 'step') {
       env.end = env.start;
     }
@@ -617,29 +637,36 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
     const generator = position === 'start' ? config.startValueGenerator : config.endValueGenerator;
     if (!generator || generator.type !== 'periodic') return;
     
-    // Reinitialize the specific component
+    // Reinitialize the specific component by re-parsing the arrays
+    const state = this.hrgState[paramName]?.[position];
+    if (!state) return;
+    
     if (component === 'numerator') {
-      this.updateHRGNumerators(paramName, position);
+      // Re-parse numerators from config
+      state.numerators = this.parseSIN(generator.numerators || "1");
     } else {
-      this.updateHRGDenominators(paramName, position);
+      // Re-parse denominators from config  
+      state.denominators = this.parseSIN(generator.denominators || "1");
     }
     
-    // Update envelope value
+    // Update envelope value using fresh resolution to cache new ratio
     const hrgState = this.hrgState[paramName];
     const env = this.env[paramName];
     
     if (hrgState && hrgState[position] && env) {
-      const baseValue = config.baseValue;
-      const ratio = hrgState[position].numerator / hrgState[position].denominator;
-      const newValue = baseValue * ratio;
+      // Resolve HRG to refresh cached ratio with new component values
+      const newValue = this.resolveHRG(paramName, position, false);
       
-      if (position === 'start') {
-        env.start = newValue;
-      } else {
-        env.end = newValue;
+      if (newValue !== undefined) {
+        if (position === 'start') {
+          env.start = newValue;
+        } else {
+          env.end = newValue;
+        }
+        
+        console.log(`🔄 Worklet ${component} update: ${paramName}.${position} = ${newValue.toFixed(3)} ` +
+          `(${hrgState[position].currentNumerator}/${hrgState[position].currentDenominator})`);
       }
-      
-      console.log(`🔄 Worklet ${component} update: ${paramName}.${position} = ${newValue.toFixed(3)}`);
     }
   }
 
@@ -663,6 +690,40 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
   updateRBGStateInWorklet(paramName, path) {
     // For RBG changes, reinitialize the affected state
     this.initializeRBGState(paramName, this.programConfig[paramName]);
+  }
+
+  /**
+   * Update HRG behavior in worklet (affects future generation only)
+   */
+  updateHRGNumeratorBehavior(paramName, position) {
+    const state = this.hrgState[paramName]?.[position];
+    const config = this.programConfig[paramName];
+    const generator = position === 'start' ? config.startValueGenerator : config.endValueGenerator;
+    
+    if (state && generator) {
+      state.numeratorBehavior = generator.numeratorBehavior || "static";
+    }
+  }
+
+  updateHRGDenominatorBehavior(paramName, position) {
+    const state = this.hrgState[paramName]?.[position];
+    const config = this.programConfig[paramName];
+    const generator = position === 'start' ? config.startValueGenerator : config.endValueGenerator;
+    
+    if (state && generator) {
+      state.denominatorBehavior = generator.denominatorBehavior || "static";
+    }
+  }
+
+  /**
+   * Parse space-separated integers/number (SIN) format
+   */
+  parseSIN(input) {
+    if (!input || typeof input !== 'string') return [1];
+    return input.trim().split(/\s+/).map(x => {
+      const num = parseInt(x, 10);
+      return isNaN(num) ? 1 : Math.max(1, num);
+    });
   }
 
   /**

@@ -70,7 +70,6 @@ export function broadcastControlState(star, liveState, synthesisActive, logFn, p
   if (!star) return;
 
   const wirePayload = createWirePayload(liveState, synthesisActive, portamentoTime);
-  console.log("Broadcasting translated payload:", wirePayload);
 
   const message = MessageBuilder.createParameterUpdate(
     MessageTypes.PROGRAM_UPDATE,

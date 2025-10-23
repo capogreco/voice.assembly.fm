@@ -322,15 +322,31 @@ class ControlClient {
   _updateStagedState(action) {
     console.log("Action dispatched:", action);
 
-    // Create a deep copy of the current staged state
+    // Handle scalar edits in place to avoid unnecessary cloning and UI refresh
+    if (action.type === "SET_BASE_VALUE") {
+      this.stagedState[action.param].baseValue = action.value;
+      
+      // Update only the base value input, no HRG refresh needed
+      const paramName = action.param;
+      const valueInput = (paramName === "frequency" || paramName === "vibratoRate")
+        ? document.getElementById(paramName + "-base")
+        : document.getElementById(paramName + "-value");
+      if (valueInput) {
+        valueInput.value = action.value.toString();
+      }
+      
+      // Still need to trigger broadcast and mark changes
+      if (this.isPlaying) {
+        this.broadcastSingleParameterStaged(action.param);
+      }
+      this.markPendingChanges();
+      return; // Exit early, skip full UI refresh
+    }
+
+    // Create a deep copy only for structural changes
     const newState = JSON.parse(JSON.stringify(this.stagedState));
 
     switch (action.type) {
-      case "SET_BASE_VALUE": {
-        const param = newState[action.param];
-        param.baseValue = action.value;
-        break;
-      }
 
       case "SET_INTERPOLATION": {
         const param = newState[action.param];
@@ -909,18 +925,12 @@ class ControlClient {
           paramName + "-start-denominators-behavior",
         ) || null;
 
-        // Debug logging for frequency HRG updates
-        if (paramName === "frequency") {
-          console.log("🐛 Updating frequency HRG UI with startGen:", JSON.stringify(startGen, null, 2));
-          console.log("🐛 Current UI values - startNums:", startNums?.value, "startDens:", startDens?.value, "startNumBeh:", startNumBeh?.value, "startDenBeh:", startDenBeh?.value);
-        }
 
         // Only update input values if they're not currently being edited
         if (startNums && document.activeElement !== startNums) {
           const numValue = startGen.numerators ?? "1";
           startNums.value = numValue;
           if (paramName === "frequency") {
-            console.log("🐛 Set start numerators to:", numValue);
           }
         } else if (startNums && paramName === "frequency") {
           console.log("🐛 NOT setting start numerators because startNums has focus");
@@ -929,21 +939,18 @@ class ControlClient {
           const denValue = startGen.denominators ?? "1";
           startDens.value = denValue;
           if (paramName === "frequency") {
-            console.log("🐛 Set start denominators to:", denValue);
           }
         }
         if (startNumBeh) {
           const numBehValue = startGen.numeratorBehavior ?? "static";
           startNumBeh.value = numBehValue;
           if (paramName === "frequency") {
-            console.log("🐛 Set start numerator behavior to:", numBehValue);
           }
         }
         if (startDenBeh) {
           const denBehValue = startGen.denominatorBehavior ?? "static";
           startDenBeh.value = denBehValue;
           if (paramName === "frequency") {
-            console.log("🐛 Set start denominator behavior to:", denBehValue);
           }
         }
 
@@ -990,38 +997,30 @@ class ControlClient {
             paramName + "-end-denominators-behavior",
           ) || null;
 
-          // Debug logging for frequency HRG end updates
-          if (paramName === "frequency") {
-            console.log("🐛 Updating frequency HRG end UI with endGen:", JSON.stringify(endGen, null, 2));
-          }
 
           // Only update input values if they're not currently being edited
           if (endNums && document.activeElement !== endNums) {
             const endNumValue = endGen.numerators ?? "1";
             endNums.value = endNumValue;
             if (paramName === "frequency") {
-              console.log("🐛 Set end numerators to:", endNumValue);
             }
           }
           if (endDens && document.activeElement !== endDens) {
             const endDenValue = endGen.denominators ?? "1";
             endDens.value = endDenValue;
             if (paramName === "frequency") {
-              console.log("🐛 Set end denominators to:", endDenValue);
             }
           }
           if (endNumBeh) {
             const endNumBehValue = endGen.numeratorBehavior ?? "static";
             endNumBeh.value = endNumBehValue;
             if (paramName === "frequency") {
-              console.log("🐛 Set end numerator behavior to:", endNumBehValue);
             }
           }
           if (endDenBeh) {
             const endDenBehValue = endGen.denominatorBehavior ?? "static";
             endDenBeh.value = endDenBehValue;
             if (paramName === "frequency") {
-              console.log("🐛 Set end denominator behavior to:", endDenBehValue);
             }
           }
 
@@ -1203,7 +1202,6 @@ class ControlClient {
   }
 
   markPendingChanges() {
-    console.log("markPendingChanges called");
     this.hasPendingChanges = true;
     // Apply button removed - staging handled by transport state
   }
@@ -1386,7 +1384,6 @@ class ControlClient {
     if (!this.star) return;
 
     const wirePayload = this._getWirePayload(portamentoTime);
-    console.log("Broadcasting translated payload:", wirePayload);
 
     const message = MessageBuilder.createParameterUpdate(
       MessageTypes.PROGRAM_UPDATE,
