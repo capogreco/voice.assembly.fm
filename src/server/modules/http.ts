@@ -1,83 +1,113 @@
 /**
  * HTTP static file serving for Voice.Assembly.FM
+ * Optimized for Deno Deploy
  */
 
-import { serveDir } from "std/http/file_server.ts";
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 
-// Define project root directory based on script location
-const __dirname = path.dirname(path.fromFileUrl(import.meta.url));
-const ROOT_DIR = path.join(__dirname, "..", "..", ".."); // Navigate from src/server/modules up to project root
+// For Deno Deploy, files are served from the project root
+const getStaticFile = async (filePath: string): Promise<Response | null> => {
+  try {
+    const file = await Deno.readFile(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    
+    const mimeTypes: Record<string, string> = {
+      '.html': 'text/html; charset=utf-8',
+      '.js': 'application/javascript',
+      '.css': 'text/css',
+      '.json': 'application/json',
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.svg': 'image/svg+xml',
+      '.ico': 'image/x-icon',
+      '.woff': 'font/woff',
+      '.woff2': 'font/woff2',
+    };
+    
+    const mimeType = mimeTypes[ext] || 'application/octet-stream';
+    
+    return new Response(file, {
+      headers: {
+        'Content-Type': mimeType,
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+      },
+    });
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) {
+      return null;
+    }
+    throw error;
+  }
+};
 
 /**
  * Handle static file serving with proper MIME types for JavaScript
+ * Optimized for Deno Deploy
  * @param request - HTTP request
  * @returns Response for static files
  */
-export async function handleStaticFiles(request: Request): Promise<Response> {
+export async function handleStaticFiles(request: Request): Promise<Response | null> {
   const url = new URL(request.url);
   const pathname = url.pathname;
 
-  // Handle root request
+  console.log(`Serving static file: ${pathname}`);
+
+  // Handle root request - serve main index.html
   if (pathname === "/") {
-    return serveDir(request, {
-      fsRoot: path.join(ROOT_DIR, "public"),
-      urlRoot: "",
-      showDirListing: false,
-      enableCors: true,
-    });
+    const response = await getStaticFile("public/index.html");
+    if (response) return response;
   }
 
   // Handle ctrl client
-  if (pathname === "/ctrl" || pathname.startsWith("/ctrl/")) {
-    return serveDir(request, {
-      fsRoot: path.join(ROOT_DIR, "public", "ctrl"),
-      urlRoot: "ctrl",
-      showDirListing: false,
-      enableCors: true,
-    });
+  if (pathname === "/ctrl" || pathname === "/ctrl/") {
+    const response = await getStaticFile("public/ctrl/index.html");
+    if (response) return response;
   }
 
-  // Handle synth client
-  if (pathname === "/synth" || pathname.startsWith("/synth/")) {
-    return serveDir(request, {
-      fsRoot: path.join(ROOT_DIR, "public", "synth"),
-      urlRoot: "synth",
-      showDirListing: false,
-      enableCors: true,
-    });
+  // Handle synth client  
+  if (pathname === "/synth" || pathname === "/synth/") {
+    const response = await getStaticFile("public/synth/index.html");
+    if (response) return response;
+  }
+
+  // Handle ctrl client files
+  if (pathname.startsWith("/ctrl/")) {
+    const filePath = pathname.replace("/ctrl/", "public/ctrl/");
+    const response = await getStaticFile(filePath);
+    if (response) return response;
+  }
+
+  // Handle synth client files
+  if (pathname.startsWith("/synth/")) {
+    const filePath = pathname.replace("/synth/", "public/synth/");
+    const response = await getStaticFile(filePath);
+    if (response) return response;
   }
 
   // Handle src/ directory for common modules
   if (pathname.startsWith("/src/")) {
-    const response = await serveDir(request, {
-      fsRoot: path.join(ROOT_DIR, "src"),
-      urlRoot: "src",
-      showDirListing: false,
-      enableCors: true,
-    });
-
-    // Fix MIME type for .js files served from /src/
-    if (pathname.endsWith(".js")) {
-      const headers = new Headers(response.headers);
-      headers.set("Content-Type", "application/javascript");
-      return new Response(response.body, {
-        status: response.status,
-        statusText: response.statusText,
-        headers,
-      });
-    }
-
-    return response;
+    const filePath = pathname.replace("/src/", "src/");
+    const response = await getStaticFile(filePath);
+    if (response) return response;
   }
 
-  // Handle all other static files from public directory
-  return serveDir(request, {
-    fsRoot: path.join(ROOT_DIR, "public"),
-    urlRoot: "",
-    showDirListing: false,
-    enableCors: true,
-  });
+  // Handle public files
+  if (pathname.startsWith("/public/")) {
+    const filePath = pathname.replace("/public/", "public/");
+    const response = await getStaticFile(filePath);
+    if (response) return response;
+  }
+
+  // Try to serve from public directory
+  const publicPath = `public${pathname}`;
+  const response = await getStaticFile(publicPath);
+  if (response) return response;
+
+  return null;
 }
 
 /**

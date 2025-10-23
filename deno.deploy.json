@@ -1,0 +1,17 @@
+{
+  "name": "voice-assembly-fm",
+  "entry": "src/server/main.ts",
+  "include": [
+    "src/",
+    "public/",
+    "deno.json",
+    "deno.lock"
+  ],
+  "exclude": [
+    ".git/",
+    "node_modules/",
+    "reference/",
+    "docs/",
+    ".env"
+  ]
+}

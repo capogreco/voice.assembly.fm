@@ -10,10 +10,17 @@ import { handleWebSocketUpgrade } from "./modules/ws.ts";
 import { handleIceServersRequest } from "./modules/ice.ts";
 import { cleanupKVOnStartup } from "./modules/kv.ts";
 
-// Load environment variables from .env file
-const env = await load();
+// Load environment variables from .env file (if available locally)
+let env: Record<string, string> = {};
+try {
+  env = await load();
+} catch {
+  // .env file not available (normal in Deno Deploy)
+  console.log("No .env file found, using environment variables");
+}
 
-const port = parseInt(env.PORT || Deno.env.get("PORT") || "3456");
+// Deno Deploy automatically provides PORT, fallback for local development
+const port = parseInt(Deno.env.get("PORT") || env.PORT || "3456");
 
 console.log(`🎵 Voice.Assembly.FM Simplified Signaling Server starting...`);
 
@@ -56,13 +63,14 @@ async function handleRequest(request: Request): Promise<Response> {
     const response = await handleStaticFiles(request);
     console.log("handleStaticFiles returned:", !!response, response?.status);
     
-    if (!response) {
-      console.error("❌ handleStaticFiles returned null/undefined for:", url.pathname);
-      return createErrorResponse(404, "Not found");
+    if (response) {
+      console.log("Returning response with status:", response.status);
+      return response;
     }
     
-    console.log("Returning response with status:", response.status);
-    return response;
+    // If no static file found, return 404
+    console.error("❌ No static file found for:", url.pathname);
+    return createErrorResponse(404, "Not found");
 
   } catch (error) {
     console.error("❌ Error in handleRequest:", error);
@@ -73,9 +81,12 @@ async function handleRequest(request: Request): Promise<Response> {
 // Start the server
 console.log(`🚀 Starting server on port ${port}...`);
 
-const server = Deno.serve({
-  port: port,
-}, async (request: Request): Promise<Response> => {
+// For Deno Deploy, port is automatically configured
+const serveOptions = Deno.env.get("DENO_DEPLOYMENT_ID") 
+  ? {} // Let Deno Deploy handle port assignment
+  : { port: port }; // Use specified port for local development
+
+const server = Deno.serve(serveOptions, async (request: Request): Promise<Response> => {
   console.log("Handler called for:", request.url);
   try {
     const result = await handleRequest(request);
@@ -87,14 +98,19 @@ const server = Deno.serve({
   }
 });
 
-console.log(`✅ Server running on:`);
-console.log(`   Local:    http://localhost:${port}`);
-
-const localIPs = getLocalIPs();
-for (const ip of localIPs) {
-  console.log(`   Network:  http://${ip}:${port}`);
+if (Deno.env.get("DENO_DEPLOYMENT_ID")) {
+  console.log(`✅ Server running on Deno Deploy`);
+  console.log(`🎵 Voice.Assembly.FM is ready!`);
+} else {
+  console.log(`✅ Server running on:`);
+  console.log(`   Local:    http://localhost:${port}`);
+  
+  const localIPs = getLocalIPs();
+  for (const ip of localIPs) {
+    console.log(`   Network:  http://${ip}:${port}`);
+  }
+  
+  console.log(`\n🎵 Voice.Assembly.FM is ready!`);
+  console.log(`   Control:  http://localhost:${port}/ctrl`);
+  console.log(`   Synth:    http://localhost:${port}/synth`);
 }
-
-console.log(`\n🎵 Voice.Assembly.FM is ready!`);
-console.log(`   Control:  http://localhost:${port}/ctrl`);
-console.log(`   Synth:    http://localhost:${port}/synth`);
