@@ -889,7 +889,7 @@ class SynthClient {
     this.applySingleParamWithPortamento(paramName, portamentoTime);
 
     // Forward to worklet when paused (not when playing)
-    this.voiceWorkletNode.port.postMessage({
+    this.voiceNode.port.postMessage({
       type: "UPDATE_PARAM_CONFIG",
       path: paramPath,
       value: value,
