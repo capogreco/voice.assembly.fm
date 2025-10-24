@@ -6,6 +6,8 @@ import {
   buildResolvedFromSnapshot,
   resolveProgramSnapshot,
 } from "./resolve.js";
+import { applyResolvedProgram } from "../audio/scheduler.js";
+import { resetPhasorState } from "../scheduler/phasor.js";
 
 // Helper for deep cloning
 function deepClone(obj) {
@@ -32,6 +34,14 @@ function deepClone(obj) {
  */
 export function buildSceneSnapshot(context) {
   const program = deepClone(context.programConfig || {});
+
+  // Log what we're capturing
+  console.log("📦 Building snapshot - programConfig baseValues:");
+  for (const [param, cfg] of Object.entries(program)) {
+    if (cfg.baseValue !== undefined) {
+      console.log(`  ${param}: baseValue=${cfg.baseValue}`);
+    }
+  }
 
   const hrg = {};
   for (const [param, state] of Object.entries(context.hrgState || {})) {
@@ -76,6 +86,14 @@ export function restoreSceneSnapshot(snapshot, context) {
   }
 
   context.programConfig = deepClone(snapshot.program || {});
+
+  // Log what we're restoring
+  console.log("📤 Restoring snapshot - programConfig baseValues:");
+  for (const [param, cfg] of Object.entries(context.programConfig)) {
+    if (cfg.baseValue !== undefined) {
+      console.log(`  ${param}: baseValue=${cfg.baseValue}`);
+    }
+  }
 
   // Restore HRG state (numerators/denominators arrays + indices)
   context.hrgState = {};
@@ -136,33 +154,43 @@ export function loadScene(snapshot, context, portamentoNorm = null) {
     rbgState: context.rbgState,
     isCosInterp: context.isCosInterp.bind(context),
     resolveHRG: (param, pos) => context.peekHRGValue(param, pos), // Always peek on load
-    resolveRBG: context._resolveRBG.bind(context),
+    resolveRBG: (gen, param, pos, peek) =>
+      context._resolveRBG(gen, param, pos, peek),
   });
+
+  // DETAILED LOAD LOGGING
+  console.log(`\n🔵 LOAD SCENE ==================`);
+  console.log("📊 Resolved values after load:");
+  for (const [param, values] of Object.entries(resolved)) {
+    const baseValue = context.programConfig[param]?.baseValue;
+    console.log(
+      `  ${param}: start=${values.startValue?.toFixed(2)}, end=${
+        values.endValue?.toFixed(2)
+      }, baseValue=${baseValue}`,
+    );
+  }
 
   // Diagnostic logging for generator state
   const freqHrg = context.hrgState?.frequency;
   if (freqHrg?.start) {
     console.log(
-      `📥 load scene: frequency HRG start = [${freqHrg.start.indexN}] ${
+      `🎲 frequency HRG start: idx=${freqHrg.start.indexN} val=${
         freqHrg.start.numerators?.[freqHrg.start.indexN]
-      }/${freqHrg.start.denominators?.[freqHrg.start.indexD]}`,
+      }/${
+        freqHrg.start.denominators?.[freqHrg.start.indexD]
+      } arrays=[${freqHrg.start.numerators}]/[${freqHrg.start.denominators}]`,
     );
   }
   if (freqHrg?.end) {
     console.log(
-      `📥 load scene: frequency HRG end = [${freqHrg.end.indexN}] ${
+      `🎲 frequency HRG end: idx=${freqHrg.end.indexN} val=${
         freqHrg.end.numerators?.[freqHrg.end.indexN]
-      }/${freqHrg.end.denominators?.[freqHrg.end.indexD]}`,
+      }/${
+        freqHrg.end.denominators?.[freqHrg.end.indexD]
+      } arrays=[${freqHrg.end.numerators}]/[${freqHrg.end.denominators}]`,
     );
   }
-
-  // Log the computed values
-  const freqResolved = resolved.frequency;
-  console.log(
-    `📥 computed frequency values =`,
-    freqResolved?.startValue,
-    freqResolved?.endValue,
-  );
+  console.log("");
 
   let portamentoMs = 0;
   if (context.isPlaying) {
@@ -182,22 +210,43 @@ export function loadScene(snapshot, context, portamentoNorm = null) {
     context.reresolveAtNextEOC = false;
     console.log("📋 Scene staged for EOC boundary snap");
   } else {
-    // Log exact payload being sent
-    console.log("➡️ SET_ALL_ENV (loadScene)", Object.fromEntries(
-      Object.entries(envPayload).map(([param, cfg]) => [
-        param,
-        { start: cfg.startValue, end: cfg.endValue, interp: cfg.interpolation }
-      ])
-    ));
-    
-    context.voiceNode?.port.postMessage({
-      type: "SET_ALL_ENV",
-      v: 1,
-      params: envPayload,
-    });
+    // USE NEW AUDIOPARAM PATH for paused scenes
+    // Convert envelope payload back to resolved format
+    const resolvedFormat = {};
+    for (const [param, cfg] of Object.entries(envPayload)) {
+      resolvedFormat[param] = {
+        startValue: cfg.startValue,
+        endValue: cfg.endValue,
+        interpolation: cfg.interpolation,
+      };
+    }
+
+    // Apply via AudioParam scheduling
+    applyResolvedProgram(context, resolvedFormat, portamentoMs);
+
+    // Keep logging for debugging
+    console.log(
+      "➡️ AudioParam schedule (loadScene)",
+      Object.fromEntries(
+        Object.entries(envPayload).map(([param, cfg]) => [
+          param,
+          {
+            start: cfg.startValue,
+            end: cfg.endValue,
+            interp: cfg.interpolation,
+          },
+        ]),
+      ),
+    );
+
     console.log(
       `⚡ Scene loaded immediately with ${portamentoMs}ms portamento`,
     );
+
+    const targetPhase = typeof context.receivedPhasor === "number"
+      ? (context.receivedPhasor % 1 + 1) % 1
+      : (context.pausedPhase ?? 0);
+    resetPhasorState(context, targetPhase);
   }
 }
 
@@ -240,11 +289,16 @@ export function handleLoadScene(payload, context) {
     context._pendingSceneAtEoc = envPayload;
     context.reresolveAtNextEOC = false;
   } else {
-    context.voiceNode?.port.postMessage({
-      type: "SET_ALL_ENV",
-      v: 1,
-      params: envPayload,
-    });
+    // Convert to resolved format and apply via AudioParams
+    const resolved = {};
+    for (const [param, cfg] of Object.entries(envPayload)) {
+      resolved[param] = {
+        startValue: cfg.startValue,
+        endValue: cfg.endValue,
+        interpolation: cfg.interpolation,
+      };
+    }
+    applyResolvedProgram(context, resolved, 0);
   }
 }
 
@@ -253,7 +307,7 @@ export function handleLoadScene(payload, context) {
 // ---------------------------------------------------------------------------
 
 function serializeHRGState(state) {
-  return {
+  const serialized = {
     numerators: [...(state.numerators || [])],
     denominators: [...(state.denominators || [])],
     numeratorBehavior: state.numeratorBehavior,
@@ -263,6 +317,12 @@ function serializeHRGState(state) {
     orderN: state.orderN ? [...state.orderN] : null,
     orderD: state.orderD ? [...state.orderD] : null,
   };
+
+  console.log(
+    `🔸 serializeHRG: indexN=${state.indexN} → ${serialized.indexN}, indexD=${state.indexD} → ${serialized.indexD}`,
+  );
+
+  return serialized;
 }
 
 function deserializeHRGState(serialized, generator) {
@@ -274,21 +334,29 @@ function deserializeHRGState(serialized, generator) {
   const denominators = serialized.denominators?.length
     ? [...serialized.denominators]
     : parseSequence(generator?.denominators || "1");
-  
+
+  // Debug: Check what we're getting
   console.log(
-    `🔍 deserializeHRG: nums=[${numerators}], denoms=[${denominators}], indexN=${serialized.indexN}, indexD=${serialized.indexD}`
+    `🔍 deserializeHRG INPUT: indexN=${serialized.indexN}, indexD=${serialized.indexD}`,
   );
 
   const clamp = (value, arr) =>
     Math.max(0, Math.min(value ?? 0, arr.length - 1));
+
+  const finalIndexN = clamp(serialized.indexN, numerators);
+  const finalIndexD = clamp(serialized.indexD, denominators);
+
+  console.log(
+    `🔍 deserializeHRG OUTPUT: nums=[${numerators}], denoms=[${denominators}], indexN=${finalIndexN}, indexD=${finalIndexD}`,
+  );
 
   return {
     numerators,
     denominators,
     numeratorBehavior: serialized.numeratorBehavior || "static",
     denominatorBehavior: serialized.denominatorBehavior || "static",
-    indexN: clamp(serialized.indexN, numerators),
-    indexD: clamp(serialized.indexD, denominators),
+    indexN: finalIndexN,
+    indexD: finalIndexD,
     orderN: serialized.orderN ? [...serialized.orderN] : null,
     orderD: serialized.orderD ? [...serialized.orderD] : null,
   };
@@ -370,19 +438,31 @@ export function clearBank(memoryLocation, context) {
 export function applyPendingScene(context) {
   if (!context._pendingSceneAtEoc) return;
 
-  // Log exact payload being sent
-  console.log("➡️ SET_ALL_ENV (applyPending)", Object.fromEntries(
-    Object.entries(context._pendingSceneAtEoc).map(([param, cfg]) => [
-      param,
-      { start: cfg.startValue, end: cfg.endValue, interp: cfg.interpolation }
-    ])
-  ));
-  
-  context.voiceNode?.port.postMessage({
-    type: "SET_ALL_ENV",
-    v: 1,
-    params: context._pendingSceneAtEoc,
-  });
+  // USE NEW AUDIOPARAM PATH for EOC boundaries
+  // Convert envelope payload back to resolved format
+  const resolvedFormat = {};
+  for (const [param, cfg] of Object.entries(context._pendingSceneAtEoc)) {
+    resolvedFormat[param] = {
+      startValue: cfg.startValue,
+      endValue: cfg.endValue,
+      interpolation: cfg.interpolation,
+    };
+  }
+
+  // Apply via AudioParam scheduling with no portamento (instant at EOC)
+  applyResolvedProgram(context, resolvedFormat, 0);
+
+  // Keep logging for debugging
+  console.log(
+    "➡️ AudioParam schedule (applyPending)",
+    Object.fromEntries(
+      Object.entries(context._pendingSceneAtEoc).map(([param, cfg]) => [
+        param,
+        { start: cfg.startValue, end: cfg.endValue, interp: cfg.interpolation },
+      ]),
+    ),
+  );
+
   context._pendingSceneAtEoc = null;
   console.log("🎬 Applied pending scene at EOC");
 }

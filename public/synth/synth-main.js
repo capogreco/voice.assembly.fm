@@ -1,5 +1,17 @@
 /**
  * Voice.Assembly.FM Synth Client Main Application
+ *
+ * ARCHITECTURE CHANGES (AudioParam Migration):
+ * - All envelope parameters now controlled via AudioParams
+ * - Direct scheduling using Web Audio API automation
+ * - No more SET_ENV/SET_ALL_ENV messages to worklet
+ * - Sample-accurate parameter changes
+ * - Proper save/load with HRG/RBG state preservation
+ *
+ * Key functions:
+ * - applyResolvedProgram(): Schedules all parameters via AudioParams
+ * - peekHRGValue(): Gets current HRG value without advancing
+ * - _resolveRBG(): Handles RBG with peek mode for save/load
  */
 
 import { generatePeerId, WebRTCStar } from "../../src/common/webrtc-star.js";
@@ -18,6 +30,8 @@ import {
   toEnvPayload,
 } from "./state/scenes.js";
 import { resolveProgramSnapshot } from "./state/resolve.js";
+import { applyResolvedProgram } from "./audio/scheduler.js";
+import { resetPhasorState } from "./scheduler/phasor.js";
 import {
   captureSceneSnapshot,
   clearAllSceneBanks as clearAllScenes,
@@ -520,24 +534,25 @@ class SynthClient {
 
     if (this.voiceNode) {
       // Log exact payload being sent
-      console.log("➡️ SET_ENV", message.param, { 
-        start: message.value, 
-        end: message.value, 
-        interp: "step" 
+      console.log("➡️ SET_ENV", message.param, {
+        start: message.value,
+        end: message.value,
+        interp: "step",
       });
-      
-      // Route to voice worklet via SET_ENV message
-      this.voiceNode.port.postMessage({
-        type: "SET_ENV",
-        v: 1,
-        param: message.param,
-        startValue: message.value,
-        endValue: message.value,
-        interpolation: "step",
-        portamentoMs: 15, // Convert 0.015s to ms
-      });
+
+      // Route via AudioParam scheduling
+      const resolved = {
+        [message.param]: {
+          startValue: message.value,
+          endValue: message.value,
+          interpolation: "step",
+        },
+      };
+
+      applyResolvedProgram(this, resolved, 15); // 15ms portamento
+
       console.log(
-        `🔌 Route for '${message.param}': Main Thread -> Voice (SET_ENV)`,
+        `🔌 Route for '${message.param}': Main Thread -> Voice (AudioParam)`,
       );
     }
   }
@@ -628,18 +643,17 @@ class SynthClient {
         // Tracking removed - using resolver instead
       }
 
-      // Send batch envelope update to voice worklet
-      this.voiceNode.port.postMessage({
-        type: "SET_ALL_ENV",
-        v: 1,
-        params: resolvedParams,
-      });
+      // Apply via AudioParam scheduling
+      const resolved = {};
+      for (const [param, cfg] of Object.entries(resolvedParams)) {
+        resolved[param] = {
+          startValue: cfg.startValue,
+          endValue: cfg.endValue,
+          interpolation: cfg.interpolation,
+        };
+      }
 
-      // Follow with immediate apply
-      this.voiceNode.port.postMessage({
-        type: "APPLY_NOW",
-        portamentoMs: 0,
-      });
+      applyResolvedProgram(this, resolved, 0);
 
       console.log("✅ Immediate synthesis activated successfully");
     } catch (error) {
@@ -677,15 +691,20 @@ class SynthClient {
       };
     }
 
-    // Send batch envelope update to voice worklet
-    this.voiceNode.port.postMessage({
-      type: "SET_ALL_ENV",
-      v: 1,
-      params: resolvedParams,
-    });
+    // Apply via AudioParam scheduling
+    const resolved = {};
+    for (const [param, cfg] of Object.entries(resolvedParams)) {
+      resolved[param] = {
+        startValue: cfg.startValue,
+        endValue: cfg.endValue,
+        interpolation: cfg.interpolation,
+      };
+    }
+
+    applyResolvedProgram(this, resolved, portamentoTime);
 
     console.log(
-      `🎯 SET_ALL_ENV message sent with ${portamentoTime}ms portamento`,
+      `🎯 AudioParam scheduling with ${portamentoTime}ms portamento`,
     );
   }
 
@@ -712,18 +731,16 @@ class SynthClient {
       return;
     }
 
-    // Send SET_ENV message to voice worklet
-    this.voiceNode.port.postMessage({
-      type: "SET_ENV",
-      v: 1,
-      param: param,
-      startValue: value,
-      endValue: value, // For single value updates, start = end
-      interpolation: cfg.interpolation || "step",
-      portamentoMs: portamentoTime,
-    });
+    // Apply via AudioParam scheduling
+    const resolved = {
+      [param]: {
+        startValue: value,
+        endValue: value, // For single value updates, start = end
+        interpolation: cfg.interpolation || "step",
+      },
+    };
 
-    // Update tracked value
+    applyResolvedProgram(this, resolved, portamentoTime);
   }
 
   // _resolveParameterAtPhase method removed - using AudioParams directly
@@ -907,6 +924,11 @@ class SynthClient {
       path: paramPath,
       value: value,
     });
+
+    // If synthesis is active and we're paused, make sure we hear the changes
+    if (this.synthesisActive && !this.isPlaying) {
+      this.activateImmediateSynthesis();
+    }
   }
 
   /**
@@ -1045,50 +1067,41 @@ class SynthClient {
 
     // If not staging, compute new value and send to worklet
     if (!stagingMode) {
-      const baseValue = cfg.baseValue;
+      // Use peekHRGValue to get the current value after update
+      const newValue = this.peekHRGValue(paramName, position);
 
-      if (hrgState && hrgState[position]) {
-        const newValue = baseValue *
-          (hrgState[position].numerator / hrgState[position].denominator);
-
-        hrgState[position].frequency = newValue;
-
-        // Send minimal SET_ENV for just the affected value
-        if (position === "start") {
-          // Get preserved end value using peek
-          const endValue = cfg.endValueGenerator?.type === "periodic"
-            ? this.peekHRGValue(paramName, "end")
-            : this._resolveRBG(cfg.endValueGenerator, paramName, "end");
-          this._sendSetEnvMessage(
-            paramName,
-            newValue,
-            endValue,
-            cfg.interpolation,
-            portamentoMs,
-          );
-        } else {
-          // Get preserved start value using peek
-          const startValue = cfg.startValueGenerator?.type === "periodic"
-            ? this.peekHRGValue(paramName, "start")
-            : this._resolveRBG(cfg.startValueGenerator, paramName, "start");
-          this._sendSetEnvMessage(
-            paramName,
-            startValue,
-            newValue,
-            cfg.interpolation,
-            portamentoMs,
-          );
-        }
-
-        console.log(
-          `🔄 Minimal ${component} update for ${paramName}.${position}: ${
-            newValue.toFixed(3)
-          } ` +
-            `(${hrgState[position].numerator}/${
-              hrgState[position].denominator
-            })`,
+      // Send minimal SET_ENV for just the affected value
+      if (position === "start") {
+        // Get preserved end value using peek
+        const endValue = cfg.endValueGenerator?.type === "periodic"
+          ? this.peekHRGValue(paramName, "end")
+          : this._resolveRBG(cfg.endValueGenerator, paramName, "end", true);
+        this._sendSetEnvMessage(
+          paramName,
+          newValue,
+          endValue,
+          cfg.interpolation,
+          portamentoMs,
+        );
+      } else {
+        // Get preserved start value using peek
+        const startValue = cfg.startValueGenerator?.type === "periodic"
+          ? this.peekHRGValue(paramName, "start")
+          : this._resolveRBG(cfg.startValueGenerator, paramName, "start", true);
+        this._sendSetEnvMessage(
+          paramName,
+          startValue,
+          newValue,
+          cfg.interpolation,
+          portamentoMs,
         );
       }
+
+      console.log(
+        `🔄 Minimal ${component} update for ${paramName}.${position}: ${
+          newValue.toFixed(3)
+        }`,
+      );
     }
   }
 
@@ -1113,15 +1126,23 @@ class SynthClient {
     interpolation,
     portamentoMs,
   ) {
-    this.voiceNode.port.postMessage({
-      type: "SET_ENV",
-      v: 1,
-      param: paramName,
-      startValue: startValue,
-      endValue: endValue,
-      interpolation: interpolation,
-      portamentoMs: portamentoMs,
-    });
+    // Use AudioParam scheduling instead of message
+    const resolved = {
+      [paramName]: {
+        startValue,
+        endValue,
+        interpolation,
+      },
+    };
+
+    // Apply via AudioParam scheduling
+    applyResolvedProgram(this, resolved, portamentoMs);
+
+    console.log(
+      `➡️ AudioParam schedule (HRG update): ${paramName} start=${
+        startValue.toFixed(2)
+      }, end=${endValue.toFixed(2)}`,
+    );
   }
 
   /**
@@ -1222,6 +1243,10 @@ class SynthClient {
       if (!this.phasorUpdateId) {
         this.startPhasorInterpolation();
       }
+
+      if (!this.receivedIsPlaying) {
+        resetPhasorState(this, this.receivedPhasor ?? 0);
+      }
       return;
     }
 
@@ -1298,6 +1323,9 @@ class SynthClient {
       console.log(
         `⏸️ Paused heartbeat: cached timing (${this.receivedCycleLength}s cycle)`,
       );
+
+      // Force phasor state to the received phase for new/paused synths
+      resetPhasorState(this, this.receivedPhasor ?? 0);
     }
 
     // Update phasor worklet parameters
@@ -2059,7 +2087,8 @@ class SynthClient {
       isCosInterp: this.isCosInterp.bind(this),
       resolveHRG: (param, pos, peek = false) =>
         peek ? this.peekHRGValue(param, pos) : this._resolveHRG(param, pos),
-      resolveRBG: this._resolveRBG.bind(this),
+      resolveRBG: (gen, param, pos, peek) =>
+        this._resolveRBG(gen, param, pos, peek),
     });
 
     let portamentoMs = 0;
@@ -2076,20 +2105,42 @@ class SynthClient {
       resolvedParams[paramName].portamentoMs = portamentoMs;
     }
 
-    // Log exact payload being sent
-    console.log("➡️ SET_ALL_ENV (reinit)", Object.fromEntries(
-      Object.entries(resolvedParams).map(([param, cfg]) => [
-        param,
-        { start: cfg.startValue, end: cfg.endValue, interp: cfg.interpolation }
-      ])
-    ));
-    
-    // Send new envelopes to voice worklet with appropriate portamento
-    this.voiceNode.port.postMessage({
-      type: "SET_ALL_ENV",
-      v: 1,
-      params: resolvedParams,
-    });
+    // DETAILED REINIT LOGGING
+    console.log(`\n🟢 RE-RESOLVE ==================`);
+    console.log("📊 New resolved values:");
+    for (const [param, values] of Object.entries(resolvedParams)) {
+      console.log(
+        `  ${param}: start=${values.startValue?.toFixed(2)}, end=${
+          values.endValue?.toFixed(2)
+        }`,
+      );
+    }
+
+    // Log HRG state for frequency
+    const freqHrg = this.hrgState?.frequency;
+    if (freqHrg?.start) {
+      console.log(
+        `🎲 frequency HRG start: idx=${freqHrg.start.indexN} val=${
+          freqHrg.start.numerators?.[freqHrg.start.indexN]
+        }/${
+          freqHrg.start.denominators?.[freqHrg.start.indexD]
+        } arrays=[${freqHrg.start.numerators}]/[${freqHrg.start.denominators}]`,
+      );
+    }
+    if (freqHrg?.end) {
+      console.log(
+        `🎲 frequency HRG end: idx=${freqHrg.end.indexN} val=${
+          freqHrg.end.numerators?.[freqHrg.end.indexN]
+        }/${
+          freqHrg.end.denominators?.[freqHrg.end.indexD]
+        } arrays=[${freqHrg.end.numerators}]/[${freqHrg.end.denominators}]`,
+      );
+    }
+    console.log("");
+
+    // USE NEW AUDIOPARAM PATH
+    // Apply via AudioParam scheduling instead of messages
+    this._applyResolvedProgram(resolvedParams, portamentoMs);
 
     // Reset phasor if playing (immediate audible change)
     if (this.isPlaying && this.phasorWorklet) {
@@ -2108,6 +2159,16 @@ class SynthClient {
       "re-resolved",
       "Stochastic state re-initialized",
     );
+  }
+
+  // AudioParam Scheduling Methods
+
+  /**
+   * Apply resolved program using AudioParam scheduling
+   * This is the new path that replaces SET_ALL_ENV messages
+   */
+  _applyResolvedProgram(resolved, portamentoMs = 0) {
+    applyResolvedProgram(this, resolved, portamentoMs);
   }
 
   // Scene Memory Methods
@@ -2538,8 +2599,14 @@ class SynthClient {
     const denominators = Array.isArray(generator.denominators)
       ? [...generator.denominators]
       : this._parseSIN(generator.denominators || "1");
-    
-    console.log(`🎲 HRG init for ${param}: nums=${Array.isArray(generator.numerators) ? 'array' : 'string'} [${numerators}], denoms=${Array.isArray(generator.denominators) ? 'array' : 'string'} [${denominators}]`);
+
+    console.log(
+      `🎲 HRG init for ${param}: nums=${
+        Array.isArray(generator.numerators) ? "array" : "string"
+      } [${numerators}], denoms=${
+        Array.isArray(generator.denominators) ? "array" : "string"
+      } [${denominators}]`,
+    );
     const numeratorBehavior = generator.numeratorBehavior || "static";
     const denominatorBehavior = generator.denominatorBehavior || "static";
 
@@ -2549,12 +2616,13 @@ class SynthClient {
         denominators,
         numeratorBehavior,
         denominatorBehavior,
-        indexN: numeratorBehavior === "static"
+        indexN: numeratorBehavior === "static" || numeratorBehavior === "random"
           ? Math.floor(Math.random() * numerators.length)
           : 0,
-        indexD: denominatorBehavior === "static"
-          ? Math.floor(Math.random() * denominators.length)
-          : 0,
+        indexD:
+          denominatorBehavior === "static" || denominatorBehavior === "random"
+            ? Math.floor(Math.random() * denominators.length)
+            : 0,
         orderN: numeratorBehavior === "shuffle"
           ? this._shuffleArray([...numerators])
           : null,
@@ -2585,10 +2653,10 @@ class SynthClient {
         denominators: endDenominators,
         numeratorBehavior: endNumBehavior,
         denominatorBehavior: endDenBehavior,
-        indexN: endNumBehavior === "static"
+        indexN: endNumBehavior === "static" || endNumBehavior === "random"
           ? Math.floor(Math.random() * endNumerators.length)
           : 0,
-        indexD: endDenBehavior === "static"
+        indexD: endDenBehavior === "static" || endDenBehavior === "random"
           ? Math.floor(Math.random() * endDenominators.length)
           : 0,
         orderN: endNumBehavior === "shuffle"
@@ -2615,41 +2683,51 @@ class SynthClient {
 
     // Check if HRG state already exists (e.g., loaded from scene)
     const existingState = this.hrgState[param]?.[position];
-    
+
     // If state exists, only randomize indices, preserve arrays
     if (existingState && existingState.numerators?.length) {
       const numeratorBehavior = generator.numeratorBehavior || "static";
       const denominatorBehavior = generator.denominatorBehavior || "static";
-      
+
       // Update behaviors
       existingState.numeratorBehavior = numeratorBehavior;
       existingState.denominatorBehavior = denominatorBehavior;
-      
+
       // Randomize indices only
-      if (numeratorBehavior === "static") {
-        existingState.indexN = Math.floor(Math.random() * existingState.numerators.length);
+      if (numeratorBehavior === "static" || numeratorBehavior === "random") {
+        existingState.indexN = Math.floor(
+          Math.random() * existingState.numerators.length,
+        );
         existingState.orderN = null;
       } else if (numeratorBehavior === "shuffle") {
-        existingState.orderN = this._shuffleArray([...existingState.numerators]);
+        existingState.orderN = this._shuffleArray([
+          ...existingState.numerators,
+        ]);
         existingState.indexN = 0;
       } else {
         existingState.indexN = 0;
         existingState.orderN = null;
       }
-      
-      if (denominatorBehavior === "static") {
-        existingState.indexD = Math.floor(Math.random() * existingState.denominators.length);
+
+      if (
+        denominatorBehavior === "static" || denominatorBehavior === "random"
+      ) {
+        existingState.indexD = Math.floor(
+          Math.random() * existingState.denominators.length,
+        );
         existingState.orderD = null;
       } else if (denominatorBehavior === "shuffle") {
-        existingState.orderD = this._shuffleArray([...existingState.denominators]);
+        existingState.orderD = this._shuffleArray([
+          ...existingState.denominators,
+        ]);
         existingState.indexD = 0;
       } else {
         existingState.indexD = 0;
         existingState.orderD = null;
       }
-      
+
       console.log(
-        `🔄 Re-randomized HRG indices for ${param}.${position}: N=[${existingState.indexN}], D=[${existingState.indexD}] (arrays preserved)`
+        `🔄 Re-randomized HRG indices for ${param}.${position}: N=[${existingState.indexN}], D=[${existingState.indexD}] (arrays preserved)`,
       );
       return;
     }
@@ -2691,7 +2769,11 @@ class SynthClient {
     };
 
     console.log(
-      `🔄 Generated fresh HRG ${position} for ${param}: N=[${this.hrgState[param][position].indexN}] from [${numerators}], D=[${this.hrgState[param][position].indexD}] from [${denominators}]`,
+      `🔄 Generated fresh HRG ${position} for ${param}: N=[${
+        this.hrgState[param][position].indexN
+      }] from [${numerators}], D=[${
+        this.hrgState[param][position].indexD
+      }] from [${denominators}]`,
     );
   }
 
@@ -2928,10 +3010,10 @@ class SynthClient {
         denominators: endDenominators,
         numeratorBehavior: endNumBehavior,
         denominatorBehavior: endDenBehavior,
-        indexN: endNumBehavior === "static"
+        indexN: endNumBehavior === "static" || endNumBehavior === "random"
           ? Math.floor(Math.random() * endNumerators.length)
           : 0,
-        indexD: endDenBehavior === "static"
+        indexD: endDenBehavior === "static" || endDenBehavior === "random"
           ? Math.floor(Math.random() * endDenominators.length)
           : 0,
         orderN: endNumBehavior === "shuffle"
@@ -3172,16 +3254,16 @@ class SynthClient {
         }`,
     );
 
-    // Send to worklet
-    this.voiceNode.port.postMessage({
-      type: "SET_ENV",
-      v: 1,
-      param: paramName,
-      startValue: newStartValue,
-      endValue: newEndValue,
-      interpolation: cfg.interpolation,
-      portamentoMs: portamentoMs,
-    });
+    // Apply via AudioParam scheduling
+    const resolved = {
+      [paramName]: {
+        startValue: newStartValue,
+        endValue: newEndValue,
+        interpolation: cfg.interpolation,
+      },
+    };
+
+    applyResolvedProgram(this, resolved, portamentoMs);
 
     // Update stored state with new base and computed frequencies
     hrgState.baseValue = newBaseValue;
@@ -3389,7 +3471,7 @@ class SynthClient {
 
     // Get current numerator without advancing
     if (numeratorBehavior === "static") {
-      numerator = numerators[state.indexN];
+      numerator = numerators[state.indexN] || numerators[0] || 1;
     } else if (numeratorBehavior === "ascending") {
       numerator = numerators[state.indexN % numerators.length];
     } else if (numeratorBehavior === "descending") {
@@ -3398,12 +3480,14 @@ class SynthClient {
     } else if (numeratorBehavior === "shuffle") {
       numerator = state.orderN[state.indexN % state.orderN.length];
     } else if (numeratorBehavior === "random") {
-      numerator = numerators[Math.floor(Math.random() * numerators.length)];
+      // For random, use the stored index (last random selection)
+      // If no index stored, default to first element
+      numerator = numerators[state.indexN] || numerators[0] || 1;
     }
 
     // Get current denominator without advancing
     if (denominatorBehavior === "static") {
-      denominator = denominators[state.indexD];
+      denominator = denominators[state.indexD] || denominators[0] || 1;
     } else if (denominatorBehavior === "ascending") {
       denominator = denominators[state.indexD % denominators.length];
     } else if (denominatorBehavior === "descending") {
@@ -3413,12 +3497,20 @@ class SynthClient {
     } else if (denominatorBehavior === "shuffle") {
       denominator = state.orderD[state.indexD % state.orderD.length];
     } else if (denominatorBehavior === "random") {
-      denominator =
-        denominators[Math.floor(Math.random() * denominators.length)];
+      // For random, use the stored index (last random selection)
+      // If no index stored, default to first element
+      denominator = denominators[state.indexD] || denominators[0] || 1;
     }
 
     const base = Number(cfg.baseValue);
     const frequency = base * (numerator / (denominator || 1));
+
+    // Debug logging for mismatch investigation
+    if (paramName === "frequency") {
+      console.log(
+        `🔬 peekHRGValue(${paramName}, ${position}): base=${base}, num=${numerator}, denom=${denominator}, result=${frequency}`,
+      );
+    }
 
     return frequency;
   }
@@ -3459,7 +3551,9 @@ class SynthClient {
         state.indexN = 0;
       }
     } else if (numeratorBehavior === "random") {
-      numerator = numerators[Math.floor(Math.random() * numerators.length)];
+      const randomIndex = Math.floor(Math.random() * numerators.length);
+      numerator = numerators[randomIndex];
+      state.indexN = randomIndex; // Store for peekHRGValue
     }
 
     if (denominatorBehavior === "static") {
@@ -3480,8 +3574,9 @@ class SynthClient {
         state.indexD = 0;
       }
     } else if (denominatorBehavior === "random") {
-      denominator =
-        denominators[Math.floor(Math.random() * denominators.length)];
+      const randomIndex = Math.floor(Math.random() * denominators.length);
+      denominator = denominators[randomIndex];
+      state.indexD = randomIndex; // Store for peekHRGValue
     }
 
     const cfg = this.programConfig[param];
@@ -3503,7 +3598,7 @@ class SynthClient {
   }
 
   // Resolve RBG value with behavior support
-  _resolveRBG(generator, paramName = null, position = null) {
+  _resolveRBG(generator, paramName = null, position = null, peek = false) {
     let result;
 
     // Handle fixed values
@@ -3532,11 +3627,22 @@ class SynthClient {
         // RBG resolved (static, cached)
       }
       result = this.rbgState[stateKey];
+    } else if (stateKey) {
+      // Random behavior: store value for save/load
+      if (peek && this.rbgState[stateKey] !== undefined) {
+        // Peek mode: return existing value without generating new one
+        result = this.rbgState[stateKey];
+      } else {
+        // Generate new value and store it
+        const range = generator.range.max - generator.range.min;
+        result = generator.range.min + (Math.random() * range);
+        this.rbgState[stateKey] = result; // Store for peeking
+        // RBG resolved (random)
+      }
     } else {
-      // Random behavior: generate new value each time
+      // No state key - just generate random value (backwards compat)
       const range = generator.range.max - generator.range.min;
       result = generator.range.min + (Math.random() * range);
-      // RBG resolved (random)
     }
 
     return result;

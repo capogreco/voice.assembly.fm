@@ -49,7 +49,7 @@ export function resolveProgramSnapshot(ctx) {
       if (gen.type === "periodic") {
         startValue = ctx.resolveHRG(paramName, "start", true); // Use peek to avoid advancing
       } else {
-        startValue = ctx.resolveRBG(gen, paramName, "start");
+        startValue = ctx.resolveRBG(gen, paramName, "start", true); // Use peek for save/load
       }
     }
 
@@ -61,7 +61,7 @@ export function resolveProgramSnapshot(ctx) {
         if (gen.type === "periodic") {
           endValue = ctx.resolveHRG(paramName, "end", true); // Use peek
         } else {
-          endValue = ctx.resolveRBG(gen, paramName, "end");
+          endValue = ctx.resolveRBG(gen, paramName, "end", true); // Use peek for save/load
         }
       }
     } else if (interpolation === "cont") {

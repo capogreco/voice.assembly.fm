@@ -1,9 +1,16 @@
 /**
- * Voice Worklet - DSP Synthesis with Envelope Generation
+ * Voice Worklet - DSP Synthesis with AudioParam Control
  *
  * Handles formant synthesis combining PM (Phase/Frequency Modulation) and Zing paths.
- * Now includes envelope generation based on phase input and interpolation settings.
- * Receives SET_ENV commands via port messages for parameter control.
+ * 
+ * PARAMETER CONTROL:
+ * - All envelope parameters are now controlled via AudioParams (k-rate)
+ * - Each parameter has _start and _end AudioParams for envelope endpoints
+ * - Main thread schedules values using AudioParam automation
+ * - No more SET_ENV/SET_ALL_ENV messages needed
+ * 
+ * Interpolation modes (disc/cont/step) are still configured via messages
+ * but actual values come from AudioParams for sample-accurate control.
  */
 
 class VoiceWorkletProcessor extends AudioWorkletProcessor {
@@ -25,6 +32,27 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
         maxValue: 1,
         automationRate: "k-rate",
       },
+      // Envelope endpoints for all parameters
+      { name: "frequency_start", defaultValue: 220, automationRate: "k-rate" },
+      { name: "frequency_end", defaultValue: 220, automationRate: "k-rate" },
+      { name: "zingMorph_start", defaultValue: 0.5, automationRate: "k-rate" },
+      { name: "zingMorph_end", defaultValue: 0.5, automationRate: "k-rate" },
+      { name: "zingAmount_start", defaultValue: 0.5, automationRate: "k-rate" },
+      { name: "zingAmount_end", defaultValue: 0.5, automationRate: "k-rate" },
+      { name: "vowelX_start", defaultValue: 0.5, automationRate: "k-rate" },
+      { name: "vowelX_end", defaultValue: 0.5, automationRate: "k-rate" },
+      { name: "vowelY_start", defaultValue: 0.5, automationRate: "k-rate" },
+      { name: "vowelY_end", defaultValue: 0.5, automationRate: "k-rate" },
+      { name: "symmetry_start", defaultValue: 0.5, automationRate: "k-rate" },
+      { name: "symmetry_end", defaultValue: 0.5, automationRate: "k-rate" },
+      { name: "amplitude_start", defaultValue: 0.1, automationRate: "k-rate" },
+      { name: "amplitude_end", defaultValue: 0.1, automationRate: "k-rate" },
+      { name: "whiteNoise_start", defaultValue: 0, automationRate: "k-rate" },
+      { name: "whiteNoise_end", defaultValue: 0, automationRate: "k-rate" },
+      { name: "vibratoWidth_start", defaultValue: 0, automationRate: "k-rate" },
+      { name: "vibratoWidth_end", defaultValue: 0, automationRate: "k-rate" },
+      { name: "vibratoRate_start", defaultValue: 5, automationRate: "k-rate" },
+      { name: "vibratoRate_end", defaultValue: 5, automationRate: "k-rate" },
     ];
   }
 
@@ -480,28 +508,19 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
     const msg = event.data;
 
     switch (msg.type) {
-      case "SET_ENV":
-        // Log what worklet receives
-        console.log("🎚 voice-worklet SET_ENV", msg.param, {
-          start: msg.startValue,
-          end: msg.endValue,
-          interp: msg.interpolation
-        });
-        this.handleSetEnv(msg);
-        break;
+      // DEPRECATED: Now using AudioParams directly
+      // case "SET_ENV":
+      //   this.handleSetEnv(msg);
+      //   break;
 
-      case "SET_ALL_ENV":
-        // Log what worklet receives
-        const summary = {};
-        for (const [param, cfg] of Object.entries(msg.params || {})) {
-          summary[param] = { 
-            start: cfg.startValue, 
-            end: cfg.endValue, 
-            interp: cfg.interpolation 
-          };
-        }
-        console.log("🎚 voice-worklet SET_ALL_ENV", summary);
-        this.handleSetAllEnv(msg);
+      // DEPRECATED: Now using AudioParams directly  
+      // case "SET_ALL_ENV":
+      //   this.handleSetAllEnv(msg);
+      //   break;
+
+      case "RESET_ENV":
+        // Reset envelope internal state (portamento alphas, etc.)
+        this.handleResetEnv(msg);
         break;
 
       case "PROGRAM":
@@ -580,6 +599,22 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
         this.updateCachedRatiosFromEnv(param);
       }
     }
+  }
+
+  /**
+   * Handle RESET_ENV message - reset envelope internal state
+   */
+  handleResetEnv(msg) {
+    // Reset portamento alphas and current values to prepare for new AudioParam values
+    for (const [param, env] of Object.entries(this.env)) {
+      // Reset portamento alpha to instant (no smoothing)
+      env.alpha = 1.0;
+      // Optionally reset interpolation type if provided
+      if (msg.interpolations && msg.interpolations[param]) {
+        env.interpolation = msg.interpolations[param];
+      }
+    }
+    console.log("🔄 Reset envelope state");
   }
 
   /**
@@ -1344,40 +1379,50 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
 
       // ===== ENVELOPE GENERATION =====
 
-      // Update each parameter's envelope value
-      for (const [param, env] of Object.entries(this.env)) {
-        let target;
+      // Read from AudioParams and interpolate based on phase
+      // Note: For now, keeping the old envelope structure for interpolation types
+      // In future, we'll pass interpolation info via a different mechanism
 
+      const computeEnvelope = (paramName) => {
+        const start = parameters[`${paramName}_start`][0];
+        const end = parameters[`${paramName}_end`][0];
+        const env = this.env[paramName];
+
+        let target;
         // Calculate target based on interpolation
         if (env.interpolation === "step") {
-          target = env.start;
+          target = start;
         } else { // disc/cont - both use cosine interpolation curve
           const cosPhase = Math.cos(currentPhase * Math.PI);
-          target = env.start + (env.end - env.start) * (1 - cosPhase) / 2;
+          target = start + (end - start) * (1 - cosPhase) / 2;
         }
 
         // Apply portamento smoothing
         env.current += env.alpha * (target - env.current);
-      }
+        return env.current;
+      };
 
       // ===== DSP SYNTHESIS =====
 
-      // Extract current envelope values
-      const frequency = this.env.frequency.current;
-      const vowelX = this.env.vowelX.current;
-      const vowelY = this.env.vowelY.current;
-      const amplitude = this.env.amplitude.current;
-      const zingAmount = this.env.zingAmount.current;
-      const zingMorph = this.env.zingMorph.current;
-      const symmetry = this.env.symmetry.current;
+      // Compute current envelope values from AudioParams
+      const frequency = computeEnvelope("frequency");
+      const vowelX = computeEnvelope("vowelX");
+      const vowelY = computeEnvelope("vowelY");
+      const amplitude = computeEnvelope("amplitude");
+      const zingAmount = computeEnvelope("zingAmount");
+      const zingMorph = computeEnvelope("zingMorph");
+      const symmetry = computeEnvelope("symmetry");
 
       // Apply vibrato modulation to frequency
+      const vibratoRate = computeEnvelope("vibratoRate");
+      const vibratoWidth = computeEnvelope("vibratoWidth");
+
       const rate = Math.min(
-        Math.max(this.env.vibratoRate.current || 0, 0),
+        Math.max(vibratoRate || 0, 0),
         1024,
       );
       const width = Math.min(
-        Math.max(this.env.vibratoWidth.current || 0, 0),
+        Math.max(vibratoWidth || 0, 0),
         1,
       );
 
@@ -1472,8 +1517,9 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
       // Parallel paths: voice with amplitude, noise with whiteNoise envelope
       const voiceOutput = blendedOutput * 10.0 * amplitude;
 
+      const whiteNoise = computeEnvelope("whiteNoise");
       const noiseLevel = Math.min(
-        Math.max(this.env.whiteNoise.current || 0, 0),
+        Math.max(whiteNoise || 0, 0),
         1,
       );
       const noiseSample = (Math.random() * 2 - 1) * noiseLevel * 10.0;

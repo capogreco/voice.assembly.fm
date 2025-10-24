@@ -258,6 +258,36 @@ export function stopPhasorInterpolation(context) {
 }
 
 /**
+ * Reset the phasor to a specific phase, keeping UI and worklet in sync.
+ * Used after scene load while paused.
+ * @param {Object} context - Synth context
+ * @param {number} [phase=0] - Target phase (0-1)
+ */
+export function resetPhasorState(context, phase = 0) {
+  if (context.phasorWorklet) {
+    context.phasorWorklet.port.postMessage({
+      type: "set-phase",
+      phase,
+    });
+
+    // Honour the paused/playing state after resetting
+    context.phasorWorklet.port.postMessage({
+      type: context.receivedIsPlaying ? "start" : "stop",
+    });
+  }
+
+  context.workletPhasor = phase;
+  context.receivedPhasor = phase;
+  context.interpolatedPhasor = phase;
+  context.pausedPhase = phase;
+  context.lastPhasorMessage = performance.now();
+
+  if (typeof context.updatePhaseDisplay === "function") {
+    context.updatePhaseDisplay();
+  }
+}
+
+/**
  * Get current phase value
  * @param {Object} context - Synth context
  * @returns {number} - Current phase (0-1)

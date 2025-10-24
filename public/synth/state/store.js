@@ -9,6 +9,7 @@ import {
   buildSceneSnapshot,
   loadScene as loadSceneSnapshot,
 } from "./scenes.js";
+import { resolveProgramSnapshot } from "./resolve.js";
 
 /**
  * Capture current synth state as a scene snapshot
@@ -19,24 +20,50 @@ export function captureSceneSnapshot(context, bank) {
   const snapshot = buildSceneSnapshot(context);
   context.sceneSnapshots[bank] = snapshot;
 
+  // DETAILED SAVE LOGGING
+  // First, resolve current values to see what's actually playing
+  const currentResolved = resolveProgramSnapshot({
+    programConfig: context.programConfig,
+    hrgState: context.hrgState,
+    rbgState: context.rbgState,
+    isCosInterp: context.isCosInterp.bind(context),
+    resolveHRG: (param, pos) => context.peekHRGValue(param, pos),
+    resolveRBG: (gen, param, pos, peek) => context._resolveRBG(gen, param, pos, peek),
+  });
+
+  console.log(`\n🔴 SAVE BANK ${bank} ==================`);
+  console.log("📊 Current resolved values:");
+  for (const [param, values] of Object.entries(currentResolved)) {
+    const baseValue = context.programConfig[param]?.baseValue;
+    console.log(
+      `  ${param}: start=${values.startValue?.toFixed(2)}, end=${
+        values.endValue?.toFixed(2)
+      }, baseValue=${baseValue}`,
+    );
+  }
+
   // Diagnostic logging for generator state
   const freqHrg = snapshot.stochastic?.hrg?.frequency;
   if (freqHrg?.start) {
     console.log(
-      `🔖 save scene ${bank}: frequency HRG start = [${freqHrg.start.indexN}] ${
+      `🎲 frequency HRG start: idx=${freqHrg.start.indexN} val=${
         freqHrg.start.numerators?.[freqHrg.start.indexN]
-      }/${freqHrg.start.denominators?.[freqHrg.start.indexD]} (arrays: [${freqHrg.start.numerators}] / [${freqHrg.start.denominators}])`,
+      }/${
+        freqHrg.start.denominators?.[freqHrg.start.indexD]
+      } arrays=[${freqHrg.start.numerators}]/[${freqHrg.start.denominators}]`,
     );
   }
   if (freqHrg?.end) {
     console.log(
-      `🔖 save scene ${bank}: frequency HRG end = [${freqHrg.end.indexN}] ${
+      `🎲 frequency HRG end: idx=${freqHrg.end.indexN} val=${
         freqHrg.end.numerators?.[freqHrg.end.indexN]
-      }/${freqHrg.end.denominators?.[freqHrg.end.indexD]} (arrays: [${freqHrg.end.numerators}] / [${freqHrg.end.denominators}])`,
+      }/${
+        freqHrg.end.denominators?.[freqHrg.end.indexD]
+      } arrays=[${freqHrg.end.numerators}]/[${freqHrg.end.denominators}]`,
     );
   }
 
-  console.log(`💾 Captured scene ${bank} (v${snapshot.v})`);
+  console.log(`💾 Scene ${bank} captured\n`);
 }
 
 /**
