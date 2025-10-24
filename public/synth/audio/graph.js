@@ -134,7 +134,11 @@ export function connectPhasorToVoice(phasorWorklet, voiceNode) {
  * @param {number} cycleLength - Initial cycle length
  * @returns {Promise<Object>} - Complete audio graph components
  */
-export async function setupAudioGraph(audioContext, volume = 0.1, cycleLength = 2.0) {
+export async function setupAudioGraph(
+  audioContext,
+  volume = 0.1,
+  cycleLength = 2.0,
+) {
   // Load worklet modules
   await loadWorkletModules(audioContext);
 

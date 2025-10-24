@@ -11,7 +11,12 @@ import { MessageTypes } from "../../../src/common/message-protocol.js";
  * @param {function} updateConnectionStatus - Status update function
  * @param {function} handleDataMessage - Data message handler
  */
-export function setupStarEventHandlers(star, elements, updateConnectionStatus, handleDataMessage) {
+export function setupStarEventHandlers(
+  star,
+  elements,
+  updateConnectionStatus,
+  handleDataMessage,
+) {
   star.addEventListener("peer-connected", (event) => {
     // Hide loading indicator and update status
     elements.loading.style.display = "none";
@@ -164,7 +169,6 @@ export async function connectToNetwork(star) {
   // Dynamic WebSocket URL that works in production and development
   const protocol = globalThis.location.protocol === "https:" ? "wss:" : "ws:";
   const port = globalThis.location.port ? `:${globalThis.location.port}` : "";
-  const signalingUrl =
-    `${protocol}//${globalThis.location.hostname}${port}/ws`;
+  const signalingUrl = `${protocol}//${globalThis.location.hostname}${port}/ws`;
   await star.connect(signalingUrl);
 }

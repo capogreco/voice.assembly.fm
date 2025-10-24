@@ -15,19 +15,19 @@ import { setupEventHandlers } from "../ui/controls.js";
  */
 export function initializeProperties(ctrl) {
   // Initialize properties with JSDoc types
-  
+
   /** @type {string} */
   ctrl.peerId = generatePeerId("ctrl");
-  
+
   /** @type {any} WebRTC star connection */
   ctrl.star = null;
-  
+
   /** @type {IControlState} */
   ctrl.liveState = createDefaultState();
 
   /** @type {IControlState} */
   ctrl.stagedState = createDefaultState();
-  
+
   /** @type {boolean} */
   ctrl.synthesisActive = false;
 
@@ -73,7 +73,7 @@ export function initializeProperties(ctrl) {
   // Kicked state tracking
   /** @type {boolean} */
   ctrl.wasKicked = false;
-  
+
   /** @type {string | null} */
   ctrl.kickedReason = null;
 }
@@ -132,7 +132,7 @@ export function wireUpDOMElements(ctrl) {
 
     // Scene memory
     clearBanksBtn: document.getElementById("clear-banks-btn"),
-    
+
     // Preset buttons
     presetDefault: document.getElementById("preset-default"),
     presetFullStep: document.getElementById("preset-full-step"),

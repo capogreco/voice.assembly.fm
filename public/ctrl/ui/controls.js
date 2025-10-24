@@ -5,7 +5,10 @@
  * Handles all DOM event bindings and user interaction logic
  */
 
-import { setupCompactParameterControls, setupHrgParameterControls } from "./schema.js";
+import {
+  setupCompactParameterControls,
+  setupHrgParameterControls,
+} from "./schema.js";
 import { initializeSchemaBasedUI } from "./generator.js";
 
 /**
@@ -43,7 +46,7 @@ export function setupEventHandlers(ctrl) {
   // Portamento controls
   if (ctrl.elements.portamentoTime) {
     ctrl.elements.portamentoTime.addEventListener("input", (e) => {
-      const norm = parseFloat((e.target).value);
+      const norm = parseFloat(e.target.value);
       const ms = ctrl._mapPortamentoNormToMs(norm);
       const displayMs = ms < 10 ? ms.toFixed(1) : Math.round(ms);
       ctrl.elements.portamentoValue.textContent = displayMs + "ms";
@@ -65,7 +68,10 @@ export function setupEventHandlers(ctrl) {
   if (ctrl.elements.linkStepsCheckbox) {
     ctrl.elements.linkStepsCheckbox.addEventListener("change", (e) => {
       ctrl.linkStepsToPeriod = e.target.checked;
-      ctrl.log("Period-steps linkage: " + (ctrl.linkStepsToPeriod ? 'ON' : 'OFF'), "info");
+      ctrl.log(
+        "Period-steps linkage: " + (ctrl.linkStepsToPeriod ? "ON" : "OFF"),
+        "info",
+      );
     });
   }
 
@@ -127,24 +133,24 @@ export function setupMusicalControls(ctrl) {
       // Period→Steps linkage
       if (ctrl.linkStepsToPeriod) {
         let targetSteps = Math.round(newPeriod / ctrl.stepRefSec);
-        
+
         // Clamp to [1, 256] - no step interval clamping (beacon stride handles network protection)
         targetSteps = Math.max(1, Math.min(256, targetSteps));
-        
+
         // Update steps input to show computed value
         if (ctrl.elements.stepsInput) {
           ctrl.elements.stepsInput.value = targetSteps.toString();
         }
-        
+
         // Stage both period and computed steps
         ctrl.pendingPeriodSec = newPeriod;
         ctrl.pendingStepsPerCycle = targetSteps;
-        
+
         ctrl.log("Period staged: " + newPeriod + "s, computed steps)", "info");
       } else {
         // Only stage period change
         ctrl.pendingPeriodSec = newPeriod;
-        
+
         ctrl.log("Period staged for EOC)", "info");
       }
     });
@@ -153,7 +159,7 @@ export function setupMusicalControls(ctrl) {
   if (ctrl.elements.stepsInput) {
     ctrl.elements.stepsInput.addEventListener("blur", (e) => {
       let newSteps = parseInt(e.target.value);
-      
+
       // Basic validation and clamping
       if (isNaN(newSteps) || newSteps < 1) {
         newSteps = 1;
@@ -161,15 +167,15 @@ export function setupMusicalControls(ctrl) {
       if (newSteps > 256) {
         newSteps = 256;
       }
-      
+
       // Ensure the input reflects the clamped value
       if (e.target.value !== newSteps.toString()) {
         e.target.value = newSteps.toString();
       }
-      
+
       // Stage steps change (apply at EOC)
       ctrl.pendingStepsPerCycle = newSteps;
-      
+
       ctrl.log("Steps staged for EOC: " + newSteps, "info");
     });
   }
@@ -202,8 +208,8 @@ export function setupMusicalControls(ctrl) {
   if (ctrl.elements.stepsPerCycleSlider) {
     ctrl.elements.stepsPerCycleSlider.addEventListener("input", (e) => {
       ctrl.stepsPerCycle = parseFloat(e.target.value);
-      ctrl.elements.stepsPerCycleValue.textContent =
-        ctrl.stepsPerCycle.toString();
+      ctrl.elements.stepsPerCycleValue.textContent = ctrl.stepsPerCycle
+        .toString();
     });
   }
 
@@ -321,7 +327,7 @@ export function setupKeyboardNavigation(ctrl) {
     element.addEventListener("keydown", (e) => {
       if (e.key === "Tab") {
         e.preventDefault();
-        
+
         let nextIndex;
         if (e.shiftKey) {
           // Shift+Tab: previous element
@@ -330,7 +336,7 @@ export function setupKeyboardNavigation(ctrl) {
           // Tab: next element
           nextIndex = index === focusableElements.length - 1 ? 0 : index + 1;
         }
-        
+
         focusableElements[nextIndex].focus();
       }
     });

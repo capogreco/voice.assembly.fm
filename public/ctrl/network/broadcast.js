@@ -20,7 +20,11 @@ import {
  * @param {number} [portamentoTime] - Portamento time in ms
  * @returns {Object} - Wire payload
  */
-export function createWirePayload(liveState, synthesisActive, portamentoTime = null) {
+export function createWirePayload(
+  liveState,
+  synthesisActive,
+  portamentoTime = null,
+) {
   const wirePayload = {
     synthesisActive: synthesisActive,
   };
@@ -32,7 +36,7 @@ export function createWirePayload(liveState, synthesisActive, portamentoTime = n
   // Convert each parameter to wire format
   Object.keys(liveState).forEach((paramName) => {
     const paramState = liveState[paramName];
-    
+
     if ("scope" in paramState) {
       throw new Error(
         "CRITICAL: Parameter '" + paramName + "' has forbidden 'scope' field",
@@ -42,8 +46,11 @@ export function createWirePayload(liveState, synthesisActive, portamentoTime = n
     // Create deep copies to avoid mutation
     const startGen = { ...paramState.startValueGenerator };
     let endGen = undefined;
-    
-    if ((paramState.interpolation === "disc" || paramState.interpolation === "cont") && paramState.endValueGenerator) {
+
+    if (
+      (paramState.interpolation === "disc" ||
+        paramState.interpolation === "cont") && paramState.endValueGenerator
+    ) {
       endGen = { ...paramState.endValueGenerator };
     }
 
@@ -66,16 +73,26 @@ export function createWirePayload(liveState, synthesisActive, portamentoTime = n
  * @param {function} logFn - Logging function
  * @param {number} [portamentoTime] - Portamento time in ms
  */
-export function broadcastControlState(star, liveState, synthesisActive, logFn, portamentoTime) {
+export function broadcastControlState(
+  star,
+  liveState,
+  synthesisActive,
+  logFn,
+  portamentoTime,
+) {
   if (!star) return;
 
-  const wirePayload = createWirePayload(liveState, synthesisActive, portamentoTime);
+  const wirePayload = createWirePayload(
+    liveState,
+    synthesisActive,
+    portamentoTime,
+  );
 
   const message = MessageBuilder.createParameterUpdate(
     MessageTypes.PROGRAM_UPDATE,
     wirePayload,
   );
-  
+
   star.broadcast(message);
   logFn("Sent full program update to synths", "debug");
 }
@@ -89,7 +106,14 @@ export function broadcastControlState(star, liveState, synthesisActive, logFn, p
  * @param {function} logFn - Logging function
  * @param {number} [portamentoTime] - Portamento time in ms
  */
-export function broadcastSingleParameter(star, paramName, liveState, synthesisActive, logFn, portamentoTime) {
+export function broadcastSingleParameter(
+  star,
+  paramName,
+  liveState,
+  synthesisActive,
+  logFn,
+  portamentoTime,
+) {
   if (!star) return;
 
   const paramState = liveState[paramName];
@@ -110,8 +134,11 @@ export function broadcastSingleParameter(star, paramName, liveState, synthesisAc
   // Emit unified format with interpolation + generators
   const startGen = { ...paramState.startValueGenerator };
   let endGen = undefined;
-  
-  if ((paramState.interpolation === "disc" || paramState.interpolation === "cont") && paramState.endValueGenerator) {
+
+  if (
+    (paramState.interpolation === "disc" ||
+      paramState.interpolation === "cont") && paramState.endValueGenerator
+  ) {
     endGen = { ...paramState.endValueGenerator };
   }
 
@@ -126,7 +153,7 @@ export function broadcastSingleParameter(star, paramName, liveState, synthesisAc
     MessageTypes.PROGRAM_UPDATE,
     wirePayload,
   );
-  
+
   star.broadcast(message);
   logFn("Sent single parameter (" + paramName + ") to synths", "debug");
 }
@@ -139,7 +166,13 @@ export function broadcastSingleParameter(star, paramName, liveState, synthesisAc
  * @param {number} portamentoTime - Portamento time in ms
  * @param {function} logFn - Logging function
  */
-export function broadcastSubParameterUpdate(star, paramPath, value, portamentoTime, logFn) {
+export function broadcastSubParameterUpdate(
+  star,
+  paramPath,
+  value,
+  portamentoTime,
+  logFn,
+) {
   if (!star) return;
 
   const message = MessageBuilder.subParamUpdate(
@@ -147,7 +180,7 @@ export function broadcastSubParameterUpdate(star, paramPath, value, portamentoTi
     value,
     portamentoTime,
   );
-  
+
   star.broadcast(message);
   logFn("Sent sub-parameter update: " + paramPath + " = " + value, "debug");
 }
@@ -164,7 +197,16 @@ export function broadcastSubParameterUpdate(star, paramPath, value, portamentoTi
  * @param {number} lastPausedBeaconAt - Last paused beacon time
  * @returns {number} - Updated last paused beacon time
  */
-export function broadcastPhasor(star, phasor, stepsPerCycle, cycleLength, isPlaying, reason, currentTime, lastPausedBeaconAt) {
+export function broadcastPhasor(
+  star,
+  phasor,
+  stepsPerCycle,
+  cycleLength,
+  isPlaying,
+  reason,
+  currentTime,
+  lastPausedBeaconAt,
+) {
   if (!star) return lastPausedBeaconAt;
 
   // EOC-only broadcasting: only send at specific events, not continuously
@@ -198,8 +240,11 @@ export function broadcastPhasor(star, phasor, stepsPerCycle, cycleLength, isPlay
   );
 
   const sent = star.broadcastToType("synth", message, "sync");
-  console.log("Phasor broadcast (" + reason + "): " + phasor.toFixed(3) + " to " + sent + " synths");
-  
+  console.log(
+    "Phasor broadcast (" + reason + "): " + phasor.toFixed(3) + " to " + sent +
+      " synths",
+  );
+
   return lastPausedBeaconAt;
 }
 
@@ -213,7 +258,11 @@ export function broadcastPhasor(star, phasor, stepsPerCycle, cycleLength, isPlay
 export function broadcastSceneSave(star, memoryLocation, sceneData, logFn) {
   if (!star) return;
 
-  const message = MessageBuilder.sceneCommand("save", memoryLocation, sceneData);
+  const message = MessageBuilder.sceneCommand(
+    "save",
+    memoryLocation,
+    sceneData,
+  );
   const sent = star.broadcastToType("synth", message);
   logFn("Scene save command sent to " + sent + " synths", "success");
 }
@@ -260,7 +309,7 @@ export function broadcastReResolve(star, logFn) {
   const message = MessageBuilder.createGeneral("re-resolve", {
     timestamp: Date.now(),
   });
-  
+
   const sent = star.broadcastToType("synth", message);
   console.log("Re-resolve message sent to " + sent + " synths");
   logFn("Re-resolve sent to " + sent + " synths", "info");

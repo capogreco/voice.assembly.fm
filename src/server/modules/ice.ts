@@ -120,11 +120,11 @@ function createCorsHeaders(): HeadersInit {
 /**
  * Handle ICE servers request
  */
-export async function handleIceServersRequest(request: Request): Promise<Response> {
+export async function handleIceServersRequest(
+  request: Request,
+): Promise<Response> {
   console.log(
-    `[ICE-SERVERS] Request received from ${
-      request.headers.get("user-agent")
-    }`,
+    `[ICE-SERVERS] Request received from ${request.headers.get("user-agent")}`,
   );
 
   try {

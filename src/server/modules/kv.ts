@@ -15,9 +15,15 @@ export interface KVSynthEntry {
 
 export interface KVOperations {
   get: (key: (string | number)[]) => Promise<{ value: any } | null>;
-  set: (key: (string | number)[], value: any, options?: { expireIn?: number }) => Promise<void>;
+  set: (
+    key: (string | number)[],
+    value: any,
+    options?: { expireIn?: number },
+  ) => Promise<void>;
   delete: (key: (string | number)[]) => Promise<void>;
-  list: (options: { prefix: (string | number)[] }) => AsyncIterable<{ key: (string | number)[]; value: any }>;
+  list: (
+    options: { prefix: (string | number)[] },
+  ) => AsyncIterable<{ key: (string | number)[]; value: any }>;
 }
 
 /**
@@ -25,24 +31,33 @@ export interface KVOperations {
  */
 export async function createKVOperations(): Promise<KVOperations> {
   const kv = await Deno.openKv();
-  
+
   return {
     get: async (key: (string | number)[]) => {
       const result = await kv.get(key);
       return result.value ? { value: result.value } : null;
     },
-    
-    set: async (key: (string | number)[], value: any, options?: { expireIn?: number }) => {
+
+    set: async (
+      key: (string | number)[],
+      value: any,
+      options?: { expireIn?: number },
+    ) => {
       await kv.set(key, value, options);
     },
-    
+
     delete: async (key: (string | number)[]) => {
       await kv.delete(key);
     },
-    
-    list: (options: { prefix: (string | number)[] }) => {
-      return kv.list(options);
-    }
+
+    list: async function* (options: { prefix: (string | number)[] }) {
+      for await (const entry of kv.list(options)) {
+        yield {
+          key: [...entry.key] as (string | number)[],
+          value: entry.value,
+        };
+      }
+    },
   };
 }
 
@@ -68,7 +83,7 @@ export async function setActiveController(
     timestamp: Date.now(),
     ws_id: ws_id,
   };
-  
+
   console.log(`[SERVER-STATE] Setting active_ctrl in DB to: ${client_id}`);
   await kv.set(["active_ctrl"], value);
   console.log(`👑 ${client_id} is now the active controller`);
@@ -148,7 +163,7 @@ export async function removeSynth(
  */
 export async function getSynthsList(kv: KVOperations): Promise<string[]> {
   const synthsList: string[] = [];
-  
+
   try {
     const synthEntries = kv.list({ prefix: ["synths"] });
     for await (const entry of synthEntries) {
@@ -162,7 +177,7 @@ export async function getSynthsList(kv: KVOperations): Promise<string[]> {
     console.error("[SYNTHS-LIST] Failed to read KV synth roster:", e);
     throw e;
   }
-  
+
   return synthsList;
 }
 
@@ -188,7 +203,7 @@ export async function getQueuedMessages(
   client_id: string,
 ): Promise<Array<{ key: (string | number)[]; value: any }>> {
   const messages: Array<{ key: (string | number)[]; value: any }> = [];
-  
+
   try {
     const entries = kv.list({ prefix: ["messages", client_id] });
     for await (const entry of entries) {
@@ -198,7 +213,7 @@ export async function getQueuedMessages(
     console.error(`🔄 Error getting queued messages for ${client_id}:`, error);
     throw error;
   }
-  
+
   return messages;
 }
 

@@ -11,14 +11,32 @@
 /** @typedef {import('../../src/common/parameter-types.js').GeneratorConfig} GeneratorConfig */
 
 // Runtime imports
-import { generatePeerId, WebRTCStar } from "../../src/common/webrtc-star.js";
 import {
   MessageBuilder,
   MessageTypes,
 } from "../../src/common/message-protocol.js";
-import { setupEventHandlers, setupEnvelopeControls } from "./ui/controls.js";
-import { setupCompactParameterControls, setupHrgParameterControls } from "./ui/schema.js";
 import { initializeApplication } from "./app/init.js";
+import { createDefaultState, createPresetConfigs } from "./state/defaults.js";
+import { parseSinString, formatSinArray, validateSinString } from "./utils/sin.js";
+import {
+  clearAllSceneBanks,
+  clearSceneBank,
+  loadSceneFromLocalStorage,
+  markSceneIndicators,
+  saveSceneToLocalStorage,
+} from "./state/store.js";
+import {
+  connectToNetwork as connectToNetworkHelper,
+  handleJoinRejected as handleJoinRejectedHelper,
+  handleKicked as handleKickedHelper,
+  sendCompleteStateToNewSynth,
+} from "./network/star.js";
+import {
+  broadcastControlState as broadcastControlStateHelper,
+  broadcastPhasor as broadcastPhasorHelper,
+  broadcastSingleParameter as broadcastSingleParameterHelper,
+  broadcastSubParameterUpdate as broadcastSubParameterUpdateHelper,
+} from "./network/broadcast.js";
 
 /**
  * Control action types for state management
@@ -32,291 +50,49 @@ import { initializeApplication } from "./app/init.js";
  */
 
 class ControlClient {
-
   /**
    * Helper predicate: check if interpolation mode requires both start and end generators
    */
   isCosInterp(interp) {
-    return interp === 'disc' || interp === 'cont';
+    return interp === "disc" || interp === "cont";
   }
 
   /**
-   * Create default control state
+   * Get default control state from shared module
    * @returns {IControlState}
    */
-  _createDefaultState() {
-    // Helper for frequency (uses HRG with both start and end generators)
-    const defaultFrequencyState = () => ({
-      interpolation: "disc",
-      baseValue: 220,
-      startValueGenerator: {
-        type: "periodic",
-        numerators: "1",
-        denominators: "1",
-        numeratorBehavior: "static",
-        denominatorBehavior: "static",
-      },
-      endValueGenerator: {
-        type: "periodic",
-        numerators: "1",
-        denominators: "1",
-        numeratorBehavior: "static",
-        denominatorBehavior: "static",
-      },
-    });
+  _getDefaultState() {
+    return createDefaultState();
+  }
 
-    // Helper for normalized parameters (0-1 range)
-    const defaultNormalizedState = () => ({
-      interpolation: "cont",
-      startValueGenerator: {
-        type: "normalised",
-        range: { min: 0, max: 1 },
-        sequenceBehavior: "static",
-      },
-      endValueGenerator: {
-        type: "normalised",
-        range: { min: 0, max: 1 },
-        sequenceBehavior: "static",
-      },
-    });
-
-    // Helper for simple constant parameters
-    const defaultConstantState = (value) => ({
-      interpolation: "step",
-      baseValue: value,
-      startValueGenerator: {
-        type: "normalised",
-        range: value,
-        sequenceBehavior: "static",
-      },
-    });
-
-    return {
-      frequency: defaultFrequencyState(),
-      vowelX: defaultNormalizedState(),
-      vowelY: defaultNormalizedState(),
-      zingAmount: defaultNormalizedState(),
-      zingMorph: defaultNormalizedState(),
-      symmetry: defaultNormalizedState(),
-      amplitude: defaultConstantState(0.8),
-      whiteNoise: defaultConstantState(0),
-      vibratoWidth: {
+  /**
+   * Get preset configurations from shared module
+   */
+  _getPresetConfigs() {
+    const presets = createPresetConfigs();
+    // Add calibration preset with current state preservation
+    presets.calibration = {
+      ...this.stagedState,
+      amplitude: {
         interpolation: "step",
+        baseValue: 0,
         startValueGenerator: {
           type: "normalised",
           range: 0,
           sequenceBehavior: "static",
         },
       },
-      vibratoRate: {
+      whiteNoise: {
         interpolation: "step",
-        baseValue: 5,
+        baseValue: 0.3,
         startValueGenerator: {
-          type: "periodic",
-          numerators: "1",
-          denominators: "1",
-          numeratorBehavior: "static",
-          denominatorBehavior: "static",
-        },
-        endValueGenerator: {
-          type: "periodic",
-          numerators: "1",
-          denominators: "1",
-          numeratorBehavior: "static",
-          denominatorBehavior: "static",
+          type: "normalised",
+          range: 0.3,
+          sequenceBehavior: "static",
         },
       },
     };
-  }
-
-  /**
-   * Preset configurations for destructive state replacement
-   */
-  _createPresetConfigs() {
-    // Helper for maximally stochastic normalized step parameters
-    const normalizedRandomStep = () => ({
-      interpolation: "step",
-      startValueGenerator: {
-        type: "normalised",
-        range: { min: 0, max: 1 },
-        sequenceBehavior: "random",
-      },
-      endValueGenerator: {
-        type: "normalised",
-        range: { min: 0, max: 1 },
-        sequenceBehavior: "random",
-      },
-    });
-
-    // Helper for maximally stochastic normalized disc parameters
-    const normalizedRandomDisc = () => ({
-      interpolation: "disc",
-      startValueGenerator: {
-        type: "normalised",
-        range: { min: 0, max: 1 },
-        sequenceBehavior: "random",
-      },
-      endValueGenerator: {
-        type: "normalised",
-        range: { min: 0, max: 1 },
-        sequenceBehavior: "random",
-      },
-    });
-
-    // Helper for maximally stochastic normalized cont parameters
-    const normalizedRandomCont = () => ({
-      interpolation: "cont",
-      startValueGenerator: {
-        type: "normalised",
-        range: { min: 0, max: 1 },
-        sequenceBehavior: "random",
-      },
-      endValueGenerator: {
-        type: "normalised",
-        range: { min: 0, max: 1 },
-        sequenceBehavior: "random",
-      },
-    });
-
-    // Helper for maximally stochastic periodic step parameters
-    const periodicRandomStep = (baseValue) => ({
-      interpolation: "step",
-      baseValue,
-      startValueGenerator: {
-        type: "periodic",
-        numerators: "1-12",
-        denominators: "1-12",
-        numeratorBehavior: "random",
-        denominatorBehavior: "random",
-      },
-      endValueGenerator: {
-        type: "periodic",
-        numerators: "1-12",
-        denominators: "1-12",
-        numeratorBehavior: "random",
-        denominatorBehavior: "random",
-      },
-    });
-
-    // Helper for maximally stochastic periodic disc parameters
-    const periodicRandomDisc = (baseValue) => ({
-      interpolation: "disc",
-      baseValue,
-      startValueGenerator: {
-        type: "periodic",
-        numerators: "1-12",
-        denominators: "1-12",
-        numeratorBehavior: "random",
-        denominatorBehavior: "random",
-      },
-      endValueGenerator: {
-        type: "periodic",
-        numerators: "1-12",
-        denominators: "1-12",
-        numeratorBehavior: "random",
-        denominatorBehavior: "random",
-      },
-    });
-
-    // Helper for maximally stochastic periodic cont parameters
-    const periodicRandomCont = (baseValue) => ({
-      interpolation: "cont",
-      baseValue,
-      startValueGenerator: {
-        type: "periodic",
-        numerators: "1-12",
-        denominators: "1-12",
-        numeratorBehavior: "random",
-        denominatorBehavior: "random",
-      },
-      endValueGenerator: {
-        type: "periodic",
-        numerators: "1-12",
-        denominators: "1-12",
-        numeratorBehavior: "random",
-        denominatorBehavior: "random",
-      },
-    });
-
-    // Helper for simple constant parameters
-    const constantStep = (value) => ({
-      interpolation: "step",
-      startValueGenerator: {
-        type: "normalised",
-        range: value,
-        sequenceBehavior: "static",
-      },
-      endValueGenerator: {
-        type: "normalised",
-        range: value,
-        sequenceBehavior: "static",
-      },
-    });
-
-    return {
-      default: this._createDefaultState(),
-      
-      "full-step": {
-        // Periodic parameters - maximum stochasticity with random HRG ranges
-        frequency: periodicRandomStep(220),
-        vibratoRate: periodicRandomStep(5),
-        
-        // Normalized parameters - maximum stochasticity across full [0,1] range
-        vowelX: normalizedRandomStep(),
-        vowelY: normalizedRandomStep(),
-        zingAmount: normalizedRandomStep(),
-        zingMorph: normalizedRandomStep(),
-        symmetry: normalizedRandomStep(),
-        vibratoWidth: normalizedRandomStep(),
-        
-        // Fixed levels for consistent loudness
-        amplitude: constantStep(0.5),
-        whiteNoise: constantStep(0),
-      },
-      
-      "full-disc": {
-        // Periodic parameters - maximum stochasticity with random HRG ranges and disc motion
-        frequency: periodicRandomDisc(220),
-        vibratoRate: periodicRandomDisc(5),
-        
-        // Normalized parameters - maximum stochasticity with disc glides across full [0,1]
-        vowelX: normalizedRandomDisc(),
-        vowelY: normalizedRandomDisc(),
-        zingAmount: normalizedRandomDisc(),
-        zingMorph: normalizedRandomDisc(),
-        symmetry: normalizedRandomDisc(),
-        vibratoWidth: normalizedRandomDisc(),
-        
-        // Fixed levels for consistent loudness
-        amplitude: constantStep(0.5),
-        whiteNoise: constantStep(0),
-      },
-
-      "full-cont": {
-        // Periodic parameters - maximum stochasticity with random HRG ranges and cont motion
-        frequency: periodicRandomCont(220),
-        vibratoRate: periodicRandomCont(5),
-        
-        // Normalized parameters - maximum stochasticity with cont glides across full [0,1]
-        vowelX: normalizedRandomCont(),
-        vowelY: normalizedRandomCont(),
-        zingAmount: normalizedRandomCont(),
-        zingMorph: normalizedRandomCont(),
-        symmetry: normalizedRandomCont(),
-        vibratoWidth: normalizedRandomCont(),
-        
-        // Fixed levels for consistent loudness
-        amplitude: constantStep(0.5),
-        whiteNoise: constantStep(0),
-      },
-      
-      calibration: {
-        // Only override amp=0 and noise=0.3, leave others unchanged from current state
-        ...this.stagedState, // Preserve current state
-        amplitude: constantStep(0), // Silent
-        whiteNoise: constantStep(0.3), // Audible for level matching
-      },
-    };
+    return presets;
   }
 
   _updateStagedState(action) {
@@ -325,16 +101,17 @@ class ControlClient {
     // Handle scalar edits in place to avoid unnecessary cloning and UI refresh
     if (action.type === "SET_BASE_VALUE") {
       this.stagedState[action.param].baseValue = action.value;
-      
+
       // Update only the base value input, no HRG refresh needed
       const paramName = action.param;
-      const valueInput = (paramName === "frequency" || paramName === "vibratoRate")
-        ? document.getElementById(paramName + "-base")
-        : document.getElementById(paramName + "-value");
+      const valueInput =
+        (paramName === "frequency" || paramName === "vibratoRate")
+          ? document.getElementById(paramName + "-base")
+          : document.getElementById(paramName + "-value");
       if (valueInput) {
         valueInput.value = action.value.toString();
       }
-      
+
       // Still need to trigger broadcast and mark changes
       if (this.isPlaying) {
         this.broadcastSingleParameterStaged(action.param);
@@ -347,7 +124,6 @@ class ControlClient {
     const newState = JSON.parse(JSON.stringify(this.stagedState));
 
     switch (action.type) {
-
       case "SET_INTERPOLATION": {
         const param = newState[action.param];
         if (action.interpolation === "step") {
@@ -425,12 +201,8 @@ class ControlClient {
       )
       : 100;
 
-    // Use unified broadcast method that respects bulk mode
-    this._broadcastParameterChange({
-      type: "single",
-      param: action.param,
-      portamentoTime: portamentoTime,
-    });
+    // Use broadcast helper
+    this.broadcastSingleParameterUpdate(action.param, portamentoTime);
   }
 
   /**
@@ -573,44 +345,53 @@ class ControlClient {
    * Apply a preset configuration (destructive replacement)
    */
   _applyPreset(presetName) {
-    const presets = this._createPresetConfigs();
+    const presets = this._getPresetConfigs();
     const preset = presets[presetName];
-    
+
     if (!preset) {
       console.error("Unknown preset: " + presetName);
       return;
     }
 
     console.log("Applying preset: " + presetName);
-    
+
     // Debug: Log the preset configuration for frequency
     if (presetName === "full-disc" && preset.frequency) {
-      console.log("🐛 full-disc frequency config:", JSON.stringify(preset.frequency, null, 2));
+      console.log(
+        "🐛 full-disc frequency config:",
+        JSON.stringify(preset.frequency, null, 2),
+      );
     }
 
     // Destructively replace both pending and active state
     this.stagedState = JSON.parse(JSON.stringify(preset));
     this.liveState = JSON.parse(JSON.stringify(preset));
-    
+
     // Debug: Verify the state was set correctly
     if (presetName === "full-disc" && this.stagedState.frequency) {
-      console.log("🐛 stagedState.frequency after preset:", JSON.stringify(this.stagedState.frequency, null, 2));
+      console.log(
+        "🐛 stagedState.frequency after preset:",
+        JSON.stringify(this.stagedState.frequency, null, 2),
+      );
     }
 
     // Update all UI elements to reflect new state
     for (const paramName of Object.keys(preset)) {
       this._updateUIFromState(paramName);
     }
-    
+
     // Debug: Check state again after UI update
     if (presetName === "full-disc" && this.stagedState.frequency) {
-      console.log("🐛 stagedState.frequency after UI update:", JSON.stringify(this.stagedState.frequency, null, 2));
+      console.log(
+        "🐛 stagedState.frequency after UI update:",
+        JSON.stringify(this.stagedState.frequency, null, 2),
+      );
     }
 
     // Mark pending changes and always broadcast
     this.markPendingChanges();
     this.broadcastControlState();
-    
+
     if (this.isPlaying) {
       // During playback: synth will stage PROGRAM_UPDATE and apply at EOC
       console.log("📋 Preset " + presetName + " staged for EOC application");
@@ -626,7 +407,7 @@ class ControlClient {
 
   // Helper predicate for interpolation modes
   isCosInterp(interp) {
-    return interp === 'disc' || interp === 'cont';
+    return interp === "disc" || interp === "cont";
   }
 
   reresolveAtEOC() {
@@ -660,13 +441,10 @@ class ControlClient {
     this.log("Sent IMMEDIATE_REINITIALIZE to " + sent + " synth(s)", "info");
   }
 
-
-
-
   /**
    * Handle value input changes with smart range detection
    * @param {string} paramName
-   * @param {string} inputValue  
+   * @param {string} inputValue
    * @param {"start" | "end"} position
    */
   _handleValueInput(
@@ -824,8 +602,9 @@ class ControlClient {
 
     // --- START NEW, CORRECTED LOGIC ---
     // Check if this is a periodic parameter (frequency or vibratoRate)
-    const isPeriodicParameter = paramName === "frequency" || paramName === "vibratoRate";
-    
+    const isPeriodicParameter = paramName === "frequency" ||
+      paramName === "vibratoRate";
+
     // 1. Handle value input visibility based on interpolation mode
     if (valueInput) {
       if (paramState.interpolation === "cont") {
@@ -839,27 +618,34 @@ class ControlClient {
           // For normalized parameters in cont mode, hide start value input (comes from previous end)
           valueInput.style.display = "none";
           // Add or update placeholder text
-          let contIndicator = valueInput.parentNode.querySelector('.cont-indicator');
+          let contIndicator = valueInput.parentNode.querySelector(
+            ".cont-indicator",
+          );
           if (!contIndicator) {
-            contIndicator = document.createElement('span');
-            contIndicator.className = 'cont-indicator';
-            contIndicator.style.color = '#999';
-            contIndicator.style.fontSize = '10px';
-            contIndicator.style.fontStyle = 'italic';
-            valueInput.parentNode.insertBefore(contIndicator, valueInput.nextSibling);
+            contIndicator = document.createElement("span");
+            contIndicator.className = "cont-indicator";
+            contIndicator.style.color = "#999";
+            contIndicator.style.fontSize = "10px";
+            contIndicator.style.fontStyle = "italic";
+            valueInput.parentNode.insertBefore(
+              contIndicator,
+              valueInput.nextSibling,
+            );
           }
-          contIndicator.textContent = '← from prev end';
-          contIndicator.style.display = 'inline';
+          contIndicator.textContent = "← from prev end";
+          contIndicator.style.display = "inline";
         }
       } else {
         // For step and disc modes, show value input normally
         valueInput.style.display = "inline-block";
         // Hide cont indicator if it exists
-        let contIndicator = valueInput.parentNode.querySelector('.cont-indicator');
+        let contIndicator = valueInput.parentNode.querySelector(
+          ".cont-indicator",
+        );
         if (contIndicator) {
-          contIndicator.style.display = 'none';
+          contIndicator.style.display = "none";
         }
-        
+
         if (paramState.startValueGenerator?.type === "normalised") {
           valueInput.value = this._stringifyNormalised(
             paramState.startValueGenerator,
@@ -913,7 +699,7 @@ class ControlClient {
 
     // Ensure HRG UI reflects state (frequency and vibratoRate)
     if (paramName === "frequency" || paramName === "vibratoRate") {
-      const startGen = (paramState).startValueGenerator;
+      const startGen = paramState.startValueGenerator;
       if (startGen && startGen.type === "periodic") {
         const startNums = document.getElementById(
           paramName + "-start-numerators",
@@ -928,7 +714,6 @@ class ControlClient {
           paramName + "-start-denominators-behavior",
         ) || null;
 
-
         // Only update input values if they're not currently being edited
         if (startNums && document.activeElement !== startNums) {
           const numValue = startGen.numerators ?? "1";
@@ -936,7 +721,9 @@ class ControlClient {
           if (paramName === "frequency") {
           }
         } else if (startNums && paramName === "frequency") {
-          console.log("🐛 NOT setting start numerators because startNums has focus");
+          console.log(
+            "🐛 NOT setting start numerators because startNums has focus",
+          );
         }
         if (startDens && document.activeElement !== startDens) {
           const denValue = startGen.denominators ?? "1";
@@ -959,9 +746,11 @@ class ControlClient {
 
         // Hide static behavior options for cont mode on HRG controls
         if (paramState.interpolation === "cont") {
-          [startNumBeh, startDenBeh].forEach(selector => {
+          [startNumBeh, startDenBeh].forEach((selector) => {
             if (selector) {
-              const staticOption = selector.querySelector('option[value="static"]');
+              const staticOption = selector.querySelector(
+                'option[value="static"]',
+              );
               if (staticOption) {
                 staticOption.style.display = "none";
                 // If currently set to static, change to ascending as fallback
@@ -973,9 +762,11 @@ class ControlClient {
           });
         } else {
           // Show static option for non-cont modes
-          [startNumBeh, startDenBeh].forEach(selector => {
+          [startNumBeh, startDenBeh].forEach((selector) => {
             if (selector) {
-              const staticOption = selector.querySelector('option[value="static"]');
+              const staticOption = selector.querySelector(
+                'option[value="static"]',
+              );
               if (staticOption) {
                 staticOption.style.display = "";
               }
@@ -985,7 +776,7 @@ class ControlClient {
       }
 
       if (isEnvelope) {
-        const endGen = (paramState).endValueGenerator;
+        const endGen = paramState.endValueGenerator;
         if (endGen && endGen.type === "periodic") {
           const endNums = document.getElementById(
             paramName + "-end-numerators",
@@ -999,7 +790,6 @@ class ControlClient {
           const endDenBeh = document.getElementById(
             paramName + "-end-denominators-behavior",
           ) || null;
-
 
           // Only update input values if they're not currently being edited
           if (endNums && document.activeElement !== endNums) {
@@ -1029,9 +819,11 @@ class ControlClient {
 
           // Hide static behavior options for cont mode on end HRG controls
           if (paramState.interpolation === "cont") {
-            [endNumBeh, endDenBeh].forEach(selector => {
+            [endNumBeh, endDenBeh].forEach((selector) => {
               if (selector) {
-                const staticOption = selector.querySelector('option[value="static"]');
+                const staticOption = selector.querySelector(
+                  'option[value="static"]',
+                );
                 if (staticOption) {
                   staticOption.style.display = "none";
                   // If currently set to static, change to ascending as fallback
@@ -1043,9 +835,11 @@ class ControlClient {
             });
           } else {
             // Show static option for non-cont modes
-            [endNumBeh, endDenBeh].forEach(selector => {
+            [endNumBeh, endDenBeh].forEach((selector) => {
               if (selector) {
-                const staticOption = selector.querySelector('option[value="static"]');
+                const staticOption = selector.querySelector(
+                  'option[value="static"]',
+                );
                 if (staticOption) {
                   staticOption.style.display = "";
                 }
@@ -1057,7 +851,9 @@ class ControlClient {
 
       // Re-sync HRG visibility after updating state
       const needsEndGen = this.isCosInterp(paramState.interpolation);
-      if (hrgArrow) hrgArrow.style.display = needsEndGen ? "inline-block" : "none";
+      if (hrgArrow) {
+        hrgArrow.style.display = needsEndGen ? "inline-block" : "none";
+      }
       if (hrgEndControls) {
         hrgEndControls.style.display = needsEndGen ? "inline-block" : "none";
       }
@@ -1083,7 +879,9 @@ class ControlClient {
             startBehaviorSelect.style.display = "none";
           } else {
             const isRange = this._isRangeValue(valueInput.value);
-            startBehaviorSelect.style.display = isRange ? "inline-block" : "none";
+            startBehaviorSelect.style.display = isRange
+              ? "inline-block"
+              : "none";
           }
         }
       }
@@ -1114,15 +912,16 @@ class ControlClient {
     // Helper to validate and mark
     const validateField = (el, label) => {
       if (!el) return true;
-      const { ok } = this._validateSINString(el.value);
-      el.classList.toggle("invalid-input", !ok);
-      if (!ok) {
+      const validation = validateSinString(el.value);
+      el.classList.toggle("invalid-input", !validation.valid);
+      if (!validation.valid) {
         this.log(
-          "Invalid " + label + ": \"" + el.value + "\" (use numbers, commas, and ranges like 1-6)",
+          "Invalid " + label + ': "' + el.value +
+            '" - ' + (validation.error || 'use numbers, commas, and ranges like 1-6'),
           "error",
         );
       }
-      return ok;
+      return validation.valid;
     };
 
     // Validate all four fields first
@@ -1148,53 +947,84 @@ class ControlClient {
       return false;
     }
 
-    // Start generator
+    // Start generator - parse SIN strings to arrays
     if (freqState.startValueGenerator?.type === "periodic") {
-      const startNums =
-        (document.getElementById("frequency-start-numerators")
-          | null)?.value;
-      const startDens =
-        (document.getElementById("frequency-start-denominators")
-          | null)?.value;
+      const startNumsEl = document.getElementById("frequency-start-numerators");
+      const startDensEl = document.getElementById("frequency-start-denominators");
       const startNumBeh =
-        (document.getElementById("frequency-start-numerators-behavior")
-          | HTMLSelectElement
-          | null)?.value;
+        (document.getElementById("frequency-start-numerators-behavior") |
+          HTMLSelectElement |
+          null)?.value;
       const startDenBeh =
-        (document.getElementById("frequency-start-denominators-behavior")
-          | HTMLSelectElement
-          | null)?.value;
-      freqState.startValueGenerator.numerators = startNums ??
-        freqState.startValueGenerator.numerators;
-      freqState.startValueGenerator.denominators = startDens ??
-        freqState.startValueGenerator.denominators;
+        (document.getElementById("frequency-start-denominators-behavior") |
+          HTMLSelectElement |
+          null)?.value;
+      
+      // Parse SIN strings to arrays
+      if (startNumsEl?.value) {
+        try {
+          const numsArray = parseSinString(startNumsEl.value);
+          freqState.startValueGenerator.numerators = numsArray;
+          freqState.startValueGenerator.numeratorsSin = startNumsEl.value.trim(); // Keep original for UI
+          console.log(`🎲 Parsed start numerators "${startNumsEl.value}" -> [${numsArray}]`);
+        } catch (e) {
+          // Validation already handled above, keep existing value
+        }
+      }
+      
+      if (startDensEl?.value) {
+        try {
+          const densArray = parseSinString(startDensEl.value);
+          freqState.startValueGenerator.denominators = densArray;
+          freqState.startValueGenerator.denominatorsSin = startDensEl.value.trim();
+        } catch (e) {
+          // Validation already handled above
+        }
+      }
+      
       freqState.startValueGenerator.numeratorBehavior = startNumBeh ??
         freqState.startValueGenerator.numeratorBehavior;
       freqState.startValueGenerator.denominatorBehavior = startDenBeh ??
         freqState.startValueGenerator.denominatorBehavior;
     }
 
-    // End generator (if envelope)
+    // End generator (if envelope) - parse SIN strings to arrays
     if (
       freqState.interpolation !== "step" &&
       freqState.endValueGenerator?.type === "periodic"
     ) {
-      const endNums = (document.getElementById("frequency-end-numerators")
-        | null)?.value;
-      const endDens = (document.getElementById("frequency-end-denominators")
-        | null)?.value;
+      const endNumsEl = document.getElementById("frequency-end-numerators");
+      const endDensEl = document.getElementById("frequency-end-denominators");
       const endNumBeh =
-        (document.getElementById("frequency-end-numerators-behavior")
-          | HTMLSelectElement
-          | null)?.value;
+        (document.getElementById("frequency-end-numerators-behavior") |
+          HTMLSelectElement |
+          null)?.value;
       const endDenBeh =
-        (document.getElementById("frequency-end-denominators-behavior")
-          | HTMLSelectElement
-          | null)?.value;
-      freqState.endValueGenerator.numerators = endNums ??
-        freqState.endValueGenerator.numerators;
-      freqState.endValueGenerator.denominators = endDens ??
-        freqState.endValueGenerator.denominators;
+        (document.getElementById("frequency-end-denominators-behavior") |
+          HTMLSelectElement |
+          null)?.value;
+      
+      // Parse SIN strings to arrays
+      if (endNumsEl?.value) {
+        try {
+          const numsArray = parseSinString(endNumsEl.value);
+          freqState.endValueGenerator.numerators = numsArray;
+          freqState.endValueGenerator.numeratorsSin = endNumsEl.value.trim();
+        } catch (e) {
+          // Validation already handled above
+        }
+      }
+      
+      if (endDensEl?.value) {
+        try {
+          const densArray = parseSinString(endDensEl.value);
+          freqState.endValueGenerator.denominators = densArray;
+          freqState.endValueGenerator.denominatorsSin = endDensEl.value.trim();
+        } catch (e) {
+          // Validation already handled above
+        }
+      }
+      
       freqState.endValueGenerator.numeratorBehavior = endNumBeh ??
         freqState.endValueGenerator.numeratorBehavior;
       freqState.endValueGenerator.denominatorBehavior = endDenBeh ??
@@ -1213,7 +1043,7 @@ class ControlClient {
     this.hasPendingChanges = false;
     // Apply button removed - staging handled by transport state
   }
-  
+
   /**
    * Handle PROGRAM_UPDATE message from synth (after scene load)
    * Updates controller state and UI to match synth's loaded scene
@@ -1222,46 +1052,31 @@ class ControlClient {
     // Extract program parameters from message
     const programParams = {};
     for (const key of Object.keys(message)) {
-      if (key !== 'type' && key !== 'synthesisActive' && key !== 'isPlaying') {
+      if (key !== "type" && key !== "synthesisActive" && key !== "isPlaying") {
         programParams[key] = message[key];
       }
     }
-    
+
     // Update both staged and live state
     this.stagedState = programParams;
     this.liveState = JSON.parse(JSON.stringify(programParams));
-    
+
     // Update UI for all parameters
     for (const paramName of Object.keys(programParams)) {
       this._updateUIFromState(paramName);
     }
-    
+
     // Update synthesis state if provided
     if (message.synthesisActive !== undefined) {
       this.synthesisActive = message.synthesisActive;
       this._updateToggleButton();
     }
-    
-    console.log(`✅ Controller updated with scene from synth: ${Object.keys(programParams).length} parameters`);
-  }
 
-  _handleSceneSnapshotFromSynth(memoryLocation, snapshot) {
-    try {
-      localStorage.setItem(
-        `scene_${memoryLocation}_snapshot`,
-        JSON.stringify(snapshot),
-      );
-      if (snapshot?.program) {
-        localStorage.setItem(
-          `scene_${memoryLocation}_controller`,
-          JSON.stringify(snapshot.program),
-        );
-      }
-      this.updateSceneMemoryIndicators();
-      console.log(`💾 Stored scene snapshot ${memoryLocation} from synth (v${snapshot.v})`);
-    } catch (error) {
-      console.error("Failed to store scene snapshot:", error);
-    }
+    console.log(
+      `✅ Controller updated with scene from synth: ${
+        Object.keys(programParams).length
+      } parameters`,
+    );
   }
 
   /**
@@ -1325,95 +1140,8 @@ class ControlClient {
    * Central method for translating the staged control state to wire format (unified, scope-free)
    * Used by both broadcastControlState and sendCompleteStateToSynth
    */
-  _getWirePayload(portamentoTime) {
-    // Strict validation: reject any state with forbidden fields
-    for (const key in this.stagedState) {
-      const paramState = this
-        .stagedState[key];
 
-      // Debug: Check if paramState is an object
-      if (typeof paramState !== "object" || paramState === null) {
-        throw new Error(
-          "CRITICAL: Parameter '" + key + "' is not an object, got: " + typeof paramState + " (" + paramState + ")",
-        );
-      }
-
-      if ("scope" in paramState) {
-        throw new Error(
-          "CRITICAL: Parameter '" + key + "' has forbidden 'scope' field",
-        );
-      }
-    }
-
-    const wirePayload = {
-      synthesisActive: this.synthesisActive,
-      isManualMode: this.isManualControlMode,
-    };
-
-    // Include portamento time when provided (for paused updates)
-    if (portamentoTime !== undefined) {
-      wirePayload.portamentoTime = portamentoTime;
-    }
-
-    // Send unified parameter format - interpolation + generators only
-    for (const key in this.stagedState) {
-      const paramKey = key;
-      const paramState = this.stagedState[paramKey];
-
-      // Strict validation: require all necessary fields
-      if (
-        !paramState.interpolation ||
-        !["step", "disc", "cont"].includes(paramState.interpolation)
-      ) {
-        throw new Error(
-          "CRITICAL: Parameter '" + paramKey + "' missing valid interpolation",
-        );
-      }
-
-      if (!paramState.startValueGenerator) {
-        throw new Error(
-          "CRITICAL: Parameter '" + paramKey + "' missing startValueGenerator",
-        );
-      }
-
-      if (
-        this.isCosInterp(paramState.interpolation) && !paramState.endValueGenerator
-      ) {
-        throw new Error(
-          "CRITICAL: Parameter '" + paramKey + "' disc/cont interpolation missing endValueGenerator",
-        );
-      }
-
-      if (
-        paramState.startValueGenerator.type === "periodic" &&
-        paramState.baseValue === undefined
-      ) {
-        throw new Error(
-          "CRITICAL: Parameter '" + paramKey + "' periodic generator missing baseValue",
-        );
-      }
-
-      // Prepare generators
-      const startGen = { ...paramState.startValueGenerator };
-
-      let endGen = undefined;
-      if (
-        this.isCosInterp(paramState.interpolation) && paramState.endValueGenerator
-      ) {
-        endGen = { ...paramState.endValueGenerator };
-      }
-
-      // Send unified parameter format (no scope field)
-      wirePayload[paramKey] = {
-        interpolation: paramState.interpolation,
-        startValueGenerator: startGen,
-        endValueGenerator: endGen,
-        baseValue: paramState.baseValue,
-      };
-    }
-    return wirePayload;
-  }
-
+  // Wrapper for broadcast helper
   broadcastControlState(portamentoTime) {
     // Check if we should accumulate this change for bulk mode
     if (
@@ -1426,99 +1154,72 @@ class ControlClient {
       return;
     }
 
-    // Not in bulk mode, send immediately
-    this._sendFullProgramImmediate(portamentoTime);
-  }
-
-  /**
-   * Send full program update immediately (extracted from broadcastControlState)
-   */
-  _sendFullProgramImmediate(portamentoTime) {
-    if (!this.star) return;
-
-    const wirePayload = this._getWirePayload(portamentoTime);
-
-    const message = MessageBuilder.createParameterUpdate(
-      MessageTypes.PROGRAM_UPDATE,
-      wirePayload,
-    );
-    this.star.broadcast(message);
-    this.log(
-      "📡 Broadcasted control state" +
-        (portamentoTime ? " with " + portamentoTime + "ms portamento" : ""),
-      "info",
+    // Use helper for immediate broadcast
+    broadcastControlStateHelper(
+      this.star,
+      this.stagedState,
+      this.synthesisActive,
+      this.log.bind(this),
+      portamentoTime,
     );
   }
 
-  /**
-   * Broadcast update for a single parameter with portamento
-   * More efficient than broadcasting entire state when only one parameter changed
-   */
-  broadcastSingleParameterUpdate(
-    paramName,
-    portamentoTime,
-  ) {
-    this._broadcastParameterChange({
-      type: "single",
-      param: paramName,
-      portamentoTime: portamentoTime,
-    });
+  // Wrapper for single parameter broadcast
+  broadcastSingleParameterUpdate(paramName, portamentoTime) {
+    // Check bulk mode
+    if (
+      this.addToBulkChanges({
+        type: "single-param-update",
+        param: paramName,
+        portamentoTime: portamentoTime,
+      })
+    ) {
+      return;
+    }
+
+    broadcastSingleParameterHelper(
+      this.star,
+      paramName,
+      this.stagedState,
+      this.synthesisActive,
+      this.log.bind(this),
+      portamentoTime,
+    );
   }
 
-  /**
-   * Broadcast a sub-parameter update (e.g., frequency.baseValue)
-   */
-  broadcastSubParameterUpdate(
-    paramPath,
-    value,
-    portamentoTime,
-  ) {
-    this._broadcastParameterChange({
-      type: "sub",
-      paramPath: paramPath,
-      value: value,
-      portamentoTime: portamentoTime,
-    });
+  // Wrapper for sub-parameter broadcast
+  broadcastSubParameterUpdate(paramPath, value, portamentoTime) {
+    // Check bulk mode
+    if (
+      this.addToBulkChanges({
+        type: "sub-param-update",
+        paramPath: paramPath,
+        value: value,
+        portamentoTime: portamentoTime,
+      })
+    ) {
+      return;
+    }
+
+    broadcastSubParameterUpdateHelper(
+      this.star,
+      paramPath,
+      value,
+      portamentoTime,
+      this.log.bind(this),
+    );
   }
 
-  // Broadcast a single parameter update for staging at EOC (no portamento field)
+  // Wrapper for single parameter staged broadcast (no portamento)
   broadcastSingleParameterStaged(paramName) {
-    if (!this.star) return;
-
-    // Use staged state to get the latest changes (interpolation changes, etc.)
-    const paramState = this.stagedState[paramName];
-    if ("scope" in paramState) {
-      throw new Error(
-        "CRITICAL: Parameter '" + paramName + "' has forbidden 'scope' field",
-      );
-    }
-
-    const wirePayload = {
-      synthesisActive: this.synthesisActive,
-    };
-
-    // Emit unified format with interpolation + generators (no baseValue injection)
-    const startGen = { ...paramState.startValueGenerator };
-
-    let endGen = undefined;
-    if (this.isCosInterp(paramState.interpolation) && paramState.endValueGenerator) {
-      endGen = { ...paramState.endValueGenerator };
-    }
-
-    wirePayload[paramName] = {
-      interpolation: paramState.interpolation,
-      startValueGenerator: startGen,
-      endValueGenerator: endGen,
-      baseValue: paramState.baseValue,
-    };
-
-    // Send PROGRAM_UPDATE with just this parameter for staging
-    const message = MessageBuilder.createParameterUpdate(
-      MessageTypes.PROGRAM_UPDATE,
-      wirePayload
+    broadcastSingleParameterHelper(
+      this.star,
+      paramName,
+      this.stagedState,
+      this.synthesisActive,
+      this.log.bind(this),
+      null, // No portamento for staged updates
     );
-    this.star.broadcastToType("synth", message, "control");
-    this.log("📡 Broadcasted staged " + paramName + " parameter change", "info");
   }
 
   // Removed splitParametersByMode - no longer needed with separated state
@@ -1569,18 +1270,17 @@ class ControlClient {
       if (this.elements.stepsInput) {
         this.elements.stepsInput.value = this.stepsPerCycle.toString();
       }
-      
     }
   }
 
   initializePhasor() {
     this.phasor = 0.0;
     this.lastPhasorTime = performance.now() / 1000.0;
-    
+
     // Initialize step indices to avoid spurious initial beacon
     this.currentStepIndex = 0;
     this.previousStepIndex = Math.floor(this.phasor * this.stepsPerCycle);
-    
+
     this.updatePhasorTicks();
     this.startPhasorUpdate();
     this.updatePhasorDisplay();
@@ -1620,7 +1320,8 @@ class ControlClient {
       // Safety check for infinity or NaN
       if (!isFinite(phasorIncrement)) {
         console.error(
-          "Invalid phasorIncrement: " + phasorIncrement + ", deltaTime: " + deltaTime + ", cycleLength: " + this.cycleLength,
+          "Invalid phasorIncrement: " + phasorIncrement + ", deltaTime: " +
+            deltaTime + ", cycleLength: " + this.cycleLength,
         );
         return; // Skip this frame
       }
@@ -1630,7 +1331,9 @@ class ControlClient {
 
       // Robust step boundary detection using integer indices
       const prevStepIndex = Math.floor(previousPhasor * this.stepsPerCycle);
-      const currStepIndexBeforeWrap = Math.floor(this.phasor * this.stepsPerCycle);
+      const currStepIndexBeforeWrap = Math.floor(
+        this.phasor * this.stepsPerCycle,
+      );
 
       // Detect EOC (End of Cycle)
       const eocCrossed = this.phasor >= 1.0;
@@ -1647,30 +1350,34 @@ class ControlClient {
       if (eocCrossed || currStepIndexBeforeWrap < prevStepIndex) {
         // EOC wrapped - treat 0
         this.currentStepIndex = 0;
-        
+
         // Apply timing changes at EOC
         this.applyPendingTimingChanges();
         this.clearAllPendingChanges();
-        
+
         // Send EOC beacon
         this.sendStepBeacon(0);
-        
       } else if (currStepIndex !== prevStepIndex) {
         // Normal step boundary crossing
         this.currentStepIndex = currStepIndex;
-        
-        
+
         // Calculate stride with current timing (post-apply)
         const stepSec = this.cycleLength / this.stepsPerCycle;
-        const stride = Math.max(1, Math.ceil(this.MIN_BEACON_INTERVAL_SEC / stepSec));
-        
+        const stride = Math.max(
+          1,
+          Math.ceil(this.MIN_BEACON_INTERVAL_SEC / stepSec),
+        );
+
         // Find latest boundary divisible by stride (handle large jumps)
         const latestStridedStep = Math.floor(currStepIndex / stride) * stride;
-        if (latestStridedStep >= prevStepIndex && latestStridedStep <= currStepIndex) {
+        if (
+          latestStridedStep >= prevStepIndex &&
+          latestStridedStep <= currStepIndex
+        ) {
           this.sendStepBeacon(latestStridedStep);
         }
       }
-      
+
       // Update previous step index
       this.previousStepIndex = currStepIndex;
     }
@@ -1696,7 +1403,6 @@ class ControlClient {
     }
   }
 
-
   startPhasorUpdate() {
     const updateLoop = () => {
       this.updatePhasor();
@@ -1714,17 +1420,19 @@ class ControlClient {
 
   sendStepBeacon(stepIndex) {
     if (!this.star) return;
-    
+
     const boundaryPhasor = stepIndex / this.stepsPerCycle;
-    const message = MessageBuilder.phasorSync(
+    // Use helper for phasor broadcast
+    broadcastPhasorHelper(
+      this.star,
       boundaryPhasor,
-      null, // cpm omitted (legacy)
       this.stepsPerCycle,
       this.cycleLength,
-      this.isPlaying
+      this.isPlaying,
+      "step",
+      performance.now() / 1000,
+      this.lastPausedBeaconAt,
     );
-    
-    this.star.broadcastToType("synth", message, "sync");
     this.lastBroadcastTime = performance.now() / 1000;
   }
 
@@ -1734,38 +1442,21 @@ class ControlClient {
     // Determine phasor value to use
     const phasorToSend = explicitPhasor !== null ? explicitPhasor : this.phasor;
 
-    // EOC-only broadcasting: only send at specific events, not continuously
-    if (reason === "continuous") {
-      // Send paused heartbeat at 1 Hz when not playing
-      if (!this.isPlaying) {
-        const timeSinceLastHeartbeat = currentTime - this.lastPausedBeaconAt;
-        if (timeSinceLastHeartbeat >= 1.0) { // 1 Hz heartbeat
-          const message = MessageBuilder.phasorSync(
-            phasorToSend,
-            null, // cpm omitted (legacy)
-            this.stepsPerCycle,
-            this.cycleLength,
-            this.isPlaying, // false when paused
-          );
-
-          const sent = this.star.broadcastToType("synth", message, "sync");
-          this.lastPausedBeaconAt = currentTime;
-        }
-      }
-      return; // No continuous broadcasts while playing
-    }
-
-    // Send beacon for specific events (step, EOC, bootstrap, transport changes)
-    const message = MessageBuilder.phasorSync(
+    // Use helper for phasor broadcast
+    this.lastPausedBeaconAt = broadcastPhasorHelper(
+      this.star,
       phasorToSend,
-      null, // cpm omitted (legacy)
       this.stepsPerCycle,
       this.cycleLength,
       this.isPlaying,
+      reason,
+      currentTime,
+      this.lastPausedBeaconAt,
     );
 
-    const sent = this.star.broadcastToType("synth", message, "sync");
-    this.lastBroadcastTime = currentTime;
+    if (reason !== "continuous") {
+      this.lastBroadcastTime = currentTime;
+    }
   }
 
   // ES-8 Integration Methods
@@ -1809,7 +1500,8 @@ class ControlClient {
         this.log("Configured audio destination for 8 channels", "info");
       } else {
         this.log(
-          "Only " + this.audioContext.destination.maxChannelCount + " channels available",
+          "Only " + this.audioContext.destination.maxChannelCount +
+            " channels available",
           "warning",
         );
       }
@@ -1906,12 +1598,12 @@ class ControlClient {
         this.isPlaying = true;
         this.lastPhasorTime = performance.now() / 1000.0; // Reset time tracking
         this.log("Global phasor started", "info");
-        
+
         // Auto-enable synthesis when playing starts
         if (!this.synthesisActive) {
           this.synthesisActive = true;
           console.log("🎵 Auto-enabled synthesis for playback");
-          // Update UI button state  
+          // Update UI button state
           if (this.elements.manualModeBtn) {
             this.elements.manualModeBtn.textContent = "Disable Synthesis";
             this.elements.manualModeBtn.classList.add("active");
@@ -1956,7 +1648,7 @@ class ControlClient {
 
     // Broadcast current phasor state immediately with new playing state
     this.broadcastPhasor(performance.now() / 1000.0, "transport");
-    
+
     // Broadcast control state to ensure synthesis state is updated
     if (action === "play") {
       this.broadcastControlState();
@@ -1968,7 +1660,6 @@ class ControlClient {
       this.elements.playBtn.textContent = this.isPlaying ? "pause" : "play";
     }
   }
-
 
   updateParameterVisualFeedback(paramName) {
     // Find the parameter label and add/remove asterisk for pending changes
@@ -2012,7 +1703,7 @@ class ControlClient {
       this.updateParameterVisualFeedback(paramName);
     }
     this.pendingParameterChanges.clear();
-    
+
     // Clear pending timing changes
     this.pendingPeriodSec = null;
     this.pendingStepsPerCycle = null;
@@ -2045,7 +1736,10 @@ class ControlClient {
 
     // Debug logging for white noise
     if (paramName === "whiteNoise") {
-      console.log("Resolving whiteNoise: start=" + startValue + ", end=" + endValue + ", endGen=" + JSON.stringify(paramState.endValueGenerator));
+      console.log(
+        "Resolving whiteNoise: start=" + startValue + ", end=" + endValue +
+          ", endGen=" + JSON.stringify(paramState.endValueGenerator),
+      );
     }
 
     return {
@@ -2112,10 +1806,10 @@ class ControlClient {
 
   handleReset() {
     console.log("Reset phasor");
-    
+
     // Apply any pending timing changes immediately
     this.applyPendingTimingChanges();
-    
+
     // Reset global phasor to 0.0
     this.phasor = 0.0;
     this.currentStepIndex = 0;
@@ -2139,41 +1833,91 @@ class ControlClient {
   }
 
   async connectToNetwork() {
-    try {
-      // Prevent reconnection if we were kicked
-      if (this.wasKicked) {
-        this.log("Not reconnecting - was kicked: " + this.kickedReason, "error");
-        return;
-      }
+    // Build context for helper
+    const context = {
+      peerId: this.peerId,
+      wasKicked: this.wasKicked,
+      kickedReason: this.kickedReason,
+      updateConnectionStatus: this.updateConnectionStatus.bind(this),
+      log: this.log.bind(this),
+    };
 
-      this.updateConnectionStatus("connecting");
+    // Build callbacks for event handlers
+    const callbacks = {
+      log: this.log.bind(this),
+      onBecameLeader: () => {
+        this._updateUIState();
+      },
+      onControllerActive: () => {
+        this.updateConnectionStatus("active");
+        this._updateUIState();
+      },
+      onPeerConnected: (peerId) => {
+        this.updatePeerList();
+        this._updateUIState();
+        this.startNetworkDiagnostics();
 
-      this.log("Connecting to network...", "info");
+        // Send complete state to new synths
+        if (peerId.startsWith("synth-")) {
+          this.sendCompleteStateToSynth(peerId);
+        }
+      },
+      onPeerRemoved: () => {
+        this.updatePeerList();
+        this._updateUIState();
 
-      // Create star network
-      this.star = new WebRTCStar(this.peerId, "ctrl");
-      this.setupStarEventHandlers();
+        if (this.star.peers.size === 0) {
+          this.stopNetworkDiagnostics();
+        }
+      },
+      onKicked: (reason) => {
+        this.handleKicked(reason);
+      },
+      onJoinRejected: (reason) => {
+        this.updateConnectionStatus("error");
+        this._updateUIState();
 
-      // Connect to signaling server - use current host
-      // Dynamic WebSocket URL that works in production and development
-      const protocol = globalThis.location.protocol === "https:"
-        ? "wss:"
-        : "ws:";
-      const port = globalThis.location.port
-        ? ":" + globalThis.location.port
-        : "";
-      const signalingUrl = protocol + "//" + globalThis.location.hostname + port + "/ws";
-      await this.star.connect(signalingUrl);
+        handleJoinRejectedHelper(
+          reason,
+          this.updateConnectionStatus.bind(this),
+        );
+      },
+      onDataMessage: (peerId, channelType, message) => {
+        // Handle program updates from synth (after scene load)
+        if (
+          message.type === MessageTypes.PROGRAM_UPDATE &&
+          channelType === "control"
+        ) {
+          console.log("📨 Received PROGRAM_UPDATE from synth after scene load");
+          this._handleProgramUpdateFromSynth(message);
+        }
 
-      // Initially connected - status will be determined by server response
-      this.updateConnectionStatus("connected");
+        // Log other messages for debugging
+        if (
+          message.type !== MessageTypes.PING &&
+          message.type !== MessageTypes.PONG &&
+          message.type !== MessageTypes.PROGRAM_UPDATE
+        ) {
+          this.log("Received " + message.type + " from " + peerId, "debug");
+        }
+      },
+      onDataChannelMessage: (detail) => {
+        if (
+          detail.channel === "control" &&
+          detail.data.type === MessageTypes.PARAM_APPLIED
+        ) {
+          const { param } = detail.data;
+          this.pendingParameterChanges.delete(param);
+          this.updateParameterVisualFeedback(param);
+          this.log("Cleared pending asterisk for " + param, "debug");
+        }
+      },
+    };
 
-      this._updateUIState();
+    // Use helper to connect
+    this.star = await connectToNetworkHelper(context, callbacks);
 
-      this.log("Connected to network successfully", "success");
-    } catch (error) {
-      this.log("Connection failed", "error");
-      this.updateConnectionStatus("disconnected");
+    if (this.star) {
       this._updateUIState();
     }
   }
@@ -2182,108 +1926,6 @@ class ControlClient {
     const isConnected = this.star && this.star.isConnectedToSignaling;
 
     // Update any remaining UI state based on connection
-  }
-
-  setupStarEventHandlers() {
-    this.star.addEventListener("became-leader", () => {
-      this.log("Became network leader", "success");
-      this._updateUIState();
-    });
-
-    this.star.addEventListener("controller-active", (event) => {
-      this.log("Controller is now active", "success");
-      this.updateConnectionStatus("active");
-      this._updateUIState();
-    });
-
-    this.star.addEventListener("peer-connected", (event) => {
-      const { peerId } = event.detail;
-      this.log("Peer connected", "info");
-      this.updatePeerList();
-      this._updateUIState();
-
-      // Start network diagnostics updates
-      this.startNetworkDiagnostics();
-
-      // Send complete current state to new synths
-      if (peerId.startsWith("synth-")) {
-        this.sendCompleteStateToSynth(peerId);
-      }
-    });
-
-    this.star.addEventListener("peer-removed", (event) => {
-      this.log("Peer disconnected", "info");
-      this.updatePeerList();
-      this._updateUIState();
-
-      // Update diagnostics or stop if no peers
-      if (this.star.peers.size === 0) {
-        this.stopNetworkDiagnostics();
-      }
-    });
-
-    this.star.addEventListener("kicked", (event) => {
-      this.handleKicked(event.detail.reason);
-    });
-
-    this.star.addEventListener("join-rejected", (event) => {
-      this.log("Cannot join", "error");
-      this.updateConnectionStatus("error");
-      this._updateUIState();
-
-      if (event.detail.reason.includes("Add ?force=true")) {
-        if (
-          confirm(
-            "Another control client is already connected. Force takeover?",
-          )
-        ) {
-          globalThis.location.href = globalThis.location.href + "?force=true";
-        }
-      }
-    });
-
-    this.star.addEventListener("data-message", (event) => {
-      const { peerId, channelType, message } = event.detail;
-
-      // Handle ping messages
-      if (message.type === MessageTypes.PING) {
-        const pong = MessageBuilder.pong(message.id, message.timestamp);
-        this.star.sendToPeer(peerId, pong, "sync");
-      }
-      
-      // Handle program updates from synth (after scene load)
-      if (message.type === MessageTypes.PROGRAM_UPDATE && channelType === "control") {
-        console.log("📨 Received PROGRAM_UPDATE from synth after scene load");
-        this._handleProgramUpdateFromSynth(message);
-      }
-
-      if (message.type === MessageTypes.SCENE_SNAPSHOT) {
-        this._handleSceneSnapshotFromSynth(message.memoryLocation, message.snapshot);
-      }
-
-      // Log other messages for debugging
-      if (
-        message.type !== MessageTypes.PING &&
-        message.type !== MessageTypes.PONG &&
-        message.type !== MessageTypes.PROGRAM_UPDATE &&
-        message.type !== MessageTypes.SCENE_SNAPSHOT
-      ) {
-        this.log("Received " + message.type + " from " + peerId, "debug");
-      }
-    });
-
-    // Handle control channel messages (like param-applied from synth)
-    this.star.addEventListener("data-channel-message", (event) => {
-      if (
-        event.detail.channel === "control" &&
-        event.detail.data.type === MessageTypes.PARAM_APPLIED
-      ) {
-        const { param } = event.detail.data;
-        this.pendingParameterChanges.delete(param);
-        this.updateParameterVisualFeedback(param);
-        this.log("Cleared pending asterisk for " + param, "debug");
-      }
-    });
   }
 
   toggleSynthesis() {
@@ -2321,21 +1963,13 @@ class ControlClient {
   }
 
   sendCompleteStateToSynth(synthId) {
-    this.log("Sending complete state to new synth", "info");
-
-    // Send current control state using unified payload function
-    const wirePayload = this._getWirePayload();
-
-    const message = MessageBuilder.createParameterUpdate(
-      MessageTypes.PROGRAM_UPDATE,
-      wirePayload,
+    sendCompleteStateToNewSynth(
+      this.star,
+      synthId,
+      this.liveState,
+      this.synthesisActive,
+      this.log.bind(this),
     );
-    const success = this.star.sendToPeer(synthId, message, "control");
-    if (success) {
-      this.log("Sent typed control state to " + synthId, "debug");
-    } else {
-      this.log("Failed to send typed control state to " + synthId, "error");
-    }
   }
 
   updateConnectionStatus(status) {
@@ -2351,7 +1985,6 @@ class ControlClient {
       "kicked",
       "error",
     );
-
 
     switch (status) {
       case "active":
@@ -2384,14 +2017,14 @@ class ControlClient {
   }
 
   handleKicked(reason) {
-    console.error("Kicked from network");
+    const kickState = handleKickedHelper(
+      reason,
+      this.updateConnectionStatus.bind(this),
+      this.log.bind(this),
+    );
 
-    // Set kicked state to prevent reconnection
-    this.wasKicked = true;
-    this.kickedReason = reason;
-
-    // Update UI to show kicked status
-    this.updateConnectionStatus("kicked");
+    this.wasKicked = kickState.wasKicked;
+    this.kickedReason = kickState.kickedReason;
     this._updateUIState();
 
     // Show user notification
@@ -2460,20 +2093,21 @@ class ControlClient {
 
       return '<div class="peer-item">' +
         '<div class="peer-info">' +
-        '<div class="peer-id">' + peerId + '</div>' +
-        '<div class="peer-type">' + peerType + '</div>' +
-        '</div>' +
+        '<div class="peer-id">' + peerId + "</div>" +
+        '<div class="peer-type">' + peerType + "</div>" +
+        "</div>" +
         '<div class="peer-stats">' +
-        '<div>Status: ' + peerStats.connectionState + '</div>' +
-        '</div>' +
-        '</div>';
+        "<div>Status: " + peerStats.connectionState + "</div>" +
+        "</div>" +
+        "</div>";
     }).join("");
 
     this.elements.peerList.innerHTML = listHTML;
   }
 
   clearPeerList() {
-    this.elements.peerList.innerHTML = '<div style="color: #888; font-style: italic; text-align: center; padding: 20px;">No peers connected</div>';
+    this.elements.peerList.innerHTML =
+      '<div style="color: #888; font-style: italic; text-align: center; padding: 20px;">No peers connected</div>';
   }
 
   log(message, level = "info") {
@@ -2560,10 +2194,13 @@ class ControlClient {
           : "";
 
         return '<div style="margin-bottom: 1px;">' +
-          '<span style="color: ' + connectionColor + ';">' + diag.peerId.split("-")[0] + '</span>' +
-          '<span style="color: ' + iceColor + '; margin-left: 4px;">' + diag.iceType + '</span>' +
-          '<span style="color: #ccc; margin-left: 4px;">' + rttDisplay + '</span>' + droppedWarning +
-          '</div>';
+          '<span style="color: ' + connectionColor + ';">' +
+          diag.peerId.split("-")[0] + "</span>" +
+          '<span style="color: ' + iceColor + '; margin-left: 4px;">' +
+          diag.iceType + "</span>" +
+          '<span style="color: #ccc; margin-left: 4px;">' + rttDisplay +
+          "</span>" + droppedWarning +
+          "</div>";
       }).join("");
 
       this.elements.networkDiagnostics.innerHTML = diagnosticsHTML;
@@ -2592,19 +2229,9 @@ class ControlClient {
 
   updateSceneMemoryIndicators() {
     const sceneButtons = document.querySelectorAll(".scene-btn");
-    sceneButtons.forEach((button) => {
-      const location = parseInt(button.getAttribute("data-location"));
+    markSceneIndicators(sceneButtons, (location) => {
       const controllerKey = `scene_${location}_controller`;
-      const snapshotKey = `scene_${location}_snapshot`;
-      const hasScene =
-        localStorage.getItem(snapshotKey) !== null ||
-        localStorage.getItem(controllerKey) !== null;
-
-      if (hasScene) {
-        button.classList.add("has-scene");
-      } else {
-        button.classList.remove("has-scene");
-      }
+      return localStorage.getItem(controllerKey) !== null;
     });
   }
 
@@ -2618,10 +2245,11 @@ class ControlClient {
         savedAt: Date.now(),
       };
 
-      // 2. Save it to the controller's local storage.
-      localStorage.setItem(
-        "scene_" + memoryLocation + "_controller",
-        JSON.stringify(programToSave),
+      // 2. Save it to the controller's local storage using helper.
+      saveSceneToLocalStorage(
+        memoryLocation,
+        programToSave,
+        this.log.bind(this),
       );
 
       // 3. Broadcast the command to all synths.
@@ -2630,51 +2258,26 @@ class ControlClient {
         this.star.broadcastToType("synth", message, "control");
       }
 
-      this.log("Scene " + memoryLocation + " saved.", "success");
       this.updateSceneMemoryIndicators();
     } catch (error) {
       console.error("Error saving scene:", error);
-      this.log(
-        "Failed to save scene " + memoryLocation + ": " + error.message,
-        "error",
-      );
+      // Error already logged by helper
     }
   }
 
   loadScene(memoryLocation) {
-    console.log("📂 Loading scene from memory location " + memoryLocation + "...");
+    console.log(
+      "📂 Loading scene from memory location " + memoryLocation + "...",
+    );
 
     try {
-      const snapshotKey = `scene_${memoryLocation}_snapshot`;
-      const controllerKey = `scene_${memoryLocation}_controller`;
-
-      const snapshotString = localStorage.getItem(snapshotKey);
-      const savedProgramString = localStorage.getItem(controllerKey);
-
-      if (!snapshotString && !savedProgramString) {
-        this.log("No scene found at location " + memoryLocation + ".", "error");
-        return;
-      }
-
-      let snapshot = null;
-      let loadedProgram = null;
-
-      if (snapshotString) {
-        try {
-          snapshot = JSON.parse(snapshotString);
-          loadedProgram = snapshot.program;
-        } catch (error) {
-          console.error("Failed to parse stored snapshot:", error);
-        }
-      }
-
-      if (!loadedProgram && savedProgramString) {
-        loadedProgram = JSON.parse(savedProgramString);
-      }
-
+      // 1. Load from local storage using helper
+      const loadedProgram = loadSceneFromLocalStorage(
+        memoryLocation,
+        this.log.bind(this),
+      );
       if (!loadedProgram) {
-        this.log("Stored scene data is corrupted.", "error");
-        return;
+        return; // Helper already logged the error
       }
 
       // Filter out metadata fields like savedAt when loading scene
@@ -2714,7 +2317,7 @@ class ControlClient {
         const message = MessageBuilder.loadScene(
           memoryLocation,
           filteredProgram,
-          snapshot,
+          null, // No snapshot - synth manages its own
           portNorm,
         );
         this.star.broadcastToType("synth", message, "control");
@@ -2724,21 +2327,14 @@ class ControlClient {
       this.updateSceneMemoryIndicators();
     } catch (error) {
       console.error("Error loading scene:", error);
-      this.log(
-        "Failed to load scene " + memoryLocation + ": " + error.message,
-        "error",
-      );
+      // Error already logged by helper or above
     }
   }
 
   clearSceneBanks() {
-    // 1) Clear controller banks
-    for (let i = 0; i <= 9; i++) {
-      localStorage.removeItem("scene_" + i + "_controller");
-      localStorage.removeItem(`scene_${i}_snapshot`);
-    }
+    // 1) Clear controller banks using helper
+    clearAllSceneBanks(this.log.bind(this));
     this.updateSceneMemoryIndicators();
-    this.log("Cleared all scene banks", "success");
 
     // 2) Broadcast clear to synths
     if (this.star) {
@@ -2748,11 +2344,9 @@ class ControlClient {
   }
 
   clearBank(memoryLocation) {
-    // Clear single bank
-    localStorage.removeItem("scene_" + memoryLocation + "_controller");
-    localStorage.removeItem(`scene_${memoryLocation}_snapshot`);
+    // Clear single bank using helper
+    clearSceneBank(memoryLocation, this.log.bind(this));
     this.updateSceneMemoryIndicators();
-    this.log("Cleared scene bank " + memoryLocation, "success");
 
     // Broadcast to synths
     if (this.star) {
@@ -2864,32 +2458,41 @@ class ControlClient {
 
     console.log("🔄 Applying " + this.bulkChanges.length + " bulk changes");
 
-    // Send all accumulated changes
+    // Send all accumulated changes using helpers
     this.bulkChanges.forEach((change) => {
       switch (change.type) {
         case "sub-param-update":
-          // Send sub-parameter update
-          this._sendImmediateParameterChange({
-            type: "sub",
-            paramPath: change.paramPath,
-            value: change.value,
-            portamentoTime: change.portamentoTime,
-          });
+          // Send sub-parameter update directly (bypass bulk check)
+          broadcastSubParameterUpdateHelper(
+            this.star,
+            change.paramPath,
+            change.value,
+            change.portamentoTime,
+            this.log.bind(this),
+          );
           break;
 
         case "single-param-update":
-          // Send single parameter update
-          this._sendImmediateParameterChange({
-            type: "single",
-            param: change.param,
-            portamentoTime: change.portamentoTime,
-          });
+          // Send single parameter update directly (bypass bulk check)
+          broadcastSingleParameterHelper(
+            this.star,
+            change.param,
+            this.stagedState,
+            this.synthesisActive,
+            this.log.bind(this),
+            change.portamentoTime,
+          );
           break;
 
-
         case "full-program-update":
-          // Send full program update
-          this._sendFullProgramImmediate(change.portamentoTime);
+          // Send full program update directly (bypass bulk check)
+          broadcastControlStateHelper(
+            this.star,
+            this.stagedState,
+            this.synthesisActive,
+            this.log.bind(this),
+            change.portamentoTime,
+          );
           break;
 
         default:
@@ -2923,134 +2526,11 @@ class ControlClient {
     this.updateBulkButtonState();
 
     console.log(
-      "📋 Added to bulk queue: " + change.paramPath + " = " + change.value + " (" + this.bulkChanges.length + " total)",
+      "📋 Added to bulk queue: " + change.paramPath + " = " + change.value +
+        " (" + this.bulkChanges.length + " total)",
     );
     return true; // Successfully added to bulk queue
   }
-
-  /**
-   * Unified method for broadcasting parameter changes that respects bulk mode
-   */
-  _broadcastParameterChange(change) {
-    if (!this.star) return;
-
-    // For sub-parameter updates, try to add to bulk mode first
-    if (change.type === "sub" && change.paramPath) {
-      if (
-        this.addToBulkChanges({
-          type: "sub-param-update",
-          paramPath: change.paramPath,
-          value: change.value,
-          portamentoTime: change.portamentoTime,
-        })
-      ) {
-        // Successfully added to bulk queue, don't send immediately
-        return;
-      }
-    }
-
-    // For single parameter updates, create bulk change format
-    if (change.type === "single" && change.param) {
-      if (
-        this.addToBulkChanges({
-          type: "single-param-update",
-          param: change.param,
-          portamentoTime: change.portamentoTime,
-        })
-      ) {
-        // Successfully added to bulk queue, don't send immediately
-        return;
-      }
-    }
-
-
-    // Not in bulk mode or bulk mode disabled, send immediately
-    this._sendImmediateParameterChange(change);
-  }
-
-  /**
-   * Send parameter change immediately (bypassing bulk mode)
-   */
-  _sendImmediateParameterChange(change) {
-    if (!this.star) return;
-
-    switch (change.type) {
-      case "sub":
-        if (change.paramPath && change.value !== undefined) {
-          const message = MessageBuilder.subParamUpdate(
-            change.paramPath,
-            change.value,
-            change.portamentoTime,
-          );
-          this.star.broadcastToType("synth", message, "control");
-          this.log(
-            "📡 Sub-param: " + change.paramPath + " = " + change.value + " (" + change.portamentoTime + "ms)",
-            "info",
-          );
-        }
-        break;
-
-      case "single":
-        if (change.param) {
-          // Use existing broadcastSingleParameterUpdate logic
-          this._sendSingleParameterImmediate(
-            change.param,
-            change.portamentoTime,
-          );
-        }
-        break;
-
-    }
-  }
-
-  /**
-   * Send single parameter update immediately (extracted from broadcastSingleParameterUpdate)
-   */
-  _sendSingleParameterImmediate(
-    paramName,
-    portamentoTime,
-  ) {
-    const paramState = this.stagedState[paramName];
-
-    // Strict validation: reject forbidden scope field
-    if ("scope" in (paramState)) {
-      throw new Error(
-        "CRITICAL: Parameter '" + paramName + "' has forbidden 'scope' field",
-      );
-    }
-
-    // Create minimal payload with only the changed parameter
-    const wirePayload = {
-      synthesisActive: this.synthesisActive,
-      portamentoTime: portamentoTime,
-    };
-
-    // Prepare unified parameter format (no scope)
-    const startGen = { ...paramState.startValueGenerator };
-
-    let endGen = undefined;
-    if (this.isCosInterp(paramState.interpolation) && paramState.endValueGenerator) {
-      endGen = { ...paramState.endValueGenerator };
-    }
-
-    wirePayload[paramName] = {
-      interpolation: paramState.interpolation,
-      startValueGenerator: startGen,
-      endValueGenerator: endGen,
-      baseValue: paramState.baseValue,
-    };
-
-    const message = MessageBuilder.createParameterUpdate(
-      MessageTypes.PROGRAM_UPDATE,
-      wirePayload,
-    );
-    this.star.broadcastToType("synth", message, "control");
-    this.log(
-      "📡 Broadcasted " + paramName + " update with " + portamentoTime + "ms portamento",
-      "info",
-    );
-  }
-
 }
 
 // Initialize the control client

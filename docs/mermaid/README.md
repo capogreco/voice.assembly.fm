@@ -1,7 +1,7 @@
 # Mermaid Diagrams
 
-Source `.mmd` files live in this directory so we can iterate on diagrams and export
-static assets when needed.
+Source `.mmd` files live in this directory so we can iterate on diagrams and
+export static assets when needed.
 
 ## Generating PNG/SVG assets
 
@@ -17,6 +17,7 @@ static assets when needed.
 3. Commit the exported PNG/SVG next to the source when ready for documentation.
 
 Feel free to add more `.mmd` files here; the CLI can batch render with globs:
+
 ```bash
 mmdc -i '*.mmd' -o '.png'
 ```

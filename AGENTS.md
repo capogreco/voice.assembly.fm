@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-- `src/server/`: Unified Deno server. Entry: `src/server/server.ts` (HTTP +
+- `src/server/`: Unified Deno server. Entry: `src/server/main.ts` (HTTP +
   WebSocket + static + ICE).
 - `src/common/`: Shared browser/server modules (WebRTC, protocol, parameter
   types).

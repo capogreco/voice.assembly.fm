@@ -163,10 +163,10 @@ export function updateLiveState(liveState, action) {
 export function setParameterState(liveState, stagedState, paramName, newState) {
   const newLive = { ...liveState };
   const newStaged = { ...stagedState };
-  
+
   newLive[paramName] = newState;
   newStaged[paramName] = { ...newState };
-  
+
   return {
     liveState: newLive,
     stagedState: newStaged,

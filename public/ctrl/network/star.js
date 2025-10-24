@@ -17,19 +17,16 @@ import {
  */
 export async function initializeWebRTCStar(peerId) {
   const star = new WebRTCStar(peerId, "ctrl");
-  
+
   // Connect to signaling server - use current host
   // Dynamic WebSocket URL that works in production and development
-  const protocol = globalThis.location.protocol === "https:"
-    ? "wss:"
-    : "ws:";
-  const port = globalThis.location.port
-    ? ":" + globalThis.location.port
-    : "";
-  const signalingUrl = protocol + "//" + globalThis.location.hostname + port + "/ws";
-  
+  const protocol = globalThis.location.protocol === "https:" ? "wss:" : "ws:";
+  const port = globalThis.location.port ? ":" + globalThis.location.port : "";
+  const signalingUrl = protocol + "//" + globalThis.location.hostname + port +
+    "/ws";
+
   await star.connect(signalingUrl);
-  
+
   return star;
 }
 
@@ -110,7 +107,10 @@ export async function connectToNetwork(context, callbacks) {
   try {
     // Prevent reconnection if we were kicked
     if (context.wasKicked) {
-      context.log("Not reconnecting - was kicked: " + context.kickedReason, "error");
+      context.log(
+        "Not reconnecting - was kicked: " + context.kickedReason,
+        "error",
+      );
       return null;
     }
 
@@ -123,7 +123,7 @@ export async function connectToNetwork(context, callbacks) {
     // Initially connected - status will be determined by server response
     context.updateConnectionStatus("connected");
     context.log("Connected to network successfully", "success");
-    
+
     return star;
   } catch (error) {
     context.log("Connection failed", "error");
@@ -142,7 +142,7 @@ export async function connectToNetwork(context, callbacks) {
 export function handleKicked(reason, updateConnectionStatus, log) {
   log("Kicked from network: " + reason, "error");
   updateConnectionStatus("kicked");
-  
+
   return {
     wasKicked: true,
     kickedReason: reason,
@@ -155,11 +155,17 @@ export function handleKicked(reason, updateConnectionStatus, log) {
  * @param {function} updateConnectionStatus - Status update function
  * @param {function} reconnectCallback - Callback to reconnect with force
  */
-export function handleJoinRejected(reason, updateConnectionStatus, reconnectCallback) {
+export function handleJoinRejected(
+  reason,
+  updateConnectionStatus,
+  reconnectCallback,
+) {
   updateConnectionStatus("error");
-  
+
   if (reason.includes("Add ?force=true")) {
-    if (confirm("Another control client is already connected. Force takeover?")) {
+    if (
+      confirm("Another control client is already connected. Force takeover?")
+    ) {
       // Add force parameter and reconnect
       const url = new URL(globalThis.location);
       url.searchParams.set("force", "true");
@@ -176,7 +182,13 @@ export function handleJoinRejected(reason, updateConnectionStatus, reconnectCall
  * @param {boolean} synthesisActive - Synthesis active flag
  * @param {function} log - Logging function
  */
-export function sendCompleteStateToNewSynth(star, peerId, liveState, synthesisActive, log) {
+export function sendCompleteStateToNewSynth(
+  star,
+  peerId,
+  liveState,
+  synthesisActive,
+  log,
+) {
   if (!star || !peerId.startsWith("synth-")) return;
 
   log("Sending complete state to new synth", "info");
@@ -188,12 +200,15 @@ export function sendCompleteStateToNewSynth(star, peerId, liveState, synthesisAc
   // Convert each parameter to wire format
   Object.keys(liveState).forEach((paramName) => {
     const paramState = liveState[paramName];
-    
+
     // Create deep copies to avoid mutation
     const startGen = { ...paramState.startValueGenerator };
     let endGen = undefined;
-    
-    if ((paramState.interpolation === "disc" || paramState.interpolation === "cont") && paramState.endValueGenerator) {
+
+    if (
+      (paramState.interpolation === "disc" ||
+        paramState.interpolation === "cont") && paramState.endValueGenerator
+    ) {
       endGen = { ...paramState.endValueGenerator };
     }
 
@@ -209,7 +224,7 @@ export function sendCompleteStateToNewSynth(star, peerId, liveState, synthesisAc
     MessageTypes.PROGRAM_UPDATE,
     wirePayload,
   );
-  
+
   star.sendToPeer(peerId, message, "control");
 }
 
@@ -235,13 +250,13 @@ export function updatePeerList(star, peerListElement) {
 
     return '<div class="peer-item">' +
       '<div class="peer-info">' +
-      '<div class="peer-id">' + peerId + '</div>' +
-      '<div class="peer-type">' + peerType + '</div>' +
-      '</div>' +
+      '<div class="peer-id">' + peerId + "</div>" +
+      '<div class="peer-type">' + peerType + "</div>" +
+      "</div>" +
       '<div class="peer-stats">' +
-      '<div>Status: ' + peerStats.connectionState + '</div>' +
-      '</div>' +
-      '</div>';
+      "<div>Status: " + peerStats.connectionState + "</div>" +
+      "</div>" +
+      "</div>";
   }).join("");
 
   peerListElement.innerHTML = listHTML;
@@ -253,8 +268,9 @@ export function updatePeerList(star, peerListElement) {
  */
 export function clearPeerList(peerListElement) {
   if (!peerListElement) return;
-  
-  peerListElement.innerHTML = '<div style="color: #888; font-style: italic; text-align: center; padding: 20px;">No peers connected</div>';
+
+  peerListElement.innerHTML =
+    '<div style="color: #888; font-style: italic; text-align: center; padding: 20px;">No peers connected</div>';
 }
 
 /**
@@ -264,7 +280,12 @@ export function clearPeerList(peerListElement) {
  * @param {function} updateParameterVisualFeedback - Update visual feedback function
  * @param {function} log - Logging function
  */
-export function handleParameterApplied(pendingParameterChanges, param, updateParameterVisualFeedback, log) {
+export function handleParameterApplied(
+  pendingParameterChanges,
+  param,
+  updateParameterVisualFeedback,
+  log,
+) {
   pendingParameterChanges.delete(param);
   updateParameterVisualFeedback(param);
   log("Cleared pending asterisk for " + param, "debug");

@@ -63,14 +63,14 @@ export function parseRangeValue(value) {
     return isNaN(num) ? 0 : num;
   }
 
-  const [minStr, maxStr] = value.split("-").map(s => s.trim());
+  const [minStr, maxStr] = value.split("-").map((s) => s.trim());
   const min = parseFloat(minStr);
   const max = parseFloat(maxStr);
-  
+
   if (isNaN(min) || isNaN(max)) {
     return 0;
   }
-  
+
   return { min, max };
 }
 
@@ -93,7 +93,12 @@ export function calculateStepsFromPeriod(period, stepRefSec) {
  * @param {number} [max] - Maximum allowed value
  * @returns {number}
  */
-export function parseNumericInput(value, defaultValue, min = -Infinity, max = Infinity) {
+export function parseNumericInput(
+  value,
+  defaultValue,
+  min = -Infinity,
+  max = Infinity,
+) {
   const num = parseFloat(value);
   if (isNaN(num)) return defaultValue;
   return Math.min(Math.max(num, min), max);
@@ -127,6 +132,6 @@ export function getDefaultValue(paramName) {
     vibratoWidth: 0,
     vibratoRate: 5,
   };
-  
+
   return defaults[paramName] || 0;
 }

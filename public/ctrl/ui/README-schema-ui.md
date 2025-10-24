@@ -1,29 +1,38 @@
 # Schema-Driven Parameter UI Generation
 
-This module provides a dynamic UI generation system for Voice.Assembly.FM parameter controls, eliminating repetitive HTML and enabling easy addition of new parameters.
+This module provides a dynamic UI generation system for Voice.Assembly.FM
+parameter controls, eliminating repetitive HTML and enabling easy addition of
+new parameters.
 
 ## Overview
 
-The current implementation supports both static HTML controls (existing) and dynamic schema-driven generation. This allows for gradual migration and testing.
+The current implementation supports both static HTML controls (existing) and
+dynamic schema-driven generation. This allows for gradual migration and testing.
 
 ## Parameter Types
 
 ### 1. HRG Parameters (Harmonic Ratio Generator)
+
 **Used for:** frequency, vibratoRate
 
 **Structure:**
+
 - Base value input (number)
 - Interpolation selector (step/cosine)
 - Start HRG: numerators/denominators with behaviors
-- End HRG: numerators/denominators with behaviors (shown for cosine interpolation)
+- End HRG: numerators/denominators with behaviors (shown for cosine
+  interpolation)
 
 ### 2. Normalized Parameters (0-1 range)
-**Used for:** vowelX, vowelY, zingAmount, zingMorph, symmetry, amplitude, whiteNoise, vibratoWidth
+
+**Used for:** vowelX, vowelY, zingAmount, zingMorph, symmetry, amplitude,
+whiteNoise, vibratoWidth
 
 **Structure:**
+
 - Start value input (text, supports ranges like "0.2-0.8")
 - Start RBG behavior selector (hidden until range detected)
-- Interpolation selector (step/cosine) 
+- Interpolation selector (step/cosine)
 - End value input (text, supports ranges)
 - End RBG behavior selector (hidden until range detected)
 
@@ -52,6 +61,7 @@ The current implementation supports both static HTML controls (existing) and dyn
 ## Adding New Parameters
 
 ### 1. Define Schema
+
 Add to `PARAMETER_SCHEMAS` in `generator.js`:
 
 ```javascript
@@ -64,9 +74,11 @@ newParameter: {
 ```
 
 ### 2. Add to Parameter Order
+
 Include in the `parameterOrder` array for proper sequencing.
 
 ### 3. Setup Event Handlers
+
 Add to `setupEnvelopeControls()` in `controls.js`:
 
 ```javascript
@@ -76,6 +88,7 @@ setupCompactParameterControls(ctrl, "newParameter");
 ## Schema Definition Format
 
 ### HRG Parameter Schema
+
 ```javascript
 {
   type: PARAMETER_TYPES.HRG,
@@ -92,6 +105,7 @@ setupCompactParameterControls(ctrl, "newParameter");
 ```
 
 ### Normalized Parameter Schema
+
 ```javascript
 {
   type: PARAMETER_TYPES.NORMALIZED,
@@ -111,7 +125,9 @@ setupCompactParameterControls(ctrl, "newParameter");
 
 ## Generated HTML Structure
 
-The system generates semantically identical HTML to the existing static controls, ensuring:
+The system generates semantically identical HTML to the existing static
+controls, ensuring:
+
 - Same CSS classes and styling
 - Same DOM element IDs for event binding
 - Same accessibility attributes
@@ -137,20 +153,26 @@ public/ctrl/ui/
 ## Advanced Features
 
 ### Custom Parameter Types
+
 Extend `PARAMETER_TYPES` and add generation functions for specialized controls.
 
 ### Dynamic Schema Updates
+
 Schemas can be modified at runtime to change parameter behavior or appearance.
 
 ### Validation Integration
+
 Schema definitions can include validation rules that are automatically applied.
 
 ## Testing
 
-The system is designed to be backwards compatible. Existing functionality continues to work unchanged while the schema system provides enhancement opportunities.
+The system is designed to be backwards compatible. Existing functionality
+continues to work unchanged while the schema system provides enhancement
+opportunities.
 
 To test dynamic generation:
+
 1. Uncomment `<div id="generated-parameters"></div>` in HTML
-2. Comment out existing parameter control HTML blocks  
+2. Comment out existing parameter control HTML blocks
 3. Refresh page to see dynamically generated controls
 4. Verify all functionality works identically

@@ -329,7 +329,10 @@ async function handleRegistration(
       for await (const entry of synthEntries) {
         const key = entry.key as (string | unknown)[];
         const synthId = String(key[1]);
-        await sendOrQueue(synthId, notification);
+        await sendOrQueue(
+          synthId,
+          notification as unknown as Record<string, unknown>,
+        );
       }
     } catch (e) {
       console.error("[CTRL-JOINED] KV synth broadcast failed:", e);
@@ -373,7 +376,10 @@ async function handleRegistration(
       if (ctrlSocket && ctrlSocket.readyState === WebSocket.OPEN) {
         ctrlSocket.send(JSON.stringify(notification));
       } else {
-        await sendOrQueue(activeCtrl.client_id, notification);
+        await sendOrQueue(
+          activeCtrl.client_id,
+          notification as unknown as Record<string, unknown>,
+        );
       }
     }
   }
@@ -402,9 +408,12 @@ async function handleDisconnection(client_id: string): Promise<void> {
     try {
       await kv.delete(["synths", client_id]);
     } catch (e) {
-      console.error(`[SYNTH-CLEANUP] Failed to delete ${client_id} from KV:`, e);
+      console.error(
+        `[SYNTH-CLEANUP] Failed to delete ${client_id} from KV:`,
+        e,
+      );
     }
-    
+
     // Notify active controller about synth disconnection
     const activeCtrlEntry = await kv.get(["active_ctrl"]);
     if (activeCtrlEntry?.value) {
@@ -414,8 +423,13 @@ async function handleDisconnection(client_id: string): Promise<void> {
         synth_id: client_id,
         timestamp: Date.now(),
       };
-      await sendOrQueue(activeCtrl.client_id, notification);
-      console.log(`📢 Notified controller ${activeCtrl.client_id} about synth-left: ${client_id}`);
+      await sendOrQueue(
+        activeCtrl.client_id,
+        notification as unknown as Record<string, unknown>,
+      );
+      console.log(
+        `📢 Notified controller ${activeCtrl.client_id} about synth-left: ${client_id}`,
+      );
     }
   }
 
@@ -425,11 +439,13 @@ async function handleDisconnection(client_id: string): Promise<void> {
     if (activeCtrlEntry?.value) {
       const activeCtrl = activeCtrlEntry.value as KVCtrlEntry;
       if (activeCtrl.client_id === client_id) {
-        console.log(`[SERVER-STATE] Active controller ${client_id} disconnected`);
+        console.log(
+          `[SERVER-STATE] Active controller ${client_id} disconnected`,
+        );
         await kv.delete(["active_ctrl"]);
       }
     }
-    
+
     // Notify all synths about controller disconnection
     try {
       const synthEntries = kv.list({ prefix: ["synths"] });
@@ -441,49 +457,16 @@ async function handleDisconnection(client_id: string): Promise<void> {
           ctrl_id: client_id,
           timestamp: Date.now(),
         };
-        await sendOrQueue(synthId, notification);
+        await sendOrQueue(
+          synthId,
+          notification as unknown as Record<string, unknown>,
+        );
       }
       console.log(`📢 Notified all synths about ctrl-left: ${client_id}`);
     } catch (e) {
       console.error("[CTRL-LEFT] Failed to notify synths:", e);
     }
   }
-}
-
-/**
- * Create WebSocket upgrade response
- */
-export function createWebSocketHandler(): Response {
-  const { socket, response } = Deno.upgradeWebSocket(new Request("ws://localhost"));
-  const temp_id = crypto.randomUUID();
-  let client_id: string = temp_id;
-
-  socket.addEventListener("open", () => {
-    connections.set(temp_id, { socket, actual_id: null });
-    console.log("📡 WebSocket connection opened");
-  });
-
-  socket.addEventListener("message", async (event) => {
-    const data = JSON.parse(event.data);
-
-    // Handle client registration
-    if (data.type === "register") {
-      client_id = await handleRegistration(data as RegisterMessage, socket, temp_id);
-    } else {
-      // Handle other messages
-      await handleWebSocketMessage(client_id, event.data);
-    }
-  });
-
-  socket.addEventListener("close", async () => {
-    await handleDisconnection(client_id);
-  });
-
-  socket.addEventListener("error", (error) => {
-    console.error(`❌ WebSocket error for ${client_id}:`, error);
-  });
-
-  return response;
 }
 
 /**
@@ -504,7 +487,11 @@ export function handleWebSocketUpgrade(request: Request): Response {
 
     // Handle client registration
     if (data.type === "register") {
-      client_id = await handleRegistration(data as RegisterMessage, socket, temp_id);
+      client_id = await handleRegistration(
+        data as RegisterMessage,
+        socket,
+        temp_id,
+      );
     } else {
       // Handle other messages
       await handleWebSocketMessage(client_id, event.data);

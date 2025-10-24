@@ -14,7 +14,7 @@ export function log(message, level = "info", debugLogElement = null) {
   const timestamp = new Date().toLocaleTimeString();
   const prefix = {
     "info": "INFO",
-    "success": "SUCCESS", 
+    "success": "SUCCESS",
     "error": "ERROR",
     "debug": "DEBUG",
   }[level] || "INFO";
@@ -50,7 +50,7 @@ export function updateConnectionStatus(status, statusElement, valueElement) {
   // Remove all status classes
   statusElement.classList.remove(
     "connected",
-    "syncing", 
+    "syncing",
     "active",
     "inactive",
     "kicked",

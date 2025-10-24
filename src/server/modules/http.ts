@@ -10,30 +10,30 @@ const getStaticFile = async (filePath: string): Promise<Response | null> => {
   try {
     const file = await Deno.readFile(filePath);
     const ext = path.extname(filePath).toLowerCase();
-    
+
     const mimeTypes: Record<string, string> = {
-      '.html': 'text/html; charset=utf-8',
-      '.js': 'application/javascript',
-      '.css': 'text/css',
-      '.json': 'application/json',
-      '.png': 'image/png',
-      '.jpg': 'image/jpeg',
-      '.jpeg': 'image/jpeg',
-      '.gif': 'image/gif',
-      '.svg': 'image/svg+xml',
-      '.ico': 'image/x-icon',
-      '.woff': 'font/woff',
-      '.woff2': 'font/woff2',
+      ".html": "text/html; charset=utf-8",
+      ".js": "application/javascript",
+      ".css": "text/css",
+      ".json": "application/json",
+      ".png": "image/png",
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".gif": "image/gif",
+      ".svg": "image/svg+xml",
+      ".ico": "image/x-icon",
+      ".woff": "font/woff",
+      ".woff2": "font/woff2",
     };
-    
-    const mimeType = mimeTypes[ext] || 'application/octet-stream';
-    
+
+    const mimeType = mimeTypes[ext] || "application/octet-stream";
+
     return new Response(file, {
       headers: {
-        'Content-Type': mimeType,
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
+        "Content-Type": mimeType,
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
       },
     });
   } catch (error) {
@@ -50,7 +50,9 @@ const getStaticFile = async (filePath: string): Promise<Response | null> => {
  * @param request - HTTP request
  * @returns Response for static files
  */
-export async function handleStaticFiles(request: Request): Promise<Response | null> {
+export async function handleStaticFiles(
+  request: Request,
+): Promise<Response | null> {
   const url = new URL(request.url);
   const pathname = url.pathname;
 
@@ -68,7 +70,7 @@ export async function handleStaticFiles(request: Request): Promise<Response | nu
     if (response) return response;
   }
 
-  // Handle synth client  
+  // Handle synth client
   if (pathname === "/synth" || pathname === "/synth/") {
     const response = await getStaticFile("public/synth/index.html");
     if (response) return response;

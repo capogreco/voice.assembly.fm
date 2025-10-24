@@ -72,7 +72,7 @@ function defaultConstantState(value) {
 /**
  * Create default control state
  * @returns {IControlState}
-*/
+ */
 export function createDefaultState() {
   return {
     frequency: defaultFrequencyState(), // Use default disc interpolation from helper
@@ -149,7 +149,7 @@ export function createDefaultState() {
 export function createPresetConfigs() {
   return {
     default: createDefaultState(),
-    
+
     "gentle-sweep": {
       frequency: {
         interpolation: "disc",

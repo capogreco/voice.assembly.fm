@@ -9,9 +9,9 @@
  * Parameter type definitions for schema-driven generation
  */
 export const PARAMETER_TYPES = {
-  HRG: 'hrg',           // Harmonic Ratio Generator (frequency, vibratoRate)
-  NORMALIZED: 'normalized', // Normalized 0-1 parameters (vowelX, vowelY, etc.)
-  CONSTANT: 'constant'      // Simple constant values (amplitude, whiteNoise)
+  HRG: "hrg", // Harmonic Ratio Generator (frequency, vibratoRate)
+  NORMALIZED: "normalized", // Normalized 0-1 parameters (vowelX, vowelY, etc.)
+  CONSTANT: "constant", // Simple constant values (amplitude, whiteNoise)
 };
 
 /**
@@ -20,85 +20,85 @@ export const PARAMETER_TYPES = {
 export const PARAMETER_SCHEMAS = {
   frequency: {
     type: PARAMETER_TYPES.HRG,
-    label: 'freq',
+    label: "freq",
     baseInput: {
-      type: 'number',
-      value: '220',
-      min: '16',
-      max: '16384',
-      step: '1',
-      placeholder: 'Hz'
-    }
+      type: "number",
+      value: "220",
+      min: "16",
+      max: "16384",
+      step: "1",
+      placeholder: "Hz",
+    },
   },
-  
+
   vibratoRate: {
     type: PARAMETER_TYPES.HRG,
-    label: 'vib rate',
+    label: "vib rate",
     baseInput: {
-      type: 'number',
-      value: '5',
-      min: '0.1',
-      max: '1000',
-      step: '0.1',
-      placeholder: 'Hz'
-    }
+      type: "number",
+      value: "5",
+      min: "0.1",
+      max: "1000",
+      step: "0.1",
+      placeholder: "Hz",
+    },
   },
 
   vowelX: {
     type: PARAMETER_TYPES.NORMALIZED,
-    label: 'vowel x',
-    defaultValue: '0.5',
-    placeholder: '0.5 or 0.2-0.8'
+    label: "vowel x",
+    defaultValue: "0.5",
+    placeholder: "0.5 or 0.2-0.8",
   },
 
   vowelY: {
     type: PARAMETER_TYPES.NORMALIZED,
-    label: 'vowel y',
-    defaultValue: '0.5',
-    placeholder: '0.5 or 0.2-0.8'
+    label: "vowel y",
+    defaultValue: "0.5",
+    placeholder: "0.5 or 0.2-0.8",
   },
 
   zingAmount: {
     type: PARAMETER_TYPES.NORMALIZED,
-    label: 'zing amt',
-    defaultValue: '0',
-    placeholder: '0 or 0-0.5'
+    label: "zing amt",
+    defaultValue: "0",
+    placeholder: "0 or 0-0.5",
   },
 
   zingMorph: {
     type: PARAMETER_TYPES.NORMALIZED,
-    label: 'z morph',
-    defaultValue: '0.5',
-    placeholder: '0.5 or 0.2-0.8'
+    label: "z morph",
+    defaultValue: "0.5",
+    placeholder: "0.5 or 0.2-0.8",
   },
 
   symmetry: {
     type: PARAMETER_TYPES.NORMALIZED,
-    label: 'symmetry',
-    defaultValue: '0.5',
-    placeholder: '0.5 or 0.2-0.8'
+    label: "symmetry",
+    defaultValue: "0.5",
+    placeholder: "0.5 or 0.2-0.8",
   },
 
   amplitude: {
     type: PARAMETER_TYPES.NORMALIZED,
-    label: 'amp',
-    defaultValue: '0.8',
-    placeholder: '0.8 or 0.5-1'
+    label: "amp",
+    defaultValue: "0.8",
+    placeholder: "0.8 or 0.5-1",
   },
 
   whiteNoise: {
     type: PARAMETER_TYPES.NORMALIZED,
-    label: 'noise',
-    defaultValue: '0',
-    placeholder: '0 or 0-0.3'
+    label: "noise",
+    defaultValue: "0",
+    placeholder: "0 or 0-0.3",
   },
 
   vibratoWidth: {
     type: PARAMETER_TYPES.NORMALIZED,
-    label: 'vib width',
-    defaultValue: '0',
-    placeholder: '0 or 0-0.1'
-  }
+    label: "vib width",
+    defaultValue: "0",
+    placeholder: "0 or 0-0.1",
+  },
 };
 
 /**
@@ -299,34 +299,36 @@ export function generateParameterControl(paramName, schema) {
       return generateNormalizedParameterControl(paramName, schema);
     default:
       console.warn(`Unknown parameter type: ${schema.type} for ${paramName}`);
-      return '';
+      return "";
   }
 }
 
 /**
  * Generate all parameter controls and inject into container
  */
-export function generateAllParameterControls(containerId = 'generated-parameters') {
+export function generateAllParameterControls(
+  containerId = "generated-parameters",
+) {
   const container = document.getElementById(containerId);
   if (!container) {
     console.error(`Container element with id '${containerId}' not found`);
     return;
   }
 
-  let html = '';
-  
+  let html = "";
+
   // Generate controls in a specific order
   const parameterOrder = [
-    'frequency',
-    'vibratoRate', 
-    'vowelX',
-    'vowelY',
-    'zingAmount',
-    'zingMorph',
-    'symmetry',
-    'amplitude',
-    'whiteNoise',
-    'vibratoWidth'
+    "frequency",
+    "vibratoRate",
+    "vowelX",
+    "vowelY",
+    "zingAmount",
+    "zingMorph",
+    "symmetry",
+    "amplitude",
+    "whiteNoise",
+    "vibratoWidth",
   ];
 
   for (const paramName of parameterOrder) {
@@ -337,7 +339,7 @@ export function generateAllParameterControls(containerId = 'generated-parameters
   }
 
   container.innerHTML = html;
-  console.log('✅ Generated all parameter controls dynamically');
+  console.log("✅ Generated all parameter controls dynamically");
 }
 
 /**
@@ -352,9 +354,12 @@ export function replaceParameterControl(paramName) {
   }
 
   // Find existing parameter control
-  const existingControl = document.querySelector(`[data-param="${paramName}"]`) ||
-                         document.querySelector(`#${paramName}-value, #${paramName}-base`)?.closest('.param-control');
-  
+  const existingControl =
+    document.querySelector(`[data-param="${paramName}"]`) ||
+    document.querySelector(`#${paramName}-value, #${paramName}-base`)?.closest(
+      ".param-control",
+    );
+
   if (existingControl) {
     const newControlHtml = generateParameterControl(paramName, schema);
     existingControl.outerHTML = newControlHtml;
@@ -371,18 +376,18 @@ export function replaceParameterControl(paramName) {
  * This is the main entry point for dynamic UI generation
  */
 export function initializeSchemaBasedUI() {
-  console.log('🎛️ Initializing schema-based parameter UI generation...');
-  
+  console.log("🎛️ Initializing schema-based parameter UI generation...");
+
   // Check if we should use full generation or gradual replacement
-  const generatedContainer = document.getElementById('generated-parameters');
-  
+  const generatedContainer = document.getElementById("generated-parameters");
+
   if (generatedContainer) {
     // Full schema-driven generation
     generateAllParameterControls();
   } else {
     // Gradual replacement of existing controls
-    console.log('📝 Using gradual replacement mode for existing controls');
-    Object.keys(PARAMETER_SCHEMAS).forEach(paramName => {
+    console.log("📝 Using gradual replacement mode for existing controls");
+    Object.keys(PARAMETER_SCHEMAS).forEach((paramName) => {
       replaceParameterControl(paramName);
     });
   }

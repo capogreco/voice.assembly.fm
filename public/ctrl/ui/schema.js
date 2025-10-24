@@ -31,7 +31,7 @@ export function setupCompactParameterControls(ctrl, paramName) {
   textInput.addEventListener("blur", () => {
     // Update the program generator from the input value (single values become constants)
     ctrl._handleValueInput(paramName, textInput.value, "start");
-    
+
     // Send SUB_PARAM_UPDATE for the start value generator change
     const paramState = ctrl.stagedState[paramName];
     if (paramState.startValueGenerator?.type === "normalised") {
@@ -39,17 +39,17 @@ export function setupCompactParameterControls(ctrl, paramName) {
         // Single value - send the range value
         ctrl._sendSubParameterUpdate(
           paramName + ".startValueGenerator.range",
-          paramState.startValueGenerator.range
+          paramState.startValueGenerator.range,
         );
       } else {
         // Range value - send the range object as JSON string for now
         ctrl._sendSubParameterUpdate(
-          paramName + ".startValueGenerator.range", 
-          JSON.stringify(paramState.startValueGenerator.range)
+          paramName + ".startValueGenerator.range",
+          JSON.stringify(paramState.startValueGenerator.range),
         );
       }
     }
-    
+
     ctrl.markPendingChanges();
   });
 
@@ -67,7 +67,7 @@ export function setupCompactParameterControls(ctrl, paramName) {
       // Send SUB_PARAM_UPDATE for interpolation change
       ctrl._sendSubParameterUpdate(
         paramName + ".interpolation",
-        interpolation
+        interpolation,
       );
 
       ctrl.markPendingChanges();
@@ -78,7 +78,7 @@ export function setupCompactParameterControls(ctrl, paramName) {
     // Use 'change' event for final state update (fires when user commits value)
     endValueInput.addEventListener("change", () => {
       ctrl._handleValueInput(paramName, endValueInput.value, "end");
-      
+
       // Send SUB_PARAM_UPDATE for the end value generator change
       const paramState = ctrl.stagedState[paramName];
       if (paramState.endValueGenerator?.type === "normalised") {
@@ -86,17 +86,17 @@ export function setupCompactParameterControls(ctrl, paramName) {
           // Single value - send the range value
           ctrl._sendSubParameterUpdate(
             paramName + ".endValueGenerator.range",
-            paramState.endValueGenerator.range
+            paramState.endValueGenerator.range,
           );
         } else {
           // Range value - send the range object as JSON string for now
           ctrl._sendSubParameterUpdate(
-            paramName + ".endValueGenerator.range", 
-            JSON.stringify(paramState.endValueGenerator.range)
+            paramName + ".endValueGenerator.range",
+            JSON.stringify(paramState.endValueGenerator.range),
           );
         }
       }
-      
+
       ctrl.markPendingChanges();
     });
 
@@ -141,15 +141,16 @@ export function setupCompactParameterControls(ctrl, paramName) {
       // Update staged state
       const paramState = ctrl.stagedState[paramName];
       if (paramState.startValueGenerator) {
-        paramState.startValueGenerator.sequenceBehavior = startRbgBehaviorSelect.value;
+        paramState.startValueGenerator.sequenceBehavior =
+          startRbgBehaviorSelect.value;
       }
-      
+
       // Send SUB_PARAM_UPDATE - synth will handle staging vs immediate application
       ctrl._sendSubParameterUpdate(
         paramName + ".startValueGenerator.sequenceBehavior",
-        startRbgBehaviorSelect.value
+        startRbgBehaviorSelect.value,
       );
-      
+
       ctrl.markPendingChanges();
     });
   }
@@ -160,15 +161,16 @@ export function setupCompactParameterControls(ctrl, paramName) {
       // Update staged state
       const paramState = ctrl.stagedState[paramName];
       if (paramState.endValueGenerator) {
-        paramState.endValueGenerator.sequenceBehavior = endRbgBehaviorSelect.value;
+        paramState.endValueGenerator.sequenceBehavior =
+          endRbgBehaviorSelect.value;
       }
-      
+
       // Send SUB_PARAM_UPDATE - synth will handle staging vs immediate application
       ctrl._sendSubParameterUpdate(
         paramName + ".endValueGenerator.sequenceBehavior",
-        endRbgBehaviorSelect.value
+        endRbgBehaviorSelect.value,
       );
-      
+
       ctrl.markPendingChanges();
     });
   }
@@ -179,7 +181,7 @@ export function setupCompactParameterControls(ctrl, paramName) {
 
 /**
  * Setup HRG (Harmonic Ratio Generator) parameter controls (for frequency/vibratoRate)
- * @param {Object} ctrl - The ControlClient instance  
+ * @param {Object} ctrl - The ControlClient instance
  * @param {string} paramName - Name of the parameter (frequency or vibratoRate)
  */
 export function setupHrgParameterControls(ctrl, paramName) {
@@ -252,7 +254,8 @@ export function setupHrgParameterControls(ctrl, paramName) {
 
       if (baseValue < min || baseValue > max) {
         ctrl.log(
-          "Warning: " + paramName + " base value " + baseValue + " is outside recommended range [" + min + ", " + max + "]",
+          "Warning: " + paramName + " base value " + baseValue +
+            " is outside recommended range [" + min + ", " + max + "]",
           "warning",
         );
       }
@@ -267,7 +270,7 @@ export function setupHrgParameterControls(ctrl, paramName) {
       // Send SUB_PARAM_UPDATE for base value change - synth will handle staging vs immediate application
       ctrl._sendSubParameterUpdate(
         paramName + ".baseValue",
-        baseValue
+        baseValue,
       );
 
       ctrl.markPendingChanges();
@@ -305,7 +308,7 @@ export function setupHrgParameterControls(ctrl, paramName) {
     startNumeratorsInput.addEventListener("input", () => {
       const { ok } = ctrl._validateSINString(startNumeratorsInput.value);
       startNumeratorsInput.classList.toggle("invalid-input", !ok);
-      
+
       // Real-time feedback for input validation
       if (ok) {
         // Show green border or other positive feedback
@@ -319,10 +322,10 @@ export function setupHrgParameterControls(ctrl, paramName) {
       // Send SUB_PARAM_UPDATE - synth will handle staging vs immediate application
       ctrl._sendSubParameterUpdate(
         paramName + ".startValueGenerator.numerators",
-        startNumeratorsInput.value
+        startNumeratorsInput.value,
       );
       ctrl.markPendingChanges();
-      
+
       // Reset border color to default after sending update
       startNumeratorsInput.style.borderColor = "";
     });
@@ -332,7 +335,7 @@ export function setupHrgParameterControls(ctrl, paramName) {
     startDenominatorsInput.addEventListener("input", () => {
       const { ok } = ctrl._validateSINString(startDenominatorsInput.value);
       startDenominatorsInput.classList.toggle("invalid-input", !ok);
-      
+
       // Real-time feedback for input validation
       if (ok) {
         // Show green border or other positive feedback
@@ -346,10 +349,10 @@ export function setupHrgParameterControls(ctrl, paramName) {
       // Send SUB_PARAM_UPDATE - synth will handle staging vs immediate application
       ctrl._sendSubParameterUpdate(
         paramName + ".startValueGenerator.denominators",
-        startDenominatorsInput.value
+        startDenominatorsInput.value,
       );
       ctrl.markPendingChanges();
-      
+
       // Reset border color to default after sending update
       startDenominatorsInput.style.borderColor = "";
     });
@@ -360,7 +363,7 @@ export function setupHrgParameterControls(ctrl, paramName) {
       // Send SUB_PARAM_UPDATE - synth will handle staging vs immediate application
       ctrl._sendSubParameterUpdate(
         paramName + ".startValueGenerator.numeratorBehavior",
-        startNumBehaviorSelect.value
+        startNumBehaviorSelect.value,
       );
       ctrl.markPendingChanges();
     });
@@ -388,7 +391,7 @@ export function setupHrgParameterControls(ctrl, paramName) {
     endNumeratorsInput.addEventListener("input", () => {
       const { ok } = ctrl._validateSINString(endNumeratorsInput.value);
       endNumeratorsInput.classList.toggle("invalid-input", !ok);
-      
+
       // Real-time feedback for input validation
       if (ok) {
         endNumeratorsInput.style.borderColor = "#4CAF50";
@@ -400,10 +403,10 @@ export function setupHrgParameterControls(ctrl, paramName) {
       // Send SUB_PARAM_UPDATE - synth will handle staging vs immediate application
       ctrl._sendSubParameterUpdate(
         paramName + ".endValueGenerator.numerators",
-        endNumeratorsInput.value
+        endNumeratorsInput.value,
       );
       ctrl.markPendingChanges();
-      
+
       // Reset border color to default after sending update
       endNumeratorsInput.style.borderColor = "";
     });
@@ -413,7 +416,7 @@ export function setupHrgParameterControls(ctrl, paramName) {
     endDenominatorsInput.addEventListener("input", () => {
       const { ok } = ctrl._validateSINString(endDenominatorsInput.value);
       endDenominatorsInput.classList.toggle("invalid-input", !ok);
-      
+
       // Real-time feedback for input validation
       if (ok) {
         endDenominatorsInput.style.borderColor = "#4CAF50";
@@ -425,10 +428,10 @@ export function setupHrgParameterControls(ctrl, paramName) {
       // Send SUB_PARAM_UPDATE - synth will handle staging vs immediate application
       ctrl._sendSubParameterUpdate(
         paramName + ".endValueGenerator.denominators",
-        endDenominatorsInput.value
+        endDenominatorsInput.value,
       );
       ctrl.markPendingChanges();
-      
+
       // Reset border color to default after sending update
       endDenominatorsInput.style.borderColor = "";
     });

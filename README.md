@@ -143,7 +143,8 @@ Data Channels                 │  Data Channels
 **Parameter Control (Clean Three-Message Model):**
 
 - `SUB_PARAM_UPDATE`: Individual field edits with dot-notation paths
-  - Examples: `"frequency.baseValue"`, `"whiteNoise.startValueGenerator.range"`, `"amplitude.interpolation"`
+  - Examples: `"frequency.baseValue"`, `"whiteNoise.startValueGenerator.range"`,
+    `"amplitude.interpolation"`
   - Playing: synth stages for EOC application
   - Paused: synth applies immediately with portamento
 - `PROGRAM_UPDATE`: Full program configuration changes
@@ -259,25 +260,30 @@ synchronization.
 
 ### Minimal Re-Resolution Architecture
 
-**Overview**: The synthesis engine employs a minimal re-resolution architecture where only the specific components that change are recalculated, preserving computational efficiency and musical relationships.
+**Overview**: The synthesis engine employs a minimal re-resolution architecture
+where only the specific components that change are recalculated, preserving
+computational efficiency and musical relationships.
 
-**Core Principle**: Store generative parameters (base values, numerators, denominators, behaviors) rather than generated values (absolute frequencies), enabling independent component updates.
+**Core Principle**: Store generative parameters (base values, numerators,
+denominators, behaviors) rather than generated values (absolute frequencies),
+enabling independent component updates.
 
 **HRG Component Storage**:
+
 ```javascript
 lastResolvedHRG[paramName] = {
-  baseValue: 220,           // Fundamental frequency
+  baseValue: 220, // Fundamental frequency
   start: {
-    numerator: 3,           // Currently selected numerator
-    denominator: 2,         // Currently selected denominator  
-    frequency: 330          // Computed: 220 * (3/2)
+    numerator: 3, // Currently selected numerator
+    denominator: 2, // Currently selected denominator
+    frequency: 330, // Computed: 220 * (3/2)
   },
   end: {
-    numerator: 5,           // For cosine interpolation
+    numerator: 5, // For cosine interpolation
     denominator: 4,
-    frequency: 275          // Computed: 220 * (5/4)
-  }
-}
+    frequency: 275, // Computed: 220 * (5/4)
+  },
+};
 ```
 
 **Update Types & Re-Resolution Scope**:
@@ -295,7 +301,7 @@ lastResolvedHRG[paramName] = {
    - **Effect**: Changes harmonic ratios for start value only
 
 3. **Denominator Updates** (`frequency.startValueGenerator.denominators`):
-   - **Scope**: Only start denominator re-resolution  
+   - **Scope**: Only start denominator re-resolution
    - **Method**: Re-parse denominator array, update index if needed
    - **Preserves**: Numerator, end generator, base value
    - **Effect**: Changes harmonic ratios for start value only
@@ -315,17 +321,23 @@ lastResolvedHRG[paramName] = {
 **Benefits**:
 
 - **Computational Efficiency**: Only affected components recalculate
-- **Musical Preservation**: Harmonic relationships stay intact across base changes  
-- **Independent Control**: Each HRG component (base, num, den, behavior) updates separately
+- **Musical Preservation**: Harmonic relationships stay intact across base
+  changes
+- **Independent Control**: Each HRG component (base, num, den, behavior) updates
+  separately
 - **Network Efficiency**: Sub-parameter messages much smaller than full programs
 - **Real-time Performance**: Minimal latency for live parameter adjustments
 
 **Message Flow**:
-- **Controller**: Sends `SUB_PARAM_UPDATE` with dot-notation path (e.g., `"frequency.baseValue"`)
+
+- **Controller**: Sends `SUB_PARAM_UPDATE` with dot-notation path (e.g.,
+  `"frequency.baseValue"`)
 - **Synth**: Routes to appropriate minimal update method based on parameter path
 - **Result**: Only the specified component updates, preserving all other state
 
-This architecture enables the ctrl client to make granular changes (like adjusting frequency base from 220Hz to 440Hz) without disrupting the complex HRG patterns that create the ensemble's harmonic texture.
+This architecture enables the ctrl client to make granular changes (like
+adjusting frequency base from 220Hz to 440Hz) without disrupting the complex HRG
+patterns that create the ensemble's harmonic texture.
 
 ### Scene Memory System
 
@@ -371,10 +383,14 @@ between pre-configured ensemble textures.
 
 - **No ID conflicts**: Eliminates issues with shared localStorage between
   browser tabs
-- **True per-synth uniqueness**: Each synth maintains its own resolved scene state
+- **True per-synth uniqueness**: Each synth maintains its own resolved scene
+  state
 - **Simple architecture**: No complex synchronization or conflict resolution
 - **Performance-friendly**: Instant scene transitions with preserved timing
-- **Ear-driven workflow**: The controller never inspects resolved per-synth values. The performer listens to the combined acoustics in the room and nudges the shared program, while each phone handles its own resolution and scene storage.
+- **Ear-driven workflow**: The controller never inspects resolved per-synth
+  values. The performer listens to the combined acoustics in the room and nudges
+  the shared program, while each phone handles its own resolution and scene
+  storage.
 
 ### Envelope System
 
@@ -431,7 +447,7 @@ src/
 │   ├── message-protocol.js      # Network message definitions + validation
 │   └── parameter-types.ts       # Shared TS types for parameters
 ├── server/
-│   ├── server.ts                # Unified server (HTTP + WS + static + ICE)
+│   ├── main.ts                  # Unified server (HTTP + WS + static + ICE)
 │   └── utils.ts                 # Server utilities (local IPs, etc.)
 public/
 ├── ctrl/                        # Control client (performer)

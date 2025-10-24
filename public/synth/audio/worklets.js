@@ -45,7 +45,12 @@ export function initializePhasorWorklet(audioContext, verbose = false) {
  * @param {boolean} verbose - Verbose logging
  * @returns {Object} - Voice synthesis components
  */
-export async function initializeFormantSynthesis(audioContext, phasorWorklet, masterGain, verbose = false) {
+export async function initializeFormantSynthesis(
+  audioContext,
+  phasorWorklet,
+  masterGain,
+  verbose = false,
+) {
   try {
     // Load voice worklet
     await audioContext.audioWorklet.addModule(
@@ -127,7 +132,6 @@ export function applyStoredState(context) {
     context.handleProgramUpdate(context.lastProgramUpdate);
     context.lastProgramUpdate = null; // Clear cache
   }
-
 }
 
 /**

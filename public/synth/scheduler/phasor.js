@@ -25,46 +25,54 @@ export function handlePhasorSync(message, context) {
   if (!context.audioContext) {
     console.log("⏳ Audio context not ready, deferring EOC beacon PLL");
     // Fall back to legacy behavior until audio context is available
-    
+
     // Update phasor worklet parameters when ready
     if (context.phasorWorklet) {
-      context.phasorWorklet.parameters.get("cycleLength").value = context.receivedCycleLength;
-      context.phasorWorklet.parameters.get("stepsPerCycle").value = context.receivedStepsPerCycle;
-      
+      context.phasorWorklet.parameters.get("cycleLength").value =
+        context.receivedCycleLength;
+      context.phasorWorklet.parameters.get("stepsPerCycle").value =
+        context.receivedStepsPerCycle;
+
       if (context.receivedIsPlaying) {
         context.phasorWorklet.port.postMessage({ type: "start" });
       } else {
         context.phasorWorklet.port.postMessage({ type: "stop" });
       }
     }
-    
+
     // Continue with rest of method for compatibility
-    if (context.unifiedSynthNode && context.unifiedSynthNode.parameters.has("isPlaying")) {
-      context.unifiedSynthNode.parameters.get("isPlaying").value = context.receivedIsPlaying ? 1 : 0;
+    if (
+      context.unifiedSynthNode &&
+      context.unifiedSynthNode.parameters.has("isPlaying")
+    ) {
+      context.unifiedSynthNode.parameters.get("isPlaying").value =
+        context.receivedIsPlaying ? 1 : 0;
     }
-    
+
     if (context.programNode) {
-      const periodDisplay = message.cpm ? `${message.cpm} CPM` : `${context.receivedCycleLength}s period`;
+      const periodDisplay = message.cpm
+        ? `${message.cpm} CPM`
+        : `${context.receivedCycleLength}s period`;
       console.log(`⏰ Received phasor sync: ${periodDisplay}`);
-      
+
       const newTimingConfig = {
         cpm: message.cpm,
         stepsPerCycle: message.stepsPerCycle,
         cycleLength: message.cycleLength,
         phasor: message.phasor,
       };
-      
+
       context.timingConfig = newTimingConfig;
     }
-    
+
     updatePhasorWorklet(context);
-    
+
     if (!context.phasorUpdateId) {
       startPhasorInterpolation(context);
     }
     return;
   }
-  
+
   const currentAudioTime = context.audioContext.currentTime;
   const messageTimestamp = message.timestamp || performance.now();
 
@@ -108,7 +116,9 @@ export function handlePhasorSync(message, context) {
       );
     } else {
       // Step beacon - apply gentle PLL correction
-      const expectedStepIndex = Math.round(context.receivedPhasor * context.receivedStepsPerCycle);
+      const expectedStepIndex = Math.round(
+        context.receivedPhasor * context.receivedStepsPerCycle,
+      );
       const stepPhase = expectedStepIndex / context.receivedStepsPerCycle;
 
       // Send step-aligned phase correction to worklet
@@ -121,7 +131,9 @@ export function handlePhasorSync(message, context) {
       }
 
       console.log(
-        `🔄 Step beacon: step ${expectedStepIndex} (phase ${stepPhase.toFixed(3)})`,
+        `🔄 Step beacon: step ${expectedStepIndex} (phase ${
+          stepPhase.toFixed(3)
+        })`,
       );
     }
   } else {
@@ -157,24 +169,28 @@ export function handlePhasorSync(message, context) {
  */
 export function updateTransportState(context) {
   // Update unified synth node if available
-  if (context.unifiedSynthNode && context.unifiedSynthNode.parameters.has("isPlaying")) {
-    context.unifiedSynthNode.parameters.get("isPlaying").value = context.receivedIsPlaying ? 1 : 0;
+  if (
+    context.unifiedSynthNode &&
+    context.unifiedSynthNode.parameters.has("isPlaying")
+  ) {
+    context.unifiedSynthNode.parameters.get("isPlaying").value =
+      context.receivedIsPlaying ? 1 : 0;
   }
 
   // Update timing config for program node
   if (context.programNode) {
-    const periodDisplay = context.receivedCpm 
-      ? `${context.receivedCpm} CPM` 
+    const periodDisplay = context.receivedCpm
+      ? `${context.receivedCpm} CPM`
       : `${context.receivedCycleLength}s period`;
     console.log(`⏰ Received phasor sync: ${periodDisplay}`);
-    
+
     const newTimingConfig = {
       cpm: context.receivedCpm,
       stepsPerCycle: context.receivedStepsPerCycle,
       cycleLength: context.receivedCycleLength,
       phasor: context.receivedPhasor,
     };
-    
+
     context.timingConfig = newTimingConfig;
   }
 }
@@ -187,8 +203,10 @@ export function updatePhasorWorklet(context) {
   if (!context.phasorWorklet) return;
 
   // Update timing parameters
-  context.phasorWorklet.parameters.get("cycleLength").value = context.receivedCycleLength;
-  context.phasorWorklet.parameters.get("stepsPerCycle").value = context.receivedStepsPerCycle;
+  context.phasorWorklet.parameters.get("cycleLength").value =
+    context.receivedCycleLength;
+  context.phasorWorklet.parameters.get("stepsPerCycle").value =
+    context.receivedStepsPerCycle;
 
   // Update transport state
   if (context.receivedIsPlaying) {
@@ -211,7 +229,8 @@ export function startPhasorInterpolation(context) {
 
     // Update interpolated phasor if playing
     if (context.receivedIsPlaying && context.phasorRate > 0) {
-      context.interpolatedPhasor = (context.receivedPhasor + deltaTimeSeconds * context.phasorRate) % 1.0;
+      context.interpolatedPhasor =
+        (context.receivedPhasor + deltaTimeSeconds * context.phasorRate) % 1.0;
     } else {
       context.interpolatedPhasor = context.receivedPhasor;
     }
@@ -258,7 +277,7 @@ export function getCurrentPhase(context) {
 export function handleTransport(message, context) {
   if (message.action === "play") {
     console.log("▶️ Transport: Play received");
-    
+
     // Update local state
     context.receivedIsPlaying = true;
     context.isPaused = false;
@@ -270,10 +289,9 @@ export function handleTransport(message, context) {
 
     // Update synthesis status
     context.updateSynthesisStatus(context.synthesisActive);
-    
   } else if (message.action === "pause") {
     console.log("⏸️ Transport: Pause received");
-    
+
     // Update local state
     context.receivedIsPlaying = false;
     context.isPaused = true;
@@ -296,14 +314,14 @@ export function handleTransport(message, context) {
  */
 export function handleJumpToEOC(message, context) {
   console.log("⏭️ Jump to EOC received");
-  
+
   if (context.phasorWorklet) {
     context.phasorWorklet.port.postMessage({ type: "reset" });
   }
-  
+
   // Update interpolated phasor
   context.interpolatedPhasor = 0.0;
-  
+
   // Apply any pending scene changes immediately
   if (context._pendingSceneAtEoc) {
     context.applyPendingScene();

@@ -8,11 +8,11 @@
  * Defines how a value is chosen from a set at each discrete event (e.g., EOC).
  * @typedef {Object} GeneratorConfig
  * @property {"periodic" | "normalised"} type
- * 
+ *
  * // --- If type is 'normalised' (RBG) ---
  * @property {"static" | "random"} [sequenceBehavior] - Sequence behavior for normalised generators only
  * @property {number | {min: number, max: number}} [range] - Value or range for normalised generators
- * 
+ *
  * // --- If type is 'periodic' (HRG) ---
  * @property {string} [numerators] - e.g., "1-3,5"
  * @property {string} [denominators] - e.g., "2,4"

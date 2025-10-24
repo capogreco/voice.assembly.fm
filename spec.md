@@ -42,20 +42,19 @@ with the Eurorack timing domain.
 
 ### Current Support
 
-The ES-8 bridge is a core pillar of the architecture. The present release
-boots an `es8-processor` AudioWorklet that mirrors the software phasor so the
-Eurorack patch can already receive cycle and clock information while we finish
-inbound timing capture and pitch CV sequencing.
-Channel mapping today:
-  - **Channel 5**: Step clock pulse (gate high for first half of each step).
-  - **Channel 6**: Normalized phasor CV (0-1 ramp) suitable for scope or
-    downstream modulation.
-  - **Channel 7**: End-of-cycle trigger pulse.
-Channels 0-4 remain silent placeholders; the forthcoming 1V/oct and gate lanes
-will occupy these outputs.
-Timing is currently software-driven, but the ES-8 signals already serve as the
-synchronisation hook for the Eurorack patch. Hardware feedback will promote
-the ES-8 ramp to transport authority once implemented.
+The ES-8 bridge is a core pillar of the architecture. The present release boots
+an `es8-processor` AudioWorklet that mirrors the software phasor so the Eurorack
+patch can already receive cycle and clock information while we finish inbound
+timing capture and pitch CV sequencing. Channel mapping today:
+
+- **Channel 5**: Step clock pulse (gate high for first half of each step).
+- **Channel 6**: Normalized phasor CV (0-1 ramp) suitable for scope or
+  downstream modulation.
+- **Channel 7**: End-of-cycle trigger pulse. Channels 0-4 remain silent
+  placeholders; the forthcoming 1V/oct and gate lanes will occupy these outputs.
+  Timing is currently software-driven, but the ES-8 signals already serve as the
+  synchronisation hook for the Eurorack patch. Hardware feedback will promote
+  the ES-8 ramp to transport authority once implemented.
 
 ### Roadmap
 
@@ -137,8 +136,8 @@ resolved on the synth clients.
 `synthesisActive` and other transport flags remain top-level fields in the
 network protocol rather than envelope-driven parameters.
 
-_See "Parameter Randomization Systems" below for how the periodic and
-normalized generators behave._
+_See "Parameter Randomization Systems" below for how the periodic and normalized
+generators behave._
 
 ### Formant Frequency Constraints
 
@@ -163,9 +162,10 @@ map directly to the runtime implementation:
   behaviours).
 - **Usage**: `frequency` always uses periodic generators; `vibratoRate` can opt
   into HRG behavior when required.
-- **Example**: `numerators: "1-3"`, `denominators: "1-2"` with `behavior:
-  "shuffle"` yields cycle-to-cycle ratios like 1/1, 2/1, 3/2, etc., shared with
-  synths as compact SIN definitions.
+- **Example**: `numerators: "1-3"`, `denominators: "1-2"` with
+  `behavior:
+  "shuffle"` yields cycle-to-cycle ratios like 1/1, 2/1, 3/2, etc.,
+  shared with synths as compact SIN definitions.
 
 ### 2. Normalised (Range-Based) Generators
 
@@ -212,8 +212,8 @@ choir using Stochastic Integer Notation (SIN).
   sub-generators:
   - **Numerator Sequence Generator (NSG)**: The integer sequence drawn from the
     numerator SIN definition plus its temporal behaviour.
-  - **Denominator Sequence Generator (DSG)**: The matching integer sequence drawn
-    from the denominator SIN definition and behaviour.
+  - **Denominator Sequence Generator (DSG)**: The matching integer sequence
+    drawn from the denominator SIN definition and behaviour.
 - Each HRG is therefore expressed as `{ NSG, DSG }`, and every parameter that
   supports HRGs carries two instances: a start HRG and (for `disc`/`cont`
   interpolation) an end HRG.
@@ -316,15 +316,15 @@ sceneSnapshots[bank] = {
     whiteNoise: 0.0, // RBG stat mode values
     // ... other direct/stat parameters
   },
-    sequences: {
-      frequency: {
-        numeratorBehavior: "static",
-        denominatorBehavior: "static",
-        indexN: 4, // NSG position
-        indexD: 1, // DSG position
-        orderN: null, // NSG shuffle order (if shuffle behaviour)
-        orderD: null, // DSG shuffle order (if shuffle behaviour)
-      },
+  sequences: {
+    frequency: {
+      numeratorBehavior: "static",
+      denominatorBehavior: "static",
+      indexN: 4, // NSG position
+      indexD: 1, // DSG position
+      orderN: null, // NSG shuffle order (if shuffle behaviour)
+      orderD: null, // DSG shuffle order (if shuffle behaviour)
+    },
     // ... other HRG parameters
   },
 };
@@ -343,8 +343,8 @@ sceneSnapshots[bank] = {
 
 **Program vs Scene**:
 
-- **Program**: Shared unresolved control state transmitted from the ctrl
-  client (interpolations, NSG/DSG definitions, normalized ranges).
+- **Program**: Shared unresolved control state transmitted from the ctrl client
+  (interpolations, NSG/DSG definitions, normalized ranges).
 - **Scene**: Per-synth resolved snapshot (current AudioParam values + HRG
   positions) captured locally for recall.
 
@@ -392,10 +392,17 @@ sceneSnapshots[bank] = {
 
 ### Aural Feedback Paradigm
 
-- **Controller intentionally blind**: The ctrl client does not pull resolved per-synth values; it only knows the shared program definition and aggregate peer status.
-- **Synth-side authorship**: Each handset resolves its generators, stores scene snapshots, and recalls them locally without confirmation from the controller.
-- **Performance practice**: The performer listens to the acoustic summation in the room and responds by adjusting the shared program rather than micromanaging individual devices.
-- **Design implication**: Network bandwidth stays minimal and the system tolerates device churn without re-synchronising every resolved value through the controller.
+- **Controller intentionally blind**: The ctrl client does not pull resolved
+  per-synth values; it only knows the shared program definition and aggregate
+  peer status.
+- **Synth-side authorship**: Each handset resolves its generators, stores scene
+  snapshots, and recalls them locally without confirmation from the controller.
+- **Performance practice**: The performer listens to the acoustic summation in
+  the room and responds by adjusting the shared program rather than
+  micromanaging individual devices.
+- **Design implication**: Network bandwidth stays minimal and the system
+  tolerates device churn without re-synchronising every resolved value through
+  the controller.
 
 ## Ctrl Client Specification
 
@@ -415,8 +422,7 @@ sceneSnapshots[bank] = {
 ### WebRTC Role (Controller)
 
 - Registers with the signaling server and advertises availability in KV.
-- Waits for synth offers—does not create outbound `RTCPeerConnection`
-  instances.
+- Waits for synth offers—does not create outbound `RTCPeerConnection` instances.
 - On incoming offer: answers, emits ICE candidates, and mirrors state over the
   already-established data channels.
 
@@ -453,9 +459,9 @@ sceneSnapshots[bank] = {
   copies staged values into the live program and broadcasts the delta.
 - **EOC-aligned commits**: When transport is running, staged changes are
   deferred and dispatched at the next EOC, preserving ensemble synchrony.
-- **Bulk mode**: Performers can enable bulk mode to queue multiple
-  sub-parameter edits (SIN tweaks, range adjustments) and apply them in a single
-  transmission to minimise network spam and keep stochastic resolution aligned.
+- **Bulk mode**: Performers can enable bulk mode to queue multiple sub-parameter
+  edits (SIN tweaks, range adjustments) and apply them in a single transmission
+  to minimise network spam and keep stochastic resolution aligned.
 
 ### Controller Performance Flow
 
@@ -651,6 +657,7 @@ Source: `docs/mermaid/stochastic-resolution.mmd`
   timestamp: 171234567905.321
 }
 ```
+
 ### Latency Compensation
 
 - **RTT measurement**: Continuous ping/pong latency tracking
@@ -664,7 +671,8 @@ Source: `docs/mermaid/stochastic-resolution.mmd`
 
 - **Activation**: Calibration preset button in the ctrl client reconfigures the
   program state.
-- **Behavior**: Synths receive a scene with `amplitude = 0` and `whiteNoise ≈
+- **Behavior**: Synths receive a scene with `amplitude = 0` and
+  `whiteNoise ≈
   0.3`, producing consistent broadband noise.
 - **User Control**: No in-app slider; participants manually set device/system
   volume while the preset is active.
