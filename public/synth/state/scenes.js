@@ -464,7 +464,7 @@ export function applyPendingScene(context) {
   );
 
   context._pendingSceneAtEoc = null;
-  console.log("🎬 Applied pending scene at EOC");
+  console.log("🎬 Applied pending scene at EOC boundary");
 }
 
 // ---------------------------------------------------------------------------

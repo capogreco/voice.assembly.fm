@@ -102,10 +102,37 @@ export function resetEnvelopes(voiceNode, interpolations = {}) {
  * @param {Object} context - Synth context
  * @param {Record<string, {startValue: number, endValue: number, interpolation: string}>} resolved - Resolved parameters
  * @param {number} [portamentoMs] - Portamento time in milliseconds
+ * @param {Object} [options] - Additional options
+ * @param {boolean} [options.stageForEoc] - If true and playing, stage for EOC instead of immediate apply
  */
-export function applyResolvedProgram(context, resolved, portamentoMs = 0) {
+export function applyResolvedProgram(
+  context,
+  resolved,
+  portamentoMs = 0,
+  { stageForEoc = false } = {},
+) {
   if (!context.voiceNode) {
     console.warn("⚠️ Cannot apply resolved program: voice node not ready");
+    return;
+  }
+
+  // Check if we should stage for EOC
+  if (stageForEoc && (context.isPlaying || context.receivedIsPlaying)) {
+    // Convert resolved to envelope payload format and stage it
+    const envPayload = {};
+    for (const [param, cfg] of Object.entries(resolved)) {
+      if (cfg) {
+        envPayload[param] = {
+          startValue: cfg.startValue,
+          endValue: cfg.endValue,
+          interpolation: cfg.interpolation,
+          portamentoMs,
+        };
+      }
+    }
+
+    context._pendingSceneAtEoc = envPayload;
+    console.log("📋 Staged changes for next EOC boundary");
     return;
   }
 

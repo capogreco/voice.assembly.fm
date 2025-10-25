@@ -1576,6 +1576,7 @@ class SynthClient {
         this.audioContext.sampleRate);
 
     if (this._pendingSceneAtEoc) {
+      console.log("🔄 EOC boundary reached - applying pending scene changes");
       applyPendingSceneAtEoc(this);
       return;
     }
@@ -2138,14 +2139,17 @@ class SynthClient {
     }
     console.log("");
 
-    // USE NEW AUDIOPARAM PATH
-    // Apply via AudioParam scheduling instead of messages
-    this._applyResolvedProgram(resolvedParams, portamentoMs);
+    // USE NEW AUDIOPARAM PATH with staging support
+    // Stage for EOC when playing, apply immediately when paused
+    applyResolvedProgram(this, resolvedParams, portamentoMs, {
+      stageForEoc: true,
+    });
 
-    // Reset phasor if playing (immediate audible change)
-    if (this.isPlaying && this.phasorWorklet) {
-      console.log("🔄 Resetting phasor for immediate audible change");
-      this.phasorWorklet.port.postMessage({ type: "reset" });
+    // Log staging decision
+    if (this.isPlaying || this.receivedIsPlaying) {
+      console.log("📋 Re-resolve staged for next EOC (transport playing)");
+    } else {
+      console.log("⚡ Re-resolve applied immediately (transport paused)");
     }
 
     console.log(
