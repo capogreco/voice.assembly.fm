@@ -22,8 +22,15 @@ export const MessageTypes = {
 
   // Timing Control
   PHASOR_SYNC: "phasor-sync",
+  PHASOR_SCHEDULE: "phasor-schedule",
+  PHASOR_BEACON: "phasor-beacon",
   TRANSPORT: "transport",
   JUMP_TO_EOC: "jump-to-eoc",
+
+  // New Transport Commands
+  PLAY: "play",
+  PAUSE: "pause",
+  STOP: "stop",
 
   // System Control
   CALIBRATION_MODE: "calibration-mode",
@@ -86,6 +93,16 @@ export class MessageBuilder {
       stepsPerCycle,
       cycleLength,
       isPlaying,
+      timestamp: performance.now(),
+    };
+  }
+
+  static phasorSchedule(startTime, cycleLength, phase = 0) {
+    return {
+      type: MessageTypes.PHASOR_SCHEDULE,
+      startTime,
+      cycleLength,
+      phase,
       timestamp: performance.now(),
     };
   }
@@ -217,6 +234,40 @@ export class MessageBuilder {
       timestamp: performance.now(),
     };
   }
+
+  // New Transport Commands
+  static play(phase, startTime) {
+    return {
+      type: MessageTypes.PLAY,
+      phase,
+      startTime,
+      timestamp: performance.now(),
+    };
+  }
+
+  static pause(phase) {
+    return {
+      type: MessageTypes.PAUSE,
+      phase,
+      timestamp: performance.now(),
+    };
+  }
+
+  static stop() {
+    return {
+      type: MessageTypes.STOP,
+      timestamp: performance.now(),
+    };
+  }
+
+  static phasorBeacon(startTime, cycleLength) {
+    return {
+      type: MessageTypes.PHASOR_BEACON,
+      startTime,
+      cycleLength,
+      timestamp: performance.now(),
+    };
+  }
 }
 
 export function validateMessage(message) {
@@ -310,6 +361,21 @@ export function validateMessage(message) {
             );
           }
         }
+      }
+      break;
+
+    case MessageTypes.PHASOR_SCHEDULE:
+      if (
+        typeof message.startTime !== "number" ||
+        typeof message.cycleLength !== "number" ||
+        typeof message.phase !== "number"
+      ) {
+        throw new Error(
+          "PHASOR_SCHEDULE missing required fields: startTime, cycleLength, phase",
+        );
+      }
+      if (message.phase < 0 || message.phase >= 1) {
+        throw new Error("PHASOR_SCHEDULE phase must be in range [0, 1)");
       }
       break;
 

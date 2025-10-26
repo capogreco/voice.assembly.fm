@@ -33,6 +33,12 @@ import { resolveProgramSnapshot } from "./state/resolve.js";
 import { applyResolvedProgram } from "./audio/scheduler.js";
 import { resetPhasorState } from "./scheduler/phasor.js";
 import {
+  cancelPhasorAutomation,
+  estimateControllerLatency,
+  schedulePhasorJump,
+  schedulePhasorRamp,
+} from "./scheduler/phasor-schedule.js";
+import {
   captureSceneSnapshot,
   clearAllSceneBanks as clearAllScenes,
   clearSceneBank as clearSingleSceneBank,
@@ -475,6 +481,10 @@ class SynthClient {
         this.handlePhasorSync(message);
         break;
 
+      case MessageTypes.PHASOR_SCHEDULE:
+        this.handlePhasorSchedule(message);
+        break;
+
       case MessageTypes.PROGRAM:
         this.handleProgramConfig(message);
         break;
@@ -512,6 +522,22 @@ class SynthClient {
 
       case MessageTypes.JUMP_TO_EOC:
         this.handleJumpToEOC(message);
+        break;
+
+      case MessageTypes.PLAY:
+        this.handlePlay(message);
+        break;
+
+      case MessageTypes.PAUSE:
+        this.handlePause(message);
+        break;
+
+      case MessageTypes.STOP:
+        this.handleStop(message);
+        break;
+
+      case MessageTypes.PHASOR_BEACON:
+        this.handlePhasorBeacon(message);
         break;
 
       default:
@@ -1181,6 +1207,7 @@ class SynthClient {
   // }
 
   handlePhasorSync(message) {
+    // Cache received values for state tracking
     this.receivedPhasor = message.phasor;
     this.receivedCpm = message.cpm; // Legacy, may be null
     this.receivedStepsPerCycle = message.stepsPerCycle;
@@ -1193,157 +1220,15 @@ class SynthClient {
     // Calculate phasor rate
     this.phasorRate = 1.0 / this.receivedCycleLength;
 
-    // EOC Beacon PLL Implementation
-    // Guard against null audioContext during initialization
-    if (!this.audioContext) {
-      console.log("⏳ Audio context not ready, deferring EOC beacon PLL");
-      // Fall back to legacy behavior until audio context is available
-
-      // Update phasor worklet parameters when ready
-      if (this.phasorWorklet) {
-        this.phasorWorklet.parameters.get("cycleLength").value =
-          this.receivedCycleLength;
-        this.phasorWorklet.parameters.get("stepsPerCycle").value =
-          this.receivedStepsPerCycle;
-
-        if (this.receivedIsPlaying) {
-          this.phasorWorklet.port.postMessage({ type: "start" });
-        } else {
-          this.phasorWorklet.port.postMessage({ type: "stop" });
-        }
-      }
-
-      // Continue with rest of method for compatibility
-      if (
-        this.unifiedSynthNode &&
-        this.unifiedSynthNode.parameters.has("isPlaying")
-      ) {
-        this.unifiedSynthNode.parameters.get("isPlaying").value =
-          this.receivedIsPlaying ? 1 : 0;
-      }
-
-      if (this.programNode) {
-        const periodDisplay = message.cpm
-          ? `${message.cpm} CPM`
-          : `${this.receivedCycleLength}s period`;
-        console.log(`⏰ Received phasor sync: ${periodDisplay}`);
-
-        const newTimingConfig = {
-          cpm: message.cpm,
-          stepsPerCycle: message.stepsPerCycle,
-          cycleLength: message.cycleLength,
-          phasor: message.phasor,
-        };
-
-        this.timingConfig = newTimingConfig;
-      }
-
-      this.updatePhasorWorklet();
-
-      if (!this.phasorUpdateId) {
-        this.startPhasorInterpolation();
-      }
-
-      if (!this.receivedIsPlaying) {
-        resetPhasorState(this, this.receivedPhasor ?? 0);
-      }
-      return;
-    }
-
-    const currentAudioTime = this.audioContext.currentTime;
-    const messageTimestamp = message.timestamp || performance.now();
-
-    if (this.receivedIsPlaying) {
-      // Cache timing for later use
-      this.cachedTimingForPause = {
-        cycleLength: this.receivedCycleLength,
-        stepsPerCycle: this.receivedStepsPerCycle,
-      };
-
-      // Estimate message arrival time accounting for network delay
-      const estimatedSendTime = messageTimestamp / 1000.0; // Convert to seconds
-      const estimatedArrivalDelay = 0.01; // Assume ~10ms network delay
-      const beaconAudioTime = currentAudioTime - estimatedArrivalDelay;
-
-      // Store beacon timing for PLL
-      this.lastBeaconTime = beaconAudioTime;
-      this.lastBeaconPhasor = this.receivedPhasor;
-
-      // Detect beacon type: EOC vs step beacon
-      const isEOC = Math.abs(this.receivedPhasor) < 0.001; // phasor ≈ 0
-
-      if (isEOC) {
-        // EOC beacon - schedule next cycle reset
-        this.nextCycleTime = beaconAudioTime + this.receivedCycleLength;
-
-        // Send EOC scheduling to phasor worklet
-        if (this.phasorWorklet) {
-          this.phasorWorklet.port.postMessage({
-            type: "schedule-eoc-reset",
-            nextCycleTime: this.nextCycleTime,
-            cycleLength: this.receivedCycleLength,
-            correctionFactor: this.pllCorrectionFactor,
-          });
-        }
-
-        console.log(
-          `🎯 EOC beacon: scheduled next cycle at audio time ${
-            this.nextCycleTime.toFixed(3)
-          }s`,
-        );
-      } else {
-        // Step beacon - apply gentle PLL correction
-        const expectedStepIndex = Math.round(
-          this.receivedPhasor * this.receivedStepsPerCycle,
-        );
-        const stepPhase = expectedStepIndex / this.receivedStepsPerCycle;
-
-        // Send step-aligned phase correction to worklet
-        if (this.phasorWorklet) {
-          this.phasorWorklet.port.postMessage({
-            type: "phase-correction",
-            targetPhase: stepPhase,
-            correctionFactor: this.pllCorrectionFactor * 0.5, // Gentler correction for steps
-          });
-        }
-
-        console.log(
-          `🔄 Step beacon: step ${expectedStepIndex} (phase ${
-            stepPhase.toFixed(3)
-          })`,
-        );
-      }
-    } else {
-      // Not playing - cache timing but don't advance
-      this.cachedTimingForPause = {
-        cycleLength: this.receivedCycleLength,
-        stepsPerCycle: this.receivedStepsPerCycle,
-      };
-
-      console.log(
-        `⏸️ Paused heartbeat: cached timing (${this.receivedCycleLength}s cycle)`,
-      );
-
-      // Force phasor state to the received phase for new/paused synths
-      resetPhasorState(this, this.receivedPhasor ?? 0);
-    }
-
     // Update phasor worklet parameters
     if (this.phasorWorklet) {
       this.phasorWorklet.parameters.get("cycleLength").value =
         this.receivedCycleLength;
       this.phasorWorklet.parameters.get("stepsPerCycle").value =
         this.receivedStepsPerCycle;
-
-      // Control phasor playback based on global playing state
-      if (this.receivedIsPlaying) {
-        this.phasorWorklet.port.postMessage({ type: "start" });
-      } else {
-        this.phasorWorklet.port.postMessage({ type: "stop" });
-      }
     }
 
-    // Update unified synth worklet with playing state for portamento behavior
+    // Update unified synth worklet with playing state
     if (
       this.unifiedSynthNode && this.unifiedSynthNode.parameters.has("isPlaying")
     ) {
@@ -1351,39 +1236,77 @@ class SynthClient {
         this.receivedIsPlaying ? 1 : 0;
     }
 
-    // Store official timing and start look-ahead scheduler if needed
-    if (this.programNode) {
-      const periodDisplay = message.cpm
-        ? `${message.cpm} CPM`
-        : `${this.receivedCycleLength}s period`;
-      console.log(`⏰ Received phasor sync: ${periodDisplay}`);
+    // Handle based on playing state
+    if (this.receivedIsPlaying) {
+      // Playing beacon: Just cache values for UI/state, don't interfere with PHASOR_SCHEDULE
+      // The AudioParam automation is already running
 
-      // Check if timing has changed significantly
-      const newTimingConfig = {
-        cpm: message.cpm,
-        stepsPerCycle: message.stepsPerCycle,
-        cycleLength: message.cycleLength,
-        phasor: message.phasor,
+      // Note: PLL drift detection disabled because phaseParam.value
+      // returns the static base value (0) not the current animated value.
+      // Future: Get actual phase from worklet output for drift detection.
+
+      return;
+    } else {
+      // Not playing: Cancel automation and hold at specified phase
+      // Skip if already at this phase (throttle repeated updates)
+      const phaseDiff = Math.abs((this.receivedPhasor || 0) - message.phasor);
+      if (phaseDiff > 0.001) {
+        console.log(
+          `⏸️ Phasor sync (paused/stopped): holding at phase ${
+            message.phasor.toFixed(3)
+          }`,
+        );
+
+        // Cancel any running automation
+        cancelPhasorAutomation(this);
+
+        // Jump to the specified phase
+        schedulePhasorJump(this, message.phasor);
+      }
+
+      // Always update UI display and cache
+      resetPhasorState(this, message.phasor);
+
+      // Cache timing
+      this.cachedTimingForPause = {
+        cycleLength: this.receivedCycleLength,
+        stepsPerCycle: this.receivedStepsPerCycle,
       };
-
-      const timingChanged = !this.timingConfig ||
-        this.timingConfig.cycleLength !== newTimingConfig.cycleLength ||
-        this.timingConfig.stepsPerCycle !== newTimingConfig.stepsPerCycle;
-
-      // Store the new timing config
-      this.timingConfig = newTimingConfig;
     }
 
-    // Update legacy phasor worklet (if still needed)
+    // Update phasor worklet (legacy)
     this.updatePhasorWorklet();
 
-    // Apply gentle PLL correction between beacons
-    this.sendPhaseCorrection();
-
-    // Start interpolation if not already running (for phase display)
+    // Start interpolation for display if not already running
     if (!this.phasorUpdateId) {
       this.startPhasorInterpolation();
     }
+  }
+
+  handlePhasorSchedule(message) {
+    console.log("🎯 handlePhasorSchedule called");
+
+    // Store schedule info for save/load
+    this.receivedCycleLength = message.cycleLength;
+    this.receivedPhasor = message.phase;
+
+    // Estimate latency for time synchronization
+    const latencyOffset = estimateControllerLatency(this);
+
+    // Schedule the phasor ramp
+    schedulePhasorRamp(this, message, latencyOffset);
+
+    // Update phasor worklet parameters
+    if (this.phasorWorklet) {
+      this.phasorWorklet.parameters.get("cycleLength").value =
+        message.cycleLength;
+    }
+
+    console.log(
+      `📅 Received phasor schedule: phase ${message.phase.toFixed(3)} @ t=${
+        message.startTime.toFixed(3)
+      }, cycle=${message.cycleLength}s`,
+    );
   }
 
   handleProgramConfig(message) {
@@ -1515,8 +1438,8 @@ class SynthClient {
         }
       }
 
-      // Start the worklet phasor
-      this.phasorWorklet.port.postMessage({ type: "start" });
+      // Phasor is now controlled via AudioParam automation
+      // No need to send start message - wait for PHASOR_SCHEDULE from controller
 
       if (this.verbose) console.log("✅ Phasor worklet initialized");
     } catch (error) {
@@ -1607,17 +1530,11 @@ class SynthClient {
         }
       }
 
-      // Forward resolved parameters to worklet
-      if (this.voiceNode) {
-        this.voiceNode.port.postMessage({
-          type: "SET_ALL_ENV",
-          v: 1,
-          params: resolvedParams,
-        });
-        console.log(
-          `📤 Applied committed config with preserved caches to worklet`,
-        );
-      }
+      // Apply resolved parameters via AudioParams
+      applyResolvedProgram(this, resolvedParams, 0, { stageForEoc: false });
+      console.log(
+        `📤 Applied committed config with preserved caches via AudioParams`,
+      );
 
       // Clear staged config
       this.stagedConfig = {};
@@ -2211,46 +2128,111 @@ class SynthClient {
     switch (message.action) {
       case "play":
         this.isPlaying = true;
-        this.phasorWorklet.port.postMessage({ type: "start" });
+        // Phasor is controlled via AudioParam automation from controller
+        // No manual resets needed
 
         if (this.isPaused) {
           // Resume from paused position
           console.log(`🎯 Resuming from paused phase: ${this.pausedPhase}`);
           this.isPaused = false;
-        } else if (
-          this.receivedPhasor === 0.0 || this.receivedPhasor === undefined
-        ) {
-          // Starting from beginning
-          console.log(
-            "🎯 Starting from phase 0.0 - triggering immediate cycle reset",
-          );
-          this.triggerImmediateCycleReset();
         }
         break;
 
       case "pause":
         this.isPlaying = false;
-        this.phasorWorklet.port.postMessage({ type: "stop" });
-        // No need for separate envelope pausing - voice worklet handles it
+        // Cancel running ramp immediately so PHASOR_SYNC can position correctly
+        cancelPhasorAutomation(this);
         break;
 
       case "stop":
         this.isPlaying = false;
-        this.phasorWorklet.port.postMessage({ type: "stop" });
-        this.phasorWorklet.port.postMessage({ type: "reset" });
-        // No need for separate envelope stopping - voice worklet handles it
+        // Cancel automation and jump to phase 0
+        cancelPhasorAutomation(this);
+        schedulePhasorJump(this, 0);
         break;
+    }
+  }
+
+  // New Transport Command Handlers
+  handlePlay(message) {
+    console.log(
+      `▶️ PLAY command: phase ${message.phase.toFixed(3)}, startTime ${
+        message.startTime.toFixed(3)
+      }`,
+    );
+
+    this.isPlaying = true;
+
+    // Cancel any existing automation
+    cancelPhasorAutomation(this);
+
+    // Jump to the specified phase
+    schedulePhasorJump(this, message.phase);
+
+    // Cache start time if needed for future beacon timing
+    this.playStartTime = message.startTime;
+  }
+
+  handlePause(message) {
+    console.log(`⏸️ PAUSE command: phase ${message.phase.toFixed(3)}`);
+
+    this.isPlaying = false;
+
+    // Cancel automation and jump to paused phase
+    cancelPhasorAutomation(this);
+    schedulePhasorJump(this, message.phase);
+  }
+
+  handleStop(message) {
+    console.log("⏹️ STOP command");
+
+    this.isPlaying = false;
+
+    // Cancel automation and jump to phase 0
+    cancelPhasorAutomation(this);
+    schedulePhasorJump(this, 0);
+  }
+
+  handlePhasorBeacon(message) {
+    console.log(
+      `🔔 PHASOR_BEACON: startTime ${
+        message.startTime.toFixed(3)
+      }, cycleLength ${message.cycleLength}s`,
+    );
+
+    // Only process beacons when playing
+    if (!this.isPlaying) {
+      console.log("🚫 Ignoring beacon - not playing");
+      return;
+    }
+
+    // Update cached cycle length
+    this.receivedCycleLength = message.cycleLength;
+
+    // Schedule a 0→1 ramp using the beacon timing
+    const schedule = {
+      startTime: message.startTime,
+      cycleLength: message.cycleLength,
+      phase: 0, // Always start new cycle from 0
+    };
+
+    // Estimate latency for time synchronization
+    const latencyOffset = estimateControllerLatency(this);
+
+    // Schedule the phasor ramp
+    schedulePhasorRamp(this, schedule, latencyOffset);
+
+    // Update phasor worklet parameters
+    if (this.phasorWorklet) {
+      this.phasorWorklet.parameters.get("cycleLength").value =
+        message.cycleLength;
     }
   }
 
   handleJumpToEOC(message) {
     console.log("🎮 Jump to EOC / Reset");
-    if (this.phasorWorklet) {
-      this.phasorWorklet.port.postMessage({ type: "reset" });
-    }
-
-    // Immediately trigger cycle reset to start envelopes
-    this.triggerImmediateCycleReset();
+    // Controller will send a new PHASOR_SCHEDULE to handle the jump
+    // No manual intervention needed
   }
 
   triggerImmediateCycleReset() {
@@ -2476,35 +2458,29 @@ class SynthClient {
       console.log("🧩 Applying resolved scene state:", resolvedState);
     }
 
-    // Build SET_ALL_ENV payload for voice parameters
-    const voiceParams = {};
+    // Build resolved params for AudioParam scheduling
+    const resolved = {};
 
     for (const [paramName, value] of Object.entries(resolvedState)) {
       const v = Number.isFinite(value) ? value : 0;
 
-      // All parameters go to voice worklet via SET_ALL_ENV
-      voiceParams[paramName] = {
+      resolved[paramName] = {
         startValue: v,
         endValue: v,
         interpolation: "step",
-        portamentoMs: 15, // Convert 0.015s to ms
       };
       if (this.verbose) {
-        console.log(`🎚️ Scene apply: ${paramName} -> ${v} (via SET_ALL_ENV)`);
+        console.log(`🎚️ Scene apply: ${paramName} -> ${v} (via AudioParams)`);
       }
     }
 
-    // Send all voice parameters in a single SET_ALL_ENV message
-    if (this.voiceNode && Object.keys(voiceParams).length > 0) {
-      this.voiceNode.port.postMessage({
-        type: "SET_ALL_ENV",
-        v: 1,
-        params: voiceParams,
-      });
+    // Apply via AudioParam scheduling
+    if (Object.keys(resolved).length > 0) {
+      applyResolvedProgram(this, resolved, 15);
       if (this.verbose) {
         console.log(
-          "📦 SET_ALL_ENV sent for scene state with parameters:",
-          Object.keys(voiceParams),
+          "📦 AudioParam scheduling applied for scene state with parameters:",
+          Object.keys(resolved),
         );
       }
     }
@@ -2524,35 +2500,29 @@ class SynthClient {
       console.log("🧩 Applying resolved scene values:", resolvedState);
     }
 
-    // Build SET_ALL_ENV payload for voice parameters
-    const voiceParams = {};
+    // Build resolved params for AudioParam scheduling
+    const resolved = {};
 
     for (const [paramName, value] of Object.entries(resolvedState)) {
       const v = Number.isFinite(value) ? value : 0;
 
-      // All parameters go to voice worklet via SET_ALL_ENV
-      voiceParams[paramName] = {
+      resolved[paramName] = {
         startValue: v,
         endValue: v,
         interpolation: "step",
-        portamentoMs: 15, // Convert 0.015s to ms
       };
       if (this.verbose) {
-        console.log(`🎚️ Scene apply: ${paramName} -> ${v} (via SET_ALL_ENV)`);
+        console.log(`🎚️ Scene apply: ${paramName} -> ${v} (via AudioParams)`);
       }
     }
 
-    // Send all voice parameters in a single SET_ALL_ENV message
-    if (this.voiceNode && Object.keys(voiceParams).length > 0) {
-      this.voiceNode.port.postMessage({
-        type: "SET_ALL_ENV",
-        v: 1,
-        params: voiceParams,
-      });
+    // Apply via AudioParam scheduling
+    if (Object.keys(resolved).length > 0) {
+      applyResolvedProgram(this, resolved, 15);
       if (this.verbose) {
         console.log(
-          "📦 SET_ALL_ENV sent for resolved scene values with parameters:",
-          Object.keys(voiceParams),
+          "📦 AudioParam scheduling applied for resolved scene values with parameters:",
+          Object.keys(resolved),
         );
       }
     }

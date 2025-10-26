@@ -1,11 +1,19 @@
 /**
  * Phasor AudioWorklet Processor
  * Generates sample-accurate phasor (0.0 to 1.0 sawtooth) for timing synchronization
+ * Now driven by AudioParam automation instead of accumulator
  */
 
 class PhasorProcessor extends AudioWorkletProcessor {
   static get parameterDescriptors() {
     return [
+      {
+        name: "phase",
+        defaultValue: 0.0,
+        minValue: 0.0,
+        maxValue: 1.0,
+        automationRate: "a-rate", // Audio-rate for sample-accurate automation
+      },
       {
         name: "cycleLength",
         defaultValue: 2.0,
@@ -33,42 +41,26 @@ class PhasorProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
 
-    // Phasor state
-    this.phase = 0.0;
-    this.isRunning = false;
+    // Previous phase for edge detection
+    this.prevPhase = 0.0;
 
     // Step tracking for rhythmic events
     this.lastStep = -1;
     this.currentStep = 0;
 
-    // Listen for messages from main thread
+    // Listen for messages from main thread (minimal now)
     this.port.onmessage = (event) => {
-      const { type, ...params } = event.data;
+      const { type } = event.data;
 
+      // Most control is now via AudioParam automation
+      // Keep minimal message handling for debugging/status
       switch (type) {
-        case "start":
-          this.isRunning = true;
-          break;
-
-        case "stop":
-          this.isRunning = false;
-          break;
-
-        case "reset":
-          this.phase = 0.0;
-          // Only reset phase - don't automatically trigger cycle-reset
-          // Cycle resets are now handled explicitly by transport controls
-          break;
-
-        case "set-phase":
-          this.phase = params.phase;
-          break;
-
-        case "phase-correction":
-          this.applyPhaseCorrection(
-            params.targetPhase,
-            params.correctionFactor,
-          );
+        case "status":
+          // Report current state if needed
+          this.port.postMessage({
+            type: "status-response",
+            phase: this.prevPhase,
+          });
           break;
       }
     };
@@ -78,36 +70,13 @@ class PhasorProcessor extends AudioWorkletProcessor {
     this.updateInterval = 64; // Send update every 64 samples (~1.3ms at 48kHz) for smoother display
   }
 
-  applyPhaseCorrection(targetPhase, correctionFactor = 0.1) {
-    // Calculate phase error (accounting for wrap-around)
-    let phaseError = targetPhase - this.phase;
-
-    // Handle wrap-around cases
-    if (phaseError > 0.5) {
-      phaseError -= 1.0; // Target is behind, we're ahead
-    } else if (phaseError < -0.5) {
-      phaseError += 1.0; // Target is ahead, we're behind
-    }
-
-    // Apply gentle correction (PLL behavior)
-    const correction = phaseError * correctionFactor;
-    this.phase += correction;
-
-    // Ensure phase stays in [0, 1) range
-    if (this.phase >= 1.0) {
-      this.phase -= 1.0;
-    } else if (this.phase < 0.0) {
-      this.phase += 1.0;
-    }
-  }
-
-  onStepTrigger(stepNumber, stepsPerCycle) {
+  onStepTrigger(stepNumber, stepsPerCycle, phase) {
     // Send step trigger event to main thread
     this.port.postMessage({
       type: "step-trigger",
       step: stepNumber,
       stepsPerCycle: stepsPerCycle,
-      phase: this.phase,
+      phase: phase,
     });
   }
 
@@ -117,60 +86,61 @@ class PhasorProcessor extends AudioWorkletProcessor {
     const stepsPerCycle = parameters.stepsPerCycle[0];
     const enableRhythm = parameters.enableRhythm[0] > 0.5;
 
-    // Calculate phase increment per sample (0 when not running)
-    const phaseIncrement = this.isRunning
-      ? 1.0 / (cycleLength * sampleRate)
-      : 0.0;
+    // Get phase AudioParam values (a-rate, so one per sample)
+    const phaseValues = parameters.phase;
 
     for (let i = 0; i < bufferSize; i++) {
-      // Output current phase BEFORE incrementing for this sample
+      // Get current phase from AudioParam
+      const currentPhase = phaseValues.length > 1
+        ? phaseValues[i]
+        : phaseValues[0];
+
+      // Apply modulo to keep in [0, 1) range
+      const wrappedPhase = ((currentPhase % 1) + 1) % 1;
+
+      // Output wrapped phase
       if (outputs[0][0]) {
-        outputs[0][0][i] = this.phase;
+        outputs[0][0][i] = wrappedPhase;
       }
 
-      // Update phase only when running
-      if (this.isRunning) {
-        this.phase += phaseIncrement;
+      // Detect cycle boundary (phase wrap from near 1 to near 0)
+      if (this.prevPhase > 0.9 && wrappedPhase < 0.1) {
+        console.log(
+          `🔄 CYCLE BOUNDARY: ${this.prevPhase.toFixed(6)} → ${
+            wrappedPhase.toFixed(6)
+          } at sample ${i}/${bufferSize}`,
+        );
 
-        // Wrap around at 1.0 and send cycle reset
-        if (this.phase >= 1.0) {
-          const oldPhase = this.phase;
-          this.phase -= 1.0;
+        // Send cycle reset message immediately
+        this.port.postMessage({
+          type: "cycle-reset",
+          sampleIndex: i,
+          blockSize: bufferSize,
+          cycleLength: cycleLength,
+        });
+      }
 
-          console.log(
-            `🔄 PHASOR RESET: ${oldPhase.toFixed(6)} → ${
-              this.phase.toFixed(6)
-            } at sample ${i}/${bufferSize}`,
-          );
+      // Step boundary detection
+      if (enableRhythm) {
+        this.currentStep = Math.floor(wrappedPhase * stepsPerCycle);
 
-          // Send cycle reset message immediately
-          this.port.postMessage({
-            type: "cycle-reset",
-            sampleIndex: i,
-            blockSize: bufferSize,
-            cycleLength: cycleLength,
-          });
-        }
-
-        // Step boundary detection
-        if (enableRhythm) {
-          this.currentStep = Math.floor(this.phase * stepsPerCycle);
-
-          // Trigger on step boundary
-          if (this.currentStep !== this.lastStep) {
-            this.onStepTrigger(this.currentStep, stepsPerCycle);
-            this.lastStep = this.currentStep;
-          }
+        // Trigger on step boundary
+        if (this.currentStep !== this.lastStep) {
+          this.onStepTrigger(this.currentStep, stepsPerCycle, wrappedPhase);
+          this.lastStep = this.currentStep;
         }
       }
+
+      // Store for next iteration
+      this.prevPhase = wrappedPhase;
     }
 
-    // Periodically send phasor value back to main thread
+    // Periodically send phasor value back to main thread for display
     this.updateCounter += bufferSize;
     if (this.updateCounter >= this.updateInterval) {
       this.port.postMessage({
         type: "phasor-update",
-        phase: this.phase,
+        phase: this.prevPhase,
         cycleLength: cycleLength,
       });
       this.updateCounter = 0;

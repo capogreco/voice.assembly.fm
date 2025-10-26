@@ -31,6 +31,10 @@ export function initializeProperties(ctrl) {
   /** @type {boolean} */
   ctrl.synthesisActive = false;
 
+  // Audio context for phasor scheduling
+  /** @type {AudioContext|null} */
+  ctrl.audioContext = null;
+
   // Phasor state
   ctrl.phasor = 0.0; // Current phasor position (0.0 to 1.0)
   ctrl.isPlaying = false; // Global transport state - starts paused

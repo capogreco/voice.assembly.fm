@@ -186,7 +186,27 @@ export function broadcastSubParameterUpdate(
 }
 
 /**
- * Broadcast phasor sync message
+ * Broadcast phasor schedule message (new AudioParam-based approach)
+ * @param {Object} star - WebRTC star instance
+ * @param {number} startTime - Start time in AudioContext time
+ * @param {number} cycleLength - Cycle length in seconds
+ * @param {number} phase - Starting phase (0-1)
+ */
+export function broadcastPhasorSchedule(star, startTime, cycleLength, phase) {
+  if (!star) return;
+
+  const message = MessageBuilder.phasorSchedule(startTime, cycleLength, phase);
+  const sent = star.broadcastToType("synth", message, "sync");
+
+  console.log(
+    `📅 Phasor schedule broadcast: phase ${phase.toFixed(3)} @ t=${
+      startTime.toFixed(3)
+    } to ${sent} synths`,
+  );
+}
+
+/**
+ * Broadcast phasor sync message (legacy, kept for compatibility)
  * @param {Object} star - WebRTC star instance
  * @param {number} phasor - Current phasor value
  * @param {number} stepsPerCycle - Steps per cycle

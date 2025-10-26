@@ -17,7 +17,11 @@ import {
 } from "../../src/common/message-protocol.js";
 import { initializeApplication } from "./app/init.js";
 import { createDefaultState, createPresetConfigs } from "./state/defaults.js";
-import { parseSinString, formatSinArray, validateSinString } from "./utils/sin.js";
+import {
+  formatSinArray,
+  parseSinString,
+  validateSinString,
+} from "./utils/sin.js";
 import {
   clearAllSceneBanks,
   clearSceneBank,
@@ -34,6 +38,7 @@ import {
 import {
   broadcastControlState as broadcastControlStateHelper,
   broadcastPhasor as broadcastPhasorHelper,
+  broadcastPhasorSchedule,
   broadcastSingleParameter as broadcastSingleParameterHelper,
   broadcastSubParameterUpdate as broadcastSubParameterUpdateHelper,
 } from "./network/broadcast.js";
@@ -917,7 +922,8 @@ class ControlClient {
       if (!validation.valid) {
         this.log(
           "Invalid " + label + ': "' + el.value +
-            '" - ' + (validation.error || 'use numbers, commas, and ranges like 1-6'),
+            '" - ' +
+            (validation.error || "use numbers, commas, and ranges like 1-6"),
           "error",
         );
       }
@@ -950,7 +956,9 @@ class ControlClient {
     // Start generator - parse SIN strings to arrays
     if (freqState.startValueGenerator?.type === "periodic") {
       const startNumsEl = document.getElementById("frequency-start-numerators");
-      const startDensEl = document.getElementById("frequency-start-denominators");
+      const startDensEl = document.getElementById(
+        "frequency-start-denominators",
+      );
       const startNumBeh =
         (document.getElementById("frequency-start-numerators-behavior") |
           HTMLSelectElement |
@@ -959,29 +967,33 @@ class ControlClient {
         (document.getElementById("frequency-start-denominators-behavior") |
           HTMLSelectElement |
           null)?.value;
-      
+
       // Parse SIN strings to arrays
       if (startNumsEl?.value) {
         try {
           const numsArray = parseSinString(startNumsEl.value);
           freqState.startValueGenerator.numerators = numsArray;
-          freqState.startValueGenerator.numeratorsSin = startNumsEl.value.trim(); // Keep original for UI
-          console.log(`🎲 Parsed start numerators "${startNumsEl.value}" -> [${numsArray}]`);
+          freqState.startValueGenerator.numeratorsSin = startNumsEl.value
+            .trim(); // Keep original for UI
+          console.log(
+            `🎲 Parsed start numerators "${startNumsEl.value}" -> [${numsArray}]`,
+          );
         } catch (e) {
           // Validation already handled above, keep existing value
         }
       }
-      
+
       if (startDensEl?.value) {
         try {
           const densArray = parseSinString(startDensEl.value);
           freqState.startValueGenerator.denominators = densArray;
-          freqState.startValueGenerator.denominatorsSin = startDensEl.value.trim();
+          freqState.startValueGenerator.denominatorsSin = startDensEl.value
+            .trim();
         } catch (e) {
           // Validation already handled above
         }
       }
-      
+
       freqState.startValueGenerator.numeratorBehavior = startNumBeh ??
         freqState.startValueGenerator.numeratorBehavior;
       freqState.startValueGenerator.denominatorBehavior = startDenBeh ??
@@ -1003,7 +1015,7 @@ class ControlClient {
         (document.getElementById("frequency-end-denominators-behavior") |
           HTMLSelectElement |
           null)?.value;
-      
+
       // Parse SIN strings to arrays
       if (endNumsEl?.value) {
         try {
@@ -1014,7 +1026,7 @@ class ControlClient {
           // Validation already handled above
         }
       }
-      
+
       if (endDensEl?.value) {
         try {
           const densArray = parseSinString(endDensEl.value);
@@ -1024,7 +1036,7 @@ class ControlClient {
           // Validation already handled above
         }
       }
-      
+
       freqState.endValueGenerator.numeratorBehavior = endNumBeh ??
         freqState.endValueGenerator.numeratorBehavior;
       freqState.endValueGenerator.denominatorBehavior = endDenBeh ??
@@ -1371,7 +1383,7 @@ class ControlClient {
         // Find latest boundary divisible by stride (handle large jumps)
         const latestStridedStep = Math.floor(currStepIndex / stride) * stride;
         if (
-          latestStridedStep >= prevStepIndex &&
+          latestStridedStep > prevStepIndex &&
           latestStridedStep <= currStepIndex
         ) {
           this.sendStepBeacon(latestStridedStep);
@@ -1421,28 +1433,40 @@ class ControlClient {
   sendStepBeacon(stepIndex) {
     if (!this.star) return;
 
-    const boundaryPhasor = stepIndex / this.stepsPerCycle;
-    // Use helper for phasor broadcast
-    broadcastPhasorHelper(
-      this.star,
-      boundaryPhasor,
-      this.stepsPerCycle,
-      this.cycleLength,
-      this.isPlaying,
-      "step",
-      performance.now() / 1000,
-      this.lastPausedBeaconAt,
-    );
+    // Send PHASOR_BEACON at EOC only
+    if (stepIndex === 0 && this.isPlaying && this.audioContext) {
+      // Schedule next cycle with lookahead
+      const lookaheadMs = 100; // 100ms lookahead for network latency
+      const startTime = this.audioContext.currentTime + (lookaheadMs / 1000);
+
+      const beaconMessage = MessageBuilder.phasorBeacon(
+        startTime,
+        this.cycleLength,
+      );
+      this.star.broadcastToType("synth", beaconMessage, "control");
+
+      console.log(
+        `🔔 Sent PHASOR_BEACON: startTime ${
+          startTime.toFixed(3)
+        }, cycleLength ${this.cycleLength}s`,
+      );
+    }
+
     this.lastBroadcastTime = performance.now() / 1000;
   }
 
   broadcastPhasor(currentTime, reason = "continuous", explicitPhasor = null) {
     if (!this.star) return;
 
+    // Don't send PHASOR_SYNC while playing - PHASOR_SCHEDULE handles it
+    if (this.isPlaying && reason === "continuous") {
+      return;
+    }
+
     // Determine phasor value to use
     const phasorToSend = explicitPhasor !== null ? explicitPhasor : this.phasor;
 
-    // Use helper for phasor broadcast
+    // Use helper for phasor broadcast (for pause/stop/transport events)
     this.lastPausedBeaconAt = broadcastPhasorHelper(
       this.star,
       phasorToSend,
@@ -1588,13 +1612,20 @@ class ControlClient {
   }
 
   // Transport control methods
-  handleTransport(action) {
+  async handleTransport(action) {
     console.log("Transport action: " + action);
 
     const wasAtZero = this.phasor === 0.0;
 
     switch (action) {
       case "play":
+        // Create audio context on first play if needed
+        if (!this.audioContext) {
+          this.audioContext = new AudioContext();
+          await this.audioContext.resume();
+          console.log("🎵 Created AudioContext for phasor scheduling");
+        }
+
         this.isPlaying = true;
         this.lastPhasorTime = performance.now() / 1000.0; // Reset time tracking
         this.log("Global phasor started", "info");
@@ -1610,22 +1641,35 @@ class ControlClient {
           }
         }
 
-        // Fire EOC event if starting from 0.0 (reset position or initial load)
-        if (wasAtZero && this.star) {
-          console.log("🔄 Triggering EOC event - playing from reset position");
-          const eocMessage = MessageBuilder.jumpToEOC();
-          this.star.broadcastToType("synth", eocMessage, "control");
-
-          // Send bootstrap beacon immediately (ignore stride)
-          this.sendStepBeacon(Math.floor(this.phasor * this.stepsPerCycle));
+        // Send PLAY command
+        if (this.star) {
+          const playMessage = MessageBuilder.play(
+            this.phasor,
+            this.audioContext.currentTime,
+          );
+          this.star.broadcastToType("synth", playMessage, "control");
+          console.log(
+            `▶️ Sent PLAY command from phase ${this.phasor.toFixed(3)}`,
+          );
         }
         break;
+
       case "pause":
         this.isPlaying = false;
         // Clear all pending changes when paused (changes apply immediately when paused)
         this.clearAllPendingChanges();
         this.log("Global phasor paused", "info");
+
+        // Send PAUSE command
+        if (this.star) {
+          const pauseMessage = MessageBuilder.pause(this.phasor);
+          this.star.broadcastToType("synth", pauseMessage, "control");
+          console.log(
+            `⏸️ Sent PAUSE command at phase ${this.phasor.toFixed(3)}`,
+          );
+        }
         break;
+
       case "stop":
         this.isPlaying = false;
         this.phasor = 0.0;
@@ -1634,25 +1678,18 @@ class ControlClient {
         this.clearAllPendingChanges();
         this.updatePhasorDisplay();
         this.log("Global phasor stopped and reset", "info");
+
+        // Send STOP command
+        if (this.star) {
+          const stopMessage = MessageBuilder.stop();
+          this.star.broadcastToType("synth", stopMessage, "control");
+          console.log("⏹️ Sent STOP command");
+        }
         break;
     }
 
     // Update play/pause button text
     this.updatePlayPauseButton();
-
-    // Send immediate transport message to synths for instant response
-    if (this.star) {
-      const transportMessage = MessageBuilder.transport(action);
-      this.star.broadcastToType("synth", transportMessage, "control");
-    }
-
-    // Broadcast current phasor state immediately with new playing state
-    this.broadcastPhasor(performance.now() / 1000.0, "transport");
-
-    // Broadcast control state to ensure synthesis state is updated
-    if (action === "play") {
-      this.broadcastControlState();
-    }
   }
 
   updatePlayPauseButton() {
