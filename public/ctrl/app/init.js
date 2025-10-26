@@ -57,6 +57,11 @@ export function initializeProperties(ctrl) {
   // Beacon stride constants
   ctrl.MIN_BEACON_INTERVAL_SEC = 0.2;
 
+  // Phase scrubbing state
+  ctrl.isScrubbing = false; // Track if user is scrubbing the phase bar
+  ctrl.pendingScrubPhase = null; // Phase value pending scrub broadcast
+  ctrl.scrubAnimationId = null; // RAF handle for scrub throttling
+
   // ES-8 Integration
   ctrl.audioContext = null; // AudioContext for ES-8 CV output
   ctrl.es8Enabled = false; // Enable/disable ES-8 output

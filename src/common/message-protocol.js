@@ -28,6 +28,7 @@ export const MessageTypes = {
   PLAY: "play",
   PAUSE: "pause",
   STOP: "stop",
+  SCRUB_PHASE: "scrub-phase",
 
   // System Control
   CALIBRATION_MODE: "calibration-mode",
@@ -234,6 +235,15 @@ export class MessageBuilder {
       cycleLength,
       phase,
       stepsPerCycle,
+      timestamp: performance.now(),
+    };
+  }
+
+  static scrubPhase(phase, portamentoMs) {
+    return {
+      type: MessageTypes.SCRUB_PHASE,
+      phase,
+      portamentoMs,
       timestamp: performance.now(),
     };
   }
@@ -447,6 +457,23 @@ export function validateMessage(message) {
         if (message.stepsPerCycle <= 0) {
           throw new Error("PHASOR_BEACON stepsPerCycle must be positive");
         }
+      }
+      break;
+
+    case MessageTypes.SCRUB_PHASE:
+      if (
+        typeof message.phase !== "number" ||
+        typeof message.portamentoMs !== "number"
+      ) {
+        throw new Error(
+          "SCRUB_PHASE missing required fields: phase, portamentoMs",
+        );
+      }
+      if (message.phase < 0 || message.phase > 1) {
+        throw new Error("SCRUB_PHASE phase must be in range [0, 1]");
+      }
+      if (message.portamentoMs < 0) {
+        throw new Error("SCRUB_PHASE portamentoMs must be non-negative");
       }
       break;
   }

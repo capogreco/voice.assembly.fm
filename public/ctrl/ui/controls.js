@@ -198,6 +198,33 @@ export function setupMusicalControls(ctrl) {
     });
   }
 
+  // Phase bar scrubbing (only when paused)
+  if (ctrl.elements.phasorBar && ctrl.elements.phasorBar.parentElement) {
+    const phasorContainer = ctrl.elements.phasorBar.parentElement;
+
+    phasorContainer.addEventListener("pointerdown", (e) => {
+      ctrl.startScrubbing(e);
+      phasorContainer.setPointerCapture(e.pointerId);
+    });
+
+    phasorContainer.addEventListener("pointermove", (e) => {
+      ctrl.updateScrubbing(e);
+    });
+
+    phasorContainer.addEventListener("pointerup", (e) => {
+      ctrl.stopScrubbing(e);
+      phasorContainer.releasePointerCapture(e.pointerId);
+    });
+
+    phasorContainer.addEventListener("pointercancel", (e) => {
+      ctrl.stopScrubbing(e);
+    });
+
+    // Prevent text selection during scrub
+    phasorContainer.style.userSelect = "none";
+    phasorContainer.style.touchAction = "none";
+  }
+
   if (ctrl.elements.resetBtn) {
     ctrl.elements.resetBtn.addEventListener("click", () => {
       ctrl.handleReset();

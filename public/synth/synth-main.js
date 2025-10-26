@@ -528,6 +528,10 @@ class SynthClient {
         this.handlePhasorBeacon(message);
         break;
 
+      case MessageTypes.SCRUB_PHASE:
+        this.handleScrubPhase(message);
+        break;
+
       default:
         break;
     }
@@ -2100,6 +2104,69 @@ class SynthClient {
           message.stepsPerCycle;
       }
     }
+  }
+
+  handleScrubPhase(message) {
+    console.log(
+      `🎯 SCRUB_PHASE: phase ${
+        message.phase.toFixed(3)
+      }, portamento ${message.portamentoMs}ms`,
+    );
+
+    // Only allow scrubbing when paused
+    if (this.isPlaying || this.receivedIsPlaying) {
+      console.log("🚫 Ignoring scrub - currently playing");
+      return;
+    }
+
+    // Validate message content defensively
+    if (
+      typeof message.phase !== "number" || message.phase < 0 ||
+      message.phase > 1
+    ) {
+      console.warn("🚫 Invalid scrub phase:", message.phase);
+      return;
+    }
+    if (typeof message.portamentoMs !== "number" || message.portamentoMs < 0) {
+      console.warn("🚫 Invalid portamento time:", message.portamentoMs);
+      return;
+    }
+
+    const now = this.audioContext.currentTime;
+    const targetPhase = message.phase;
+    const portamentoSeconds = message.portamentoMs / 1000;
+
+    // Cancel existing automation and schedule smooth glide
+    cancelPhasorAutomation(this);
+
+    // Schedule glide to target phase
+    if (this.phasorWorklet) {
+      const phaseParam = this.phasorWorklet.parameters.get("phase");
+      if (phaseParam) {
+        // Get current phase value and schedule ramp
+        const currentPhase = phaseParam.value;
+        phaseParam.cancelScheduledValues(now);
+        phaseParam.setValueAtTime(currentPhase, now);
+        phaseParam.linearRampToValueAtTime(
+          targetPhase,
+          now + portamentoSeconds,
+        );
+
+        console.log(
+          `🎯 Scheduled scrub glide: ${currentPhase.toFixed(3)} → ${
+            targetPhase.toFixed(3)
+          } over ${portamentoSeconds.toFixed(3)}s`,
+        );
+      }
+    }
+
+    // Update internal state
+    this.receivedPhasor = targetPhase;
+    this.pausedPhase = targetPhase;
+    this.lastPhasorMessage = performance.now();
+
+    // Update UI display
+    this.updatePhaseDisplay();
   }
 
   handleJumpToEOC(message) {

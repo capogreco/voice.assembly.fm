@@ -1682,6 +1682,93 @@ class ControlClient {
     }
   }
 
+  // Phase scrubbing methods
+  mapPointerToPhase(event) {
+    if (!this.elements.phasorBar) return 0;
+
+    const rect = this.elements.phasorBar.parentElement.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const width = rect.width;
+    const phase = Math.max(0, Math.min(1, x / width));
+    return phase;
+  }
+
+  updateScrubPhase(phase) {
+    // Update local phasor for UI
+    this.phasor = phase;
+    this.updatePhasorDisplay();
+
+    // Store for broadcasting
+    this.pendingScrubPhase = phase;
+  }
+
+  broadcastScrubPhase(phase) {
+    if (!this.star) return;
+
+    // Use fixed 0.5ms portamento for scrubbing
+    const portamentoMs = 0.5;
+
+    const message = MessageBuilder.scrubPhase(phase, portamentoMs);
+    this.star.broadcastToType("synth", message, "control");
+
+    console.log(
+      `🎯 Sent SCRUB_PHASE: ${phase.toFixed(3)} with ${
+        portamentoMs.toFixed(1)
+      }ms portamento`,
+    );
+  }
+
+  startScrubbing(event) {
+    // Only allow scrubbing when paused
+    if (this.isPlaying) return;
+
+    this.isScrubbing = true;
+    const phase = this.mapPointerToPhase(event);
+    this.updateScrubPhase(phase);
+    this.broadcastScrubPhase(phase);
+
+    // Start RAF loop for smooth broadcasting
+    const scrubLoop = () => {
+      if (this.isScrubbing && this.pendingScrubPhase !== null) {
+        this.broadcastScrubPhase(this.pendingScrubPhase);
+        this.scrubAnimationId = requestAnimationFrame(scrubLoop);
+      }
+    };
+    this.scrubAnimationId = requestAnimationFrame(scrubLoop);
+
+    // Prevent text selection
+    event.preventDefault();
+  }
+
+  updateScrubbing(event) {
+    if (!this.isScrubbing) return;
+
+    const phase = this.mapPointerToPhase(event);
+    this.updateScrubPhase(phase);
+
+    // Prevent text selection
+    event.preventDefault();
+  }
+
+  stopScrubbing(event) {
+    if (!this.isScrubbing) return;
+
+    // Send final scrub update
+    const phase = this.mapPointerToPhase(event);
+    this.updateScrubPhase(phase);
+    this.broadcastScrubPhase(phase);
+
+    // Clean up
+    this.isScrubbing = false;
+    this.pendingScrubPhase = null;
+    if (this.scrubAnimationId) {
+      cancelAnimationFrame(this.scrubAnimationId);
+      this.scrubAnimationId = null;
+    }
+
+    console.log(`🎯 Scrubbing finished at phase ${phase.toFixed(3)}`);
+  }
+
   updateParameterVisualFeedback(paramName) {
     // Find the parameter label and add/remove asterisk for pending changes
     const paramLabels = document.querySelectorAll(".param-label");
