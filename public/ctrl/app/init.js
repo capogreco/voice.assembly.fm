@@ -43,9 +43,6 @@ export function initializeProperties(ctrl) {
   ctrl.cycleLength = 2.0; // Seconds per cycle (same)
   ctrl.lastPhasorTime = 0; // For delta time calculation
   ctrl.phasorUpdateId = null; // RequestAnimationFrame ID
-  ctrl.lastBroadcastTime = 0; // For phasor broadcast rate limiting
-  ctrl.phasorBroadcastRate = 10; // Hz - legacy (now EOC-only)
-  ctrl.lastPausedHeartbeat = 0; // Track paused heartbeat timing
 
   // EOC-staged timing changes
   ctrl.pendingPeriodSec = null; // Pending period change
@@ -56,7 +53,6 @@ export function initializeProperties(ctrl) {
   ctrl.linkStepsToPeriod = true; // Auto-compute steps from period
   ctrl.currentStepIndex = 0; // Track current step for boundary detection
   ctrl.previousStepIndex = 0; // For detecting step transitions
-  ctrl.lastPausedBeaconAt = 0; // Track last paused beacon time
 
   // Beacon stride constants
   ctrl.MIN_BEACON_INTERVAL_SEC = 0.2;

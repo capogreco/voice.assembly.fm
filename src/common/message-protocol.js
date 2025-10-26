@@ -21,10 +21,7 @@ export const MessageTypes = {
   PARAM_APPLIED: "param-applied",
 
   // Timing Control
-  PHASOR_SYNC: "phasor-sync",
-  PHASOR_SCHEDULE: "phasor-schedule",
   PHASOR_BEACON: "phasor-beacon",
-  TRANSPORT: "transport",
   JUMP_TO_EOC: "jump-to-eoc",
 
   // New Transport Commands
@@ -81,36 +78,6 @@ export class MessageBuilder {
       vibratoRate: params.vibratoRate,
       synthesisActive: params.synthesisActive,
       portamentoTime: params.portamentoTime,
-      timestamp: performance.now(),
-    };
-  }
-
-  static phasorSync(phasor, cpm, stepsPerCycle, cycleLength, isPlaying = true) {
-    return {
-      type: MessageTypes.PHASOR_SYNC,
-      phasor,
-      cpm,
-      stepsPerCycle,
-      cycleLength,
-      isPlaying,
-      timestamp: performance.now(),
-    };
-  }
-
-  static phasorSchedule(startTime, cycleLength, phase = 0) {
-    return {
-      type: MessageTypes.PHASOR_SCHEDULE,
-      startTime,
-      cycleLength,
-      phase,
-      timestamp: performance.now(),
-    };
-  }
-
-  static transport(action) {
-    return {
-      type: MessageTypes.TRANSPORT,
-      action,
       timestamp: performance.now(),
     };
   }
@@ -260,11 +227,13 @@ export class MessageBuilder {
     };
   }
 
-  static phasorBeacon(startTime, cycleLength) {
+  static phasorBeacon(startTime, cycleLength, phase = 0, stepsPerCycle = null) {
     return {
       type: MessageTypes.PHASOR_BEACON,
       startTime,
       cycleLength,
+      phase,
+      stepsPerCycle,
       timestamp: performance.now(),
     };
   }
@@ -364,71 +333,6 @@ export function validateMessage(message) {
       }
       break;
 
-    case MessageTypes.PHASOR_SCHEDULE:
-      if (
-        typeof message.startTime !== "number" ||
-        typeof message.cycleLength !== "number" ||
-        typeof message.phase !== "number"
-      ) {
-        throw new Error(
-          "PHASOR_SCHEDULE missing required fields: startTime, cycleLength, phase",
-        );
-      }
-      if (message.phase < 0 || message.phase >= 1) {
-        throw new Error("PHASOR_SCHEDULE phase must be in range [0, 1)");
-      }
-      break;
-
-    case MessageTypes.PHASOR_SYNC:
-      if (
-        typeof message.phasor !== "number" ||
-        typeof message.stepsPerCycle !== "number" ||
-        typeof message.cycleLength !== "number" ||
-        typeof message.isPlaying !== "boolean"
-      ) {
-        throw new Error(
-          "PHASOR_SYNC missing required fields: phasor, stepsPerCycle, cycleLength, isPlaying",
-        );
-      }
-
-      // For scrubbing, require both scrubbing and scrubMs
-      if (
-        !message.isPlaying && message.scrubbing &&
-        typeof message.scrubMs !== "number"
-      ) {
-        throw new Error("PHASOR_SYNC scrubbing mode requires scrubMs field");
-      }
-
-      // Reject unknown fields
-      const allowedFields = [
-        "type",
-        "timestamp",
-        "phasor",
-        "cpm",
-        "stepsPerCycle",
-        "cycleLength",
-        "isPlaying",
-        "scrubbing",
-        "scrubMs",
-      ];
-      for (const key of Object.keys(message)) {
-        if (!allowedFields.includes(key)) {
-          throw new Error(`PHASOR_SYNC contains unknown field: ${key}`);
-        }
-      }
-      break;
-
-    case MessageTypes.TRANSPORT:
-      if (
-        typeof message.action !== "string" ||
-        !["play", "pause", "stop"].includes(message.action)
-      ) {
-        throw new Error(
-          "Transport message must have action: play, pause, or stop",
-        );
-      }
-      break;
-
     case MessageTypes.JUMP_TO_EOC:
       // No additional fields required
       break;
@@ -515,6 +419,34 @@ export function validateMessage(message) {
         typeof message.currentPhase !== "number"
       ) {
         throw new Error("Unified param update message missing required fields");
+      }
+      break;
+
+    case MessageTypes.PHASOR_BEACON:
+      if (
+        typeof message.startTime !== "number" ||
+        typeof message.cycleLength !== "number" ||
+        typeof message.phase !== "number"
+      ) {
+        throw new Error(
+          "PHASOR_BEACON missing required fields: startTime, cycleLength, phase",
+        );
+      }
+      if (message.phase < 0 || message.phase >= 1) {
+        throw new Error("PHASOR_BEACON phase must be in range [0, 1)");
+      }
+      if (
+        message.stepsPerCycle !== undefined &&
+        message.stepsPerCycle !== null
+      ) {
+        if (typeof message.stepsPerCycle !== "number") {
+          throw new Error(
+            "PHASOR_BEACON stepsPerCycle must be a number if set",
+          );
+        }
+        if (message.stepsPerCycle <= 0) {
+          throw new Error("PHASOR_BEACON stepsPerCycle must be positive");
+        }
       }
       break;
   }

@@ -113,7 +113,7 @@ class SynthClient {
     this.receivedBpm = 120;
     this.receivedBeatsPerCycle = 4;
     this.receivedCycleLength = 2.0;
-    this.receivedStepsPerCycle = 16; // Default until first PHASOR_SYNC
+    this.receivedStepsPerCycle = 16; // Default until first PHASOR_BEACON
     this.receivedCpm = 30; // Default cycles per minute
     this.lastPhasorMessage = 0;
     this.phasorRate = 0.5; // Phasor increment per second (1.0 / cycleLength)
@@ -477,14 +477,6 @@ class SynthClient {
         this.handleUnifiedParamUpdate(message);
         break;
 
-      case MessageTypes.PHASOR_SYNC:
-        this.handlePhasorSync(message);
-        break;
-
-      case MessageTypes.PHASOR_SCHEDULE:
-        this.handlePhasorSchedule(message);
-        break;
-
       case MessageTypes.PROGRAM:
         this.handleProgramConfig(message);
         break;
@@ -514,10 +506,6 @@ class SynthClient {
 
       case MessageTypes.CLEAR_SCENE:
         this.clearBank(message.memoryLocation);
-        break;
-
-      case MessageTypes.TRANSPORT:
-        this.handleTransport(message);
         break;
 
       case MessageTypes.JUMP_TO_EOC:
@@ -1206,109 +1194,6 @@ class SynthClient {
   //   // Method removed - randomization now handled in program worklet
   // }
 
-  handlePhasorSync(message) {
-    // Cache received values for state tracking
-    this.receivedPhasor = message.phasor;
-    this.receivedCpm = message.cpm; // Legacy, may be null
-    this.receivedStepsPerCycle = message.stepsPerCycle;
-    this.receivedCycleLength = message.cycleLength;
-    this.receivedIsPlaying = message.isPlaying !== undefined
-      ? message.isPlaying
-      : true; // Default to true for backward compatibility
-    this.lastPhasorMessage = performance.now();
-
-    // Calculate phasor rate
-    this.phasorRate = 1.0 / this.receivedCycleLength;
-
-    // Update phasor worklet parameters
-    if (this.phasorWorklet) {
-      this.phasorWorklet.parameters.get("cycleLength").value =
-        this.receivedCycleLength;
-      this.phasorWorklet.parameters.get("stepsPerCycle").value =
-        this.receivedStepsPerCycle;
-    }
-
-    // Update unified synth worklet with playing state
-    if (
-      this.unifiedSynthNode && this.unifiedSynthNode.parameters.has("isPlaying")
-    ) {
-      this.unifiedSynthNode.parameters.get("isPlaying").value =
-        this.receivedIsPlaying ? 1 : 0;
-    }
-
-    // Handle based on playing state
-    if (this.receivedIsPlaying) {
-      // Playing beacon: Just cache values for UI/state, don't interfere with PHASOR_SCHEDULE
-      // The AudioParam automation is already running
-
-      // Note: PLL drift detection disabled because phaseParam.value
-      // returns the static base value (0) not the current animated value.
-      // Future: Get actual phase from worklet output for drift detection.
-
-      return;
-    } else {
-      // Not playing: Cancel automation and hold at specified phase
-      // Skip if already at this phase (throttle repeated updates)
-      const phaseDiff = Math.abs((this.receivedPhasor || 0) - message.phasor);
-      if (phaseDiff > 0.001) {
-        console.log(
-          `⏸️ Phasor sync (paused/stopped): holding at phase ${
-            message.phasor.toFixed(3)
-          }`,
-        );
-
-        // Cancel any running automation
-        cancelPhasorAutomation(this);
-
-        // Jump to the specified phase
-        schedulePhasorJump(this, message.phasor);
-      }
-
-      // Always update UI display and cache
-      resetPhasorState(this, message.phasor);
-
-      // Cache timing
-      this.cachedTimingForPause = {
-        cycleLength: this.receivedCycleLength,
-        stepsPerCycle: this.receivedStepsPerCycle,
-      };
-    }
-
-    // Update phasor worklet (legacy)
-    this.updatePhasorWorklet();
-
-    // Start interpolation for display if not already running
-    if (!this.phasorUpdateId) {
-      this.startPhasorInterpolation();
-    }
-  }
-
-  handlePhasorSchedule(message) {
-    console.log("🎯 handlePhasorSchedule called");
-
-    // Store schedule info for save/load
-    this.receivedCycleLength = message.cycleLength;
-    this.receivedPhasor = message.phase;
-
-    // Estimate latency for time synchronization
-    const latencyOffset = estimateControllerLatency(this);
-
-    // Schedule the phasor ramp
-    schedulePhasorRamp(this, message, latencyOffset);
-
-    // Update phasor worklet parameters
-    if (this.phasorWorklet) {
-      this.phasorWorklet.parameters.get("cycleLength").value =
-        message.cycleLength;
-    }
-
-    console.log(
-      `📅 Received phasor schedule: phase ${message.phase.toFixed(3)} @ t=${
-        message.startTime.toFixed(3)
-      }, cycle=${message.cycleLength}s`,
-    );
-  }
-
   handleProgramConfig(message) {
     this.program = message.config;
 
@@ -1439,7 +1324,7 @@ class SynthClient {
       }
 
       // Phasor is now controlled via AudioParam automation
-      // No need to send start message - wait for PHASOR_SCHEDULE from controller
+      // No need to send start message - wait for PHASOR_BEACON from controller
 
       if (this.verbose) console.log("✅ Phasor worklet initialized");
     } catch (error) {
@@ -2120,39 +2005,6 @@ class SynthClient {
     clearSingleSceneBank(this, bank);
   }
 
-  // Transport control methods
-  handleTransport(message) {
-    console.log(`🎮 Transport: ${message.action}`);
-    if (!this.phasorWorklet || !this.voiceNode) return;
-
-    switch (message.action) {
-      case "play":
-        this.isPlaying = true;
-        // Phasor is controlled via AudioParam automation from controller
-        // No manual resets needed
-
-        if (this.isPaused) {
-          // Resume from paused position
-          console.log(`🎯 Resuming from paused phase: ${this.pausedPhase}`);
-          this.isPaused = false;
-        }
-        break;
-
-      case "pause":
-        this.isPlaying = false;
-        // Cancel running ramp immediately so PHASOR_SYNC can position correctly
-        cancelPhasorAutomation(this);
-        break;
-
-      case "stop":
-        this.isPlaying = false;
-        // Cancel automation and jump to phase 0
-        cancelPhasorAutomation(this);
-        schedulePhasorJump(this, 0);
-        break;
-    }
-  }
-
   // New Transport Command Handlers
   handlePlay(message) {
     console.log(
@@ -2162,12 +2014,15 @@ class SynthClient {
     );
 
     this.isPlaying = true;
+    this.isPaused = false;
+    this.receivedIsPlaying = true;
 
     // Cancel any existing automation
     cancelPhasorAutomation(this);
 
     // Jump to the specified phase
     schedulePhasorJump(this, message.phase);
+    this.receivedPhasor = message.phase;
 
     // Cache start time if needed for future beacon timing
     this.playStartTime = message.startTime;
@@ -2177,20 +2032,27 @@ class SynthClient {
     console.log(`⏸️ PAUSE command: phase ${message.phase.toFixed(3)}`);
 
     this.isPlaying = false;
+    this.receivedIsPlaying = false;
+    this.isPaused = true;
 
     // Cancel automation and jump to paused phase
     cancelPhasorAutomation(this);
     schedulePhasorJump(this, message.phase);
+    this.pausedPhase = message.phase;
+    this.receivedPhasor = message.phase;
   }
 
   handleStop(message) {
     console.log("⏹️ STOP command");
 
     this.isPlaying = false;
+    this.receivedIsPlaying = false;
+    this.isPaused = false;
 
     // Cancel automation and jump to phase 0
     cancelPhasorAutomation(this);
     schedulePhasorJump(this, 0);
+    this.receivedPhasor = 0;
   }
 
   handlePhasorBeacon(message) {
@@ -2206,14 +2068,21 @@ class SynthClient {
       return;
     }
 
-    // Update cached cycle length
+    // Update cached timing data
     this.receivedCycleLength = message.cycleLength;
+    if (typeof message.stepsPerCycle === "number") {
+      this.receivedStepsPerCycle = message.stepsPerCycle;
+    }
+    this.receivedPhasor = message.phase;
+    this.receivedIsPlaying = true;
+    this.lastPhasorMessage = performance.now();
+    this.phasorRate = 1.0 / message.cycleLength;
 
-    // Schedule a 0→1 ramp using the beacon timing
+    // Schedule a ramp using the beacon timing and provided phase
     const schedule = {
       startTime: message.startTime,
       cycleLength: message.cycleLength,
-      phase: 0, // Always start new cycle from 0
+      phase: message.phase,
     };
 
     // Estimate latency for time synchronization
@@ -2226,12 +2095,16 @@ class SynthClient {
     if (this.phasorWorklet) {
       this.phasorWorklet.parameters.get("cycleLength").value =
         message.cycleLength;
+      if (typeof message.stepsPerCycle === "number") {
+        this.phasorWorklet.parameters.get("stepsPerCycle").value =
+          message.stepsPerCycle;
+      }
     }
   }
 
   handleJumpToEOC(message) {
     console.log("🎮 Jump to EOC / Reset");
-    // Controller will send a new PHASOR_SCHEDULE to handle the jump
+    // Controller will send a new PHASOR_BEACON to handle the jump
     // No manual intervention needed
   }
 

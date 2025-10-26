@@ -54,10 +54,6 @@ export function handleDataMessage(peerId, channelType, message, context) {
       context.handleUnifiedParamUpdate(message);
       break;
 
-    case MessageTypes.PHASOR_SYNC:
-      context.handlePhasorSync(message);
-      break;
-
     case MessageTypes.PROGRAM:
       context.handleProgramConfig(message);
       break;
@@ -70,7 +66,7 @@ export function handleDataMessage(peerId, channelType, message, context) {
       break;
 
     case MessageTypes.IMMEDIATE_REINITIALIZE:
-      context.handleImmediateReinitialize();
+      context.handleImmediateReinitialize(message);
       break;
 
     case MessageTypes.SAVE_SCENE:
@@ -89,12 +85,24 @@ export function handleDataMessage(peerId, channelType, message, context) {
       context.clearBank(message.memoryLocation);
       break;
 
-    case MessageTypes.TRANSPORT:
-      context.handleTransport(message);
-      break;
-
     case MessageTypes.JUMP_TO_EOC:
       context.handleJumpToEOC(message);
+      break;
+
+    case MessageTypes.PLAY:
+      context.handlePlay(message);
+      break;
+
+    case MessageTypes.PAUSE:
+      context.handlePause(message);
+      break;
+
+    case MessageTypes.STOP:
+      context.handleStop(message);
+      break;
+
+    case MessageTypes.PHASOR_BEACON:
+      context.handlePhasorBeacon(message);
       break;
 
     default:

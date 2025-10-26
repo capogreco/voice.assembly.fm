@@ -37,8 +37,6 @@ import {
 } from "./network/star.js";
 import {
   broadcastControlState as broadcastControlStateHelper,
-  broadcastPhasor as broadcastPhasorHelper,
-  broadcastPhasorSchedule,
   broadcastSingleParameter as broadcastSingleParameterHelper,
   broadcastSubParameterUpdate as broadcastSubParameterUpdateHelper,
 } from "./network/broadcast.js";
@@ -1399,9 +1397,6 @@ class ControlClient {
 
     // Update ES-8 with current phasor state
     this.updateES8State();
-
-    // Broadcast phasor at specified rate
-    this.broadcastPhasor(currentTime);
   }
 
   updatePhasorDisplay() {
@@ -1442,6 +1437,8 @@ class ControlClient {
       const beaconMessage = MessageBuilder.phasorBeacon(
         startTime,
         this.cycleLength,
+        0,
+        this.stepsPerCycle,
       );
       this.star.broadcastToType("synth", beaconMessage, "control");
 
@@ -1451,38 +1448,7 @@ class ControlClient {
         }, cycleLength ${this.cycleLength}s`,
       );
     }
-
-    this.lastBroadcastTime = performance.now() / 1000;
   }
-
-  broadcastPhasor(currentTime, reason = "continuous", explicitPhasor = null) {
-    if (!this.star) return;
-
-    // Don't send PHASOR_SYNC while playing - PHASOR_SCHEDULE handles it
-    if (this.isPlaying && reason === "continuous") {
-      return;
-    }
-
-    // Determine phasor value to use
-    const phasorToSend = explicitPhasor !== null ? explicitPhasor : this.phasor;
-
-    // Use helper for phasor broadcast (for pause/stop/transport events)
-    this.lastPausedBeaconAt = broadcastPhasorHelper(
-      this.star,
-      phasorToSend,
-      this.stepsPerCycle,
-      this.cycleLength,
-      this.isPlaying,
-      reason,
-      currentTime,
-      this.lastPausedBeaconAt,
-    );
-
-    if (reason !== "continuous") {
-      this.lastBroadcastTime = currentTime;
-    }
-  }
-
   // ES-8 Integration Methods
   async toggleES8() {
     this.es8Enabled = !this.es8Enabled;
@@ -1615,8 +1581,6 @@ class ControlClient {
   async handleTransport(action) {
     console.log("Transport action: " + action);
 
-    const wasAtZero = this.phasor === 0.0;
-
     switch (action) {
       case "play":
         // Create audio context on first play if needed
@@ -1651,6 +1615,26 @@ class ControlClient {
           console.log(
             `▶️ Sent PLAY command from phase ${this.phasor.toFixed(3)}`,
           );
+
+          if (this.audioContext) {
+            const lookaheadMs = 100;
+            const startTime = this.audioContext.currentTime +
+              (lookaheadMs / 1000);
+            const normalizedPhase = ((this.phasor % 1) + 1) % 1;
+
+            const beaconMessage = MessageBuilder.phasorBeacon(
+              startTime,
+              this.cycleLength,
+              normalizedPhase,
+              this.stepsPerCycle,
+            );
+            this.star.broadcastToType("synth", beaconMessage, "control");
+            console.log(
+              `🔔 Sent bootstrap PHASOR_BEACON: phase ${
+                normalizedPhase.toFixed(3)
+              } @ t=${startTime.toFixed(3)}`,
+            );
+          }
         }
         break;
 
@@ -1989,9 +1973,6 @@ class ControlClient {
 
     // Broadcast current state to all synths - using unified payload system
     this.broadcastControlState();
-
-    // Send current phasor state so synths know the current phase position
-    this.broadcastPhasor(performance.now() / 1000.0, "transport");
   }
 
   // Deprecated - use toggleSynthesis instead

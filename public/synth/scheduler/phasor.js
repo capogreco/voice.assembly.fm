@@ -300,44 +300,6 @@ export function getCurrentPhase(context) {
 }
 
 /**
- * Handle transport control messages
- * @param {Object} message - Transport message
- * @param {Object} context - Synth context
- */
-export function handleTransport(message, context) {
-  if (message.action === "play") {
-    console.log("▶️ Transport: Play received");
-
-    // Update local state
-    context.receivedIsPlaying = true;
-    context.isPaused = false;
-
-    // Start phasor worklet
-    if (context.phasorWorklet) {
-      context.phasorWorklet.port.postMessage({ type: "start" });
-    }
-
-    // Update synthesis status
-    context.updateSynthesisStatus(context.synthesisActive);
-  } else if (message.action === "pause") {
-    console.log("⏸️ Transport: Pause received");
-
-    // Update local state
-    context.receivedIsPlaying = false;
-    context.isPaused = true;
-    context.pausedPhase = getCurrentPhase(context);
-
-    // Stop phasor worklet
-    if (context.phasorWorklet) {
-      context.phasorWorklet.port.postMessage({ type: "stop" });
-    }
-
-    // Update synthesis status
-    context.updateSynthesisStatus(context.synthesisActive);
-  }
-}
-
-/**
  * Handle jump to end of cycle
  * @param {Object} message - Jump to EOC message
  * @param {Object} context - Synth context

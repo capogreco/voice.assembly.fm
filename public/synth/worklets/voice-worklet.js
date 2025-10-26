@@ -2,13 +2,13 @@
  * Voice Worklet - DSP Synthesis with AudioParam Control
  *
  * Handles formant synthesis combining PM (Phase/Frequency Modulation) and Zing paths.
- * 
+ *
  * PARAMETER CONTROL:
  * - All envelope parameters are now controlled via AudioParams (k-rate)
  * - Each parameter has _start and _end AudioParams for envelope endpoints
  * - Main thread schedules values using AudioParam automation
  * - No more SET_ENV/SET_ALL_ENV messages needed
- * 
+ *
  * Interpolation modes (disc/cont/step) are still configured via messages
  * but actual values come from AudioParams for sample-accurate control.
  */
@@ -513,7 +513,7 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
       //   this.handleSetEnv(msg);
       //   break;
 
-      // DEPRECATED: Now using AudioParams directly  
+      // DEPRECATED: Now using AudioParams directly
       // case "SET_ALL_ENV":
       //   this.handleSetAllEnv(msg);
       //   break;
@@ -537,10 +537,6 @@ class VoiceWorkletProcessor extends AudioWorkletProcessor {
 
       case "APPLY_NOW":
         this.handleApplyNow(msg);
-        break;
-
-      case "TRANSPORT":
-        // Optional - could be used for future transport-specific behavior
         break;
 
       default:
